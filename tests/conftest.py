@@ -16,7 +16,7 @@ os.environ["OBJC_DEBUG_DUPLICATE_CLASSES"] = "NO"
 
 # PyTorch and LightGBM each ship their own libomp. Loading both into one process
 # (which happens when a single ``pytest`` run touches the torch-based plugins and
-# the lightgbm-based learned_quality_v2 scorer training) triggers an "OMP: System
+# the lightgbm-based learned_quality_v3 scorer training) triggers an "OMP: System
 # error #22" / segfault on macOS. ``faceswap.py`` guards against this before any
 # torch/lightgbm import at runtime, but pytest never imports ``faceswap.py``, so
 # mirror the same guard here before any heavy module is imported.

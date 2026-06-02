@@ -15,7 +15,7 @@ from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from lib.landmarks.ensemble.scorer_eval import evaluate_runtime_resolver_scorer
 from lib.landmarks.ensemble.scorer_training import (
-    SCORER_V2_ARTIFACT,
+    SCORER_V3_ARTIFACT,
     train_runtime_resolver_scorer,
 )
 from lib.landmarks.ensemble.weights import save_weights
@@ -225,7 +225,7 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
         iterations=5,
         eval_fraction=0.0,
     )
-    scorer_path = train_dir / SCORER_V2_ARTIFACT
+    scorer_path = train_dir / SCORER_V3_ARTIFACT
     assert scorer_path.is_file()
     assert metrics["training_data_counts"]["row_count"] > 0
     assert metrics["candidate_count"] == len(CANDIDATES)
@@ -252,7 +252,7 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
     assert payload["promotion_status"] in {"pass", "fail"}
     assert isinstance(payload["failed_gates"], list)
     assert payload["primary_scorer_policy"] in payload
-    assert payload["runtime_policy"] == "learned_quality_v2"
+    assert payload["runtime_policy"] == "learned_quality_v3"
     assert "production_only_policy_metrics" in payload
     assert payload["production_only_policy_metrics"]["sample_count"] == 1
     assert "gt_hard_all_policy_metrics" in payload

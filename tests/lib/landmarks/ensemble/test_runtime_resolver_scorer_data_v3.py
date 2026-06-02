@@ -221,12 +221,15 @@ def test_rows_for_context_all_invalid_group_has_no_v3_oracle() -> None:
 def test_transform_regret_v3_is_registered_training_target() -> None:
     row = _row(transform_cost_v3=0.625, transform_regret_v3=0.375)
 
-    assert TARGET_TRANSFORM_COST_V3 in REGRESSION_TARGETS
-    assert TARGET_TRANSFORM_REGRET_V3 in REGRESSION_TARGETS
+    # v3 regret is the only registered learned-quality training target (#214); the
+    # raw transform cost is retained as an offline diagnostic component only.
+    assert REGRESSION_TARGETS == (TARGET_TRANSFORM_REGRET_V3,)
+    assert TARGET_TRANSFORM_COST_V3 not in REGRESSION_TARGETS
     assert TARGET_TRANSFORM_COST_V3 == "transform_alignment_cost_v3"
     assert TARGET_TRANSFORM_REGRET_V3 == "transform_alignment_regret_v3"
-    assert scorer_target_value(row, TARGET_TRANSFORM_COST_V3) == pytest.approx(0.625)
     assert scorer_target_value(row, TARGET_TRANSFORM_REGRET_V3) == pytest.approx(0.375)
+    with pytest.raises(ValueError, match="unsupported scorer target"):
+        scorer_target_value(row, TARGET_TRANSFORM_COST_V3)
 
 
 def test_v3_columns_are_carried_through_csv_schemas(tmp_path) -> None:

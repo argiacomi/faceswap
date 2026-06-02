@@ -134,7 +134,7 @@ def test_strict_resolver_error_hard_fails(monkeypatch: pytest.MonkeyPatch) -> No
         # validating that load_model raises when the learned policy has no
         # scorer artifact.
         setup_path="",
-        resolver_policy="learned_quality_v2",
+        resolver_policy="learned_quality_v3",
         resolver_scorer_path="",
         strict=True,
     )
@@ -217,8 +217,8 @@ def test_init_resolves_setup_and_scorer_from_production_bundle(
     pa.install_production_bundle(
         setup_src=setup_src,
         weights_src=weights_src,
-        scorer_sources={"learned_quality_v2": scorer_src},
-        active_policy="learned_quality_v2",
+        scorer_sources={"learned_quality_v3": scorer_src},
+        active_policy="learned_quality_v3",
     )
 
     plugin = Ensemble(
@@ -226,12 +226,12 @@ def test_init_resolves_setup_and_scorer_from_production_bundle(
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
-        resolver_policy="learned_quality_v2",
+        resolver_policy="learned_quality_v3",
     )
 
     assert plugin._setup_path == str((bundle_dir / "best_setup.json").resolve())
     assert plugin._resolver_scorer_path == str(
-        (bundle_dir / "scorers" / "learned_quality_v2.json").resolve()
+        (bundle_dir / "scorers" / "learned_quality_v3.json").resolve()
     )
     # weights_path is no longer carried in config; promoted_setup resolves it.
     assert plugin._weights_path == ""

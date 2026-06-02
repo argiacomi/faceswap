@@ -27,8 +27,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _command_production_prediction_cache,
     _command_production_resolver_metadata,
     _command_scorer_eval,
-    _command_scorer_training,
-    _command_v2_scorer_training,
+    _command_scorer_suite_training,
     _commands_dataset_build,
     _contract_for,
     _export_artifacts,
@@ -81,13 +80,13 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_select": 0.2,
         "split_report": 0.2,
         "split_seed": 1337,
-        "scorer_target": "selection_cost",
-        "promoted_scorer_version": "learned_quality_v2",
+        "scorer_target": "transform_alignment_regret_v3",
+        "promoted_scorer_version": "learned_quality_v3",
         "promoted_policy": "",
-        "v2_eval_fraction": 0.20,
-        "v2_learning_rate": 0.05,
-        "v2_iterations": 150,
-        "v2_num_leaves": 31,
+        "scorer_eval_fraction": 0.20,
+        "scorer_learning_rate": 0.05,
+        "scorer_iterations": 150,
+        "scorer_num_leaves": 31,
         "prediction_cache_mode": "run-models",
         "prediction_cache_device": "gpu",
         "prediction_cache_compile": "default",
@@ -149,7 +148,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.gt_runtime_bucket_metrics_csv,
         paths.hard_manifest,
         paths.frozen_gt_metadata,
-        paths.canonical_v2_scorer_artifact,
+        paths.canonical_v3_scorer_artifact,
         paths.canonical_v3_scorer_artifact,
         paths.scorer_rows_csv,
         paths.scorer_dataset_manifest,
@@ -168,24 +167,24 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         else:
             output_path.write_text("{}" + chr(10), encoding="utf-8")
 
-    v2_payload = {
+    scorer_payload = {
         "artifact_schema_version": 2,
         "model_type": "lightgbm_lambdarank",
-        "target": "downstream_weighted_alignment_cost",
+        "target": "transform_alignment_regret_v3",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
         "model_data": "fake-model",
-        "version": "learned_quality_v2",
-        "scorer_version": "learned_quality_v2",
-        "runtime_policy": "learned_quality_v2",
+        "version": "learned_quality_v3",
+        "scorer_version": "learned_quality_v3",
+        "runtime_policy": "learned_quality_v3",
     }
-    paths.canonical_v2_scorer_artifact.write_text(
-        json.dumps(v2_payload) + chr(10),
+    paths.canonical_v3_scorer_artifact.write_text(
+        json.dumps(scorer_payload) + chr(10),
         encoding="utf-8",
     )
     v3_payload = {
-        **v2_payload,
+        **scorer_payload,
         "artifact_schema_version": 3,
         "target": "transform_alignment_regret_v3",
         "version": "learned_quality_v3",
@@ -201,17 +200,17 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     paths.promotion_manifest.write_text(
         json.dumps(
             {
-                "active_policy": "learned_quality_v2",
+                "active_policy": "learned_quality_v3",
                 "best_setup": str(paths.best_setup),
                 "best_weights": str(paths.best_weights),
-                "runtime_resolver_scorer_source": str(paths.canonical_v2_scorer_artifact),
+                "runtime_resolver_scorer_source": str(paths.canonical_v3_scorer_artifact),
                 "runtime_resolver_scorer_source_sha256": __import__("hashlib")
-                .sha256(paths.canonical_v2_scorer_artifact.read_bytes())
+                .sha256(paths.canonical_v3_scorer_artifact.read_bytes())
                 .hexdigest(),
-                "runtime_resolver_scorer_version": "learned_quality_v2",
+                "runtime_resolver_scorer_version": "learned_quality_v3",
                 "promotion": {
-                    "active_policy": "learned_quality_v2",
-                    "source": str(paths.canonical_v2_scorer_artifact),
+                    "active_policy": "learned_quality_v3",
+                    "source": str(paths.canonical_v3_scorer_artifact),
                     "runtime_export": "production_bundle",
                     "immutable_scorer_artifact": True,
                 },
@@ -222,12 +221,12 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     )
 
 
-def _write_v2_promotion_report(
+def _write_promotion_report(
     paths: PipelinePaths,
     *,
-    v2_failure_rate: float = 0.0,
-    v2_mean_nme: float = 0.015,
-    v2_p90_nme: float = 0.024,
+    scorer_failure_rate: float = 0.0,
+    scorer_mean_nme: float = 0.015,
+    scorer_p90_nme: float = 0.024,
     static_failure_rate: float = 0.0,
     static_mean_nme: float = 0.016,
     static_p90_nme: float = 0.025,
@@ -249,10 +248,10 @@ def _write_v2_promotion_report(
                     "p90_epsilon_nme": 0.003,
                 },
                 "production_only_policy_metrics": {
-                    "learned_quality_v2": {
-                        "failure_rate": v2_failure_rate,
-                        "mean_nme": v2_mean_nme,
-                        "p90_nme": v2_p90_nme,
+                    "learned_quality_v3": {
+                        "failure_rate": scorer_failure_rate,
+                        "mean_nme": scorer_mean_nme,
+                        "p90_nme": scorer_p90_nme,
                     },
                     "static_weighted_downweight": {
                         "failure_rate": static_failure_rate,
@@ -282,10 +281,10 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert summary["best_weights_path"].endswith("best_weights.json")
     assert summary["scorer_path"].endswith("runtime_resolver_scorer.json")
     assert summary["eval_report_path"].endswith("scorer_policy_report.json")
-    assert summary["selected_runtime_policy"] == "learned_quality_v2"
-    assert summary["selected_production_policy"] == "learned_quality_v2"
-    assert summary["promoted_scorer_version"] == "learned_quality_v2"
-    assert summary["promoted_scorer_target"] == "downstream_weighted_alignment_cost"
+    assert summary["selected_runtime_policy"] == "learned_quality_v3"
+    assert summary["selected_production_policy"] == "learned_quality_v3"
+    assert summary["promoted_scorer_version"] == "learned_quality_v3"
+    assert summary["promoted_scorer_target"] == "transform_alignment_regret_v3"
     assert summary["prediction_cache_device"] == "gpu"
     assert summary["prediction_cache_compile"] == "default"
     # Path-bearing keys are no longer written into extract.ini — runtime
@@ -701,7 +700,7 @@ def test_candidate_search_command_uses_full_manifest_with_splits(
 
 @pytest.mark.parametrize(
     "promoted_scorer_version",
-    ("learned_quality_v2", "learned_quality_v3"),
+    ("learned_quality_v3",),
 )
 def test_candidate_search_command_requires_effective_ensemble(
     tmp_path: Path,
@@ -864,39 +863,26 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
     contract = _contract_for("scorer_training", args, paths)
-    v2_contract = _contract_for("v2_scorer_training", args, paths)
     eval_contract = _contract_for("scorer_evaluation", args, paths)
 
     assert str(paths.hard_manifest) in contract.required_files
     assert str(paths.hard_source_cache_sentinel) in contract.required_files
     assert str(paths.production_cache_sentinel) in contract.required_files
     assert str(paths.frozen_gt_metadata) in contract.required_files
-    assert str(paths.canonical_v2_scorer_artifact) in contract.outputs
+    assert str(paths.canonical_v3_scorer_artifact) in contract.outputs
     assert str(paths.scorer_rows_csv) in contract.outputs
     assert str(paths.scorer_dataset_manifest) in contract.outputs
     assert str(paths.scorer_suite_metrics) in contract.outputs
     assert str(paths.scorer_training_sentinel) in contract.outputs
     assert (
-        str(paths.v2_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv")
+        str(paths.scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv")
         not in contract.outputs
     )
-    assert str(paths.hard_manifest) in v2_contract.required_files
-    assert str(paths.hard_source_cache_sentinel) in v2_contract.required_files
-    assert str(paths.production_cache_sentinel) in v2_contract.required_files
-    assert str(paths.frozen_gt_metadata) in v2_contract.required_files
-    assert str(paths.canonical_v2_scorer_artifact) in v2_contract.outputs
-    assert str(paths.scorer_rows_csv) in v2_contract.outputs
-    assert str(paths.scorer_dataset_manifest) in v2_contract.outputs
-    assert str(paths.scorer_suite_metrics) in v2_contract.outputs
-    assert str(paths.scorer_training_sentinel) in v2_contract.outputs
-    assert str(paths.v2_scorer_training_sentinel) not in v2_contract.outputs
-    assert str(paths.canonical_v2_scorer_artifact) in eval_contract.required_files
-    assert str(paths.canonical_v2_scorer_artifact) in eval_contract.required_files
-    assert str(paths.canonical_v2_scorer_artifact) in eval_contract.required_files
+    assert str(paths.canonical_v3_scorer_artifact) in eval_contract.required_files
     assert str(paths.scorer_rows_csv) in eval_contract.required_files
     assert str(paths.scorer_dataset_manifest) in eval_contract.required_files
     assert (
-        str(paths.v2_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv")
+        str(paths.scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv")
         not in eval_contract.required_files
     )
     assert str(paths.hard_manifest) not in eval_contract.required_files
@@ -922,7 +908,7 @@ def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(
         paths.production_cache_sentinel,
         paths.best_weights,
         paths.frozen_gt_metadata,
-        paths.canonical_v2_scorer_artifact,
+        paths.canonical_v3_scorer_artifact,
         paths.canonical_v3_scorer_artifact,
         paths.scorer_rows_csv,
         paths.scorer_dataset_manifest,
@@ -933,16 +919,13 @@ def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(
         path.write_text("{}\n", encoding="utf-8")
 
     assert not _stage_complete("scorer_training", args, paths)
-    assert not _stage_complete("v2_scorer_training", args, paths)
 
     _write_scorer_training_sentinel(args, paths)
 
     assert _stage_complete("scorer_training", args, paths)
-    assert _stage_complete("v2_scorer_training", args, paths)
 
-    args.v2_iterations += 1
+    args.scorer_iterations += 1
     assert not _stage_complete("scorer_training", args, paths)
-    assert not _stage_complete("v2_scorer_training", args, paths)
 
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
@@ -951,34 +934,31 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
-    train_command = _command_scorer_training(
-        args, paths, output_dir=paths.v2_scorer_train_dir, target=args.scorer_target
-    )
-    v2_train_command = _command_v2_scorer_training(args, paths)
+    train_command = _command_scorer_suite_training(args, paths)
     eval_command = _command_scorer_eval(args, paths)
 
     assert "--allow-image-backfill" in train_command
-    assert "--allow-image-backfill" in v2_train_command
     assert "--allow-image-backfill" in eval_command
-    assert v2_train_command[v2_train_command.index("--training-mode") + 1] == "learned_quality_v2"
-    assert (
-        v2_train_command[v2_train_command.index("--target") + 1]
-        == "downstream_weighted_alignment_cost"
+    assert train_command[train_command.index("--training-mode") + 1] == "scorer_suite"
+    assert train_command[train_command.index("--target") + 1] == "transform_alignment_regret_v3"
+    assert train_command[train_command.index("--eval-fraction") + 1] == str(
+        args.scorer_eval_fraction
     )
-    assert v2_train_command[v2_train_command.index("--eval-fraction") + 1] == str(
-        args.v2_eval_fraction
+    assert train_command[train_command.index("--learning-rate") + 1] == str(
+        args.scorer_learning_rate
     )
-    assert v2_train_command[v2_train_command.index("--learning-rate") + 1] == str(
-        args.v2_learning_rate
-    )
-    assert v2_train_command[v2_train_command.index("--iterations") + 1] == str(args.v2_iterations)
-    assert v2_train_command[v2_train_command.index("--num-leaves") + 1] == str(args.v2_num_leaves)
-    assert v2_train_command[v2_train_command.index("--output-dir") + 1] == str(
-        paths.v2_scorer_train_dir
-    )
-    assert eval_command[eval_command.index("--v2-scorer") + 1] == str(
-        paths.canonical_v2_scorer_artifact
-    )
+    assert train_command[train_command.index("--iterations") + 1] == str(args.scorer_iterations)
+    assert train_command[train_command.index("--num-leaves") + 1] == str(args.scorer_num_leaves)
+    assert train_command[train_command.index("--output-dir") + 1] == str(paths.scorer_train_dir)
+    assert ("--" + "v2-scorer") not in eval_command
+    forbidden = {
+        "selection_" + "cost",
+        "learned_quality_" + "v2",
+        "runtime_resolver_scorer_" + "v2",
+        "v2_" + "lambdarank",
+    }
+    assert forbidden.isdisjoint(train_command)
+    assert forbidden.isdisjoint(eval_command)
 
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_can_be_disabled(
@@ -987,14 +967,10 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_can_be_disabled(
     args = _args(tmp_path, allow_image_backfill=False)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
-    train_command = _command_scorer_training(
-        args, paths, output_dir=paths.v2_scorer_train_dir, target=args.scorer_target
-    )
-    v2_train_command = _command_v2_scorer_training(args, paths)
+    train_command = _command_scorer_suite_training(args, paths)
     eval_command = _command_scorer_eval(args, paths)
 
     assert "--allow-image-backfill" not in train_command
-    assert "--allow-image-backfill" not in v2_train_command
     assert "--allow-image-backfill" not in eval_command
 
 
@@ -1225,7 +1201,7 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
 
     assert "preview" in notes[0]
     assert preview["section"] == "align.ensemble"
-    assert preview["updates"]["resolver_policy"] == "learned_quality_v2"
+    assert preview["updates"]["resolver_policy"] == "learned_quality_v3"
     assert "production_weights_path" not in preview["updates"]
     assert "coordinate_space" not in preview["updates"]
     # Path-bearing keys are no longer in the patch.
@@ -1274,7 +1250,7 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
     assert parser.get("detect.scrfd", "model") == "10g"
     assert parser.get("align.ensemble", "stale_experimental") == "true"
     assert parser.get("align.ensemble", "use_alignment_resolver") == "True"
-    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v2"
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v3"
     # Path-bearing keys are not written into extract.ini anymore; the runtime
     # resolves them from the installed production bundle.
     assert not parser.has_option("align.ensemble", "resolver_scorer_path")
@@ -1316,14 +1292,14 @@ def test_config_write_appends_missing_align_ensemble_section(tmp_path: Path) -> 
     assert "[global]" in config_text
     assert "[detect.scrfd]" in config_text
     assert "[align.ensemble]" in config_text
-    assert "resolver_policy = learned_quality_v2" in config_text
+    assert "resolver_policy = learned_quality_v3" in config_text
 
     parser = configparser.ConfigParser()
     parser.optionxform = str  # type: ignore[assignment, method-assign]
     parser.read(args.config_path, encoding="utf-8")
     assert parser.get("global", "aligner_min_scale") == "0.03"
     assert parser.get("detect.scrfd", "model") == "10g"
-    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v2"
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v3"
     # Path-bearing keys are no longer written into extract.ini.
     assert not parser.has_option("align.ensemble", "weights_path")
 
@@ -1346,7 +1322,7 @@ def test_config_write_preserves_inline_comments_on_managed_keys(tmp_path: Path) 
     _apply_config(args, paths)
 
     config_text = args.config_path.read_text(encoding="utf-8")
-    assert "resolver_policy = learned_quality_v2 # keep this comment" in config_text
+    assert "resolver_policy = learned_quality_v3 # keep this comment" in config_text
 
 
 def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
@@ -1405,28 +1381,28 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     source_scorer_payload = {
         "artifact_schema_version": 1,
         "model_type": "linear_regression",
-        "target": "downstream_weighted_alignment_cost",
+        "target": "transform_alignment_regret_v3",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
         "coefficients": [1.0],
         "intercept": 0.0,
-        "version": "learned_quality_v2",
+        "version": "learned_quality_v3",
     }
-    paths.canonical_v2_scorer_artifact.write_text(
+    paths.canonical_v3_scorer_artifact.write_text(
         json.dumps(source_scorer_payload) + "\n",
         encoding="utf-8",
     )
 
     manifest = _export_artifacts(args, paths)
 
-    assert manifest["active_policy"] == "learned_quality_v2"
+    assert manifest["active_policy"] == "learned_quality_v3"
     assert manifest["best_setup"] == str(paths.best_setup)
     assert manifest["best_weights"] == str(paths.best_weights)
-    assert manifest["runtime_resolver_scorer_source"] == str(paths.canonical_v2_scorer_artifact)
-    assert manifest["runtime_resolver_scorer_version"] == "learned_quality_v2"
-    assert manifest["promotion"]["active_policy"] == "learned_quality_v2"
-    assert manifest["promotion"]["source"] == str(paths.canonical_v2_scorer_artifact)
+    assert manifest["runtime_resolver_scorer_source"] == str(paths.canonical_v3_scorer_artifact)
+    assert manifest["runtime_resolver_scorer_version"] == "learned_quality_v3"
+    assert manifest["promotion"]["active_policy"] == "learned_quality_v3"
+    assert manifest["promotion"]["source"] == str(paths.canonical_v3_scorer_artifact)
     assert manifest["promotion"]["runtime_export"] == "production_bundle"
     assert manifest["promotion"]["immutable_scorer_artifact"] is True
     assert paths.promotion_manifest.is_file()
@@ -1435,18 +1411,18 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     assert not paths.exported_scorer_rows.exists()
     assert not paths.exported_scorer_dataset_manifest.exists()
     assert (
-        json.loads(paths.canonical_v2_scorer_artifact.read_text(encoding="utf-8"))
+        json.loads(paths.canonical_v3_scorer_artifact.read_text(encoding="utf-8"))
         == source_scorer_payload
     )
 
 
-def test_v2_promotion_check_requires_v2_policy_metrics(tmp_path: Path) -> None:
-    args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
+def test_promotion_check_requires_v3_policy_metrics(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v3")
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
 
-    # This report is intentionally malformed for v2 promotion:
-    # it has a valid static baseline but no learned_quality_v2 production metrics.
+    # This report is intentionally malformed for learned promotion:
+    # it has a valid static baseline but no learned_quality_v3 production metrics.
     paths.scorer_report.write_text(
         json.dumps(
             {
@@ -1468,69 +1444,69 @@ def test_v2_promotion_check_requires_v2_policy_metrics(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="learned_quality_v2 promotion check failed"):
+    with pytest.raises(RuntimeError, match="learned_quality_v3 promotion check failed"):
         _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
 
 
-def test_artifact_export_blocks_v2_when_v2_metrics_regress(tmp_path: Path) -> None:
-    args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
+def test_artifact_export_blocks_v3_when_metrics_regress(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v3")
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
-    _write_v2_promotion_report(paths, v2_mean_nme=0.020, static_mean_nme=0.016)
-    paths.canonical_v2_scorer_artifact.write_text(
+    _write_promotion_report(paths, scorer_mean_nme=0.020, static_mean_nme=0.016)
+    paths.canonical_v3_scorer_artifact.write_text(
         json.dumps(
             {
                 "artifact_schema_version": 2,
                 "model_type": "lightgbm_lambdarank",
-                "target": "downstream_weighted_alignment_cost",
+                "target": "transform_alignment_regret_v3",
                 "score_semantics": "predicted_cost",
                 "higher_is_better": False,
                 "features": ["candidate_name=hrnet"],
                 "model_data": "fake-model",
-                "version": "learned_quality_v2",
-                "scorer_version": "learned_quality_v2",
-                "runtime_policy": "learned_quality_v2",
+                "version": "learned_quality_v3",
+                "scorer_version": "learned_quality_v3",
+                "runtime_policy": "learned_quality_v3",
             }
         )
         + "\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="learned_quality_v2 promotion check failed"):
+    with pytest.raises(RuntimeError, match="learned_quality_v3 promotion check failed"):
         _export_artifacts(args, paths)
 
     assert not paths.exported_scorer_artifact.exists()
 
 
-def test_artifact_export_can_promote_v2_scorer(tmp_path: Path) -> None:
-    args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
+def test_artifact_export_can_promote_scorer(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v3")
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
-    _write_v2_promotion_report(paths)
-    v2_payload = {
+    _write_promotion_report(paths)
+    scorer_payload = {
         "artifact_schema_version": 2,
         "model_type": "lightgbm_lambdarank",
-        "target": "downstream_weighted_alignment_cost",
+        "target": "transform_alignment_regret_v3",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
         "model_data": "fake-model",
-        "version": "learned_quality_v2",
-        "scorer_version": "learned_quality_v2",
-        "runtime_policy": "learned_quality_v2",
+        "version": "learned_quality_v3",
+        "scorer_version": "learned_quality_v3",
+        "runtime_policy": "learned_quality_v3",
     }
-    paths.canonical_v2_scorer_artifact.write_text(
-        json.dumps(v2_payload) + "\n",
+    paths.canonical_v3_scorer_artifact.write_text(
+        json.dumps(scorer_payload) + "\n",
         encoding="utf-8",
     )
 
     manifest = _export_artifacts(args, paths)
 
-    assert manifest["active_policy"] == "learned_quality_v2"
-    assert manifest["runtime_resolver_scorer_source"] == str(paths.canonical_v2_scorer_artifact)
-    assert manifest["runtime_resolver_scorer_version"] == "learned_quality_v2"
-    assert manifest["promotion"]["active_policy"] == "learned_quality_v2"
-    assert manifest["promotion"]["source"] == str(paths.canonical_v2_scorer_artifact)
+    assert manifest["active_policy"] == "learned_quality_v3"
+    assert manifest["runtime_resolver_scorer_source"] == str(paths.canonical_v3_scorer_artifact)
+    assert manifest["runtime_resolver_scorer_version"] == "learned_quality_v3"
+    assert manifest["promotion"]["active_policy"] == "learned_quality_v3"
+    assert manifest["promotion"]["source"] == str(paths.canonical_v3_scorer_artifact)
     assert manifest["promotion"]["model_type"] == "lightgbm_lambdarank"
     assert manifest["promotion"]["runtime_export"] == "production_bundle"
     assert not paths.exported_scorer_artifact.exists()
@@ -1567,7 +1543,7 @@ def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None
     assert summary["stages"][0]["name"] == "config_update"
     assert summary["stages"][0]["status"] == "ok"
     config_text = args.config_path.read_text(encoding="utf-8")
-    assert "resolver_policy = learned_quality_v2" in config_text
+    assert "resolver_policy = learned_quality_v3" in config_text
     assert "# config comment survives" in config_text
 
 
@@ -1600,20 +1576,19 @@ def test_apply_config_installs_production_bundle(
 
     assert any("installed production landmark-ensemble bundle" in note for note in notes)
     loaded = pa.load_production_bundle()
-    # learned_quality_v2 is the default promoted_scorer_version in _args.
-    assert loaded.active_policy == "learned_quality_v2"
+    # learned_quality_v3 is the default promoted_scorer_version in _args.
+    assert loaded.active_policy == "learned_quality_v3"
     assert loaded.setup_path.is_file()
     # All learned scorer sources existed via _touch_pipeline_outputs, so all
     # learned policy slots should be populated.
     assert set(loaded.scorers) == {
-        "learned_quality_v2",
         "learned_quality_v3",
     }
-    v2_scorer = loaded.scorer_path_for("learned_quality_v2")
+    scorer = loaded.scorer_path_for("learned_quality_v3")
     v3_scorer = loaded.scorer_path_for("learned_quality_v3")
-    assert v2_scorer is not None
+    assert scorer is not None
     assert v3_scorer is not None
-    assert v2_scorer.is_file()
+    assert scorer.is_file()
     assert v3_scorer.is_file()
     assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
 

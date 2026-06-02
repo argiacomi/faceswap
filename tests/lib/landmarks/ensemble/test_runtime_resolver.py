@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -17,12 +19,20 @@ from lib.landmarks.ensemble.runtime_resolver import (
     RuntimeResolverError,
     resolve_runtime,
 )
-from lib.landmarks.ensemble.runtime_resolver_scorer import (
-    RuntimeResolverScorer,
-    write_runtime_resolver_scorer,
-)
+from tests.lib.landmarks.ensemble.scorer_test_utils import LinearTestScorer
 
 _LEGACY_LANDMARK_POSE_BUCKET_KEY = "_".join(("landmark", "pose", "bucket"))
+
+
+def _scorer_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    scorer: LinearTestScorer,
+) -> Path:
+    path = tmp_path / "runtime_resolver_scorer.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runtime_resolver, "load_runtime_resolver_scorer", lambda _path: scorer)
+    return path
 
 
 def test_runtime_bucket_family_is_canonical() -> None:
@@ -193,19 +203,20 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
     monkeypatch,
     tmp_path,
 ) -> None:
-    """learned_quality_v2 chooses the lowest predicted risk instead of bucket priority."""
+    """learned_quality_v3 chooses the lowest predicted risk instead of bucket priority."""
     monkeypatch.setattr(
         runtime_resolver,
         "infer_runtime_bucket",
         lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=("candidate_name=hrnet", "candidate_name=spiga"),
             coefficients=(-5.0, 5.0),
             intercept=0.0,
         ),
-        tmp_path / "runtime_resolver_scorer.json",
     )
     base = _face()
 
@@ -216,7 +227,7 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -224,7 +235,7 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
     )
 
     assert result.selected_candidate == "hrnet"
-    assert result.metadata["policy"] == "learned_quality_v2"
+    assert result.metadata["policy"] == "learned_quality_v3"
     assert (
         result.metadata["selected_candidate_score"] < result.metadata["candidate_scores"]["spiga"]
     )
@@ -243,13 +254,14 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
         "infer_runtime_bucket",
         lambda **kwargs: RuntimeBucketResult(bucket="frontal", features={}),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=("candidate_name=static_weighted",),
             coefficients=(-0.25,),
             intercept=1.0,
         ),
-        tmp_path / "runtime_resolver_scorer.json",
     )
     base = _face()
 
@@ -260,7 +272,7 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
             safe_fallback_min_delta=-1.0,
@@ -288,17 +300,18 @@ def test_hard_pose_guard_rejects_plain_average_without_single_model_margin(
         "infer_runtime_bucket",
         lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=(
                 "candidate_name=plain_average",
                 "candidate_name=hrnet",
                 "candidate_name=spiga",
             ),
-            coefficients=(-0.20, -0.12, 0.20),
+            coefficients=(-0.13, -0.12, 0.20),
             intercept=0.0,
         ),
-        tmp_path / "runtime_resolver_scorer.json",
     )
     base = _face()
 
@@ -309,7 +322,7 @@ def test_hard_pose_guard_rejects_plain_average_without_single_model_margin(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -337,13 +350,14 @@ def test_hard_pose_guard_allows_plain_average_when_margin_clears(
         "infer_runtime_bucket",
         lambda **kwargs: RuntimeBucketResult(bucket="profile_right", features={}),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=("candidate_name=plain_average", "candidate_name=hrnet"),
             coefficients=(-0.70, -0.12),
             intercept=0.0,
         ),
-        tmp_path / "runtime_resolver_scorer.json",
     )
     base = _face()
 
@@ -354,7 +368,7 @@ def test_hard_pose_guard_allows_plain_average_when_margin_clears(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -381,13 +395,14 @@ def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
         "_shape_reasons",
         lambda *_args, **_kwargs: ("forced_test_veto",),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=("candidate_name=spiga", "candidate_name=static_weighted_downweight"),
             coefficients=(-8.0, 8.0),
             intercept=0.0,
         ),
-        tmp_path / "runtime_resolver_scorer.json",
     )
     base = _face()
 
@@ -398,7 +413,7 @@ def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -540,13 +555,14 @@ def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_singl
             features={"candidate_yaw_disagreement": 95.0},
         ),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=("candidate_name=static_weighted", "candidate_name=orformer"),
             coefficients=(-5.0, -4.0),
             intercept=0.0,
         ),
-        tmp_path / "runtime_resolver_scorer.json",
     )
     base = _face()
 
@@ -557,7 +573,7 @@ def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_singl
             ModelPrediction("orformer", base + 20.0),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),

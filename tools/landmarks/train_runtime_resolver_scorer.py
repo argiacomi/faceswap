@@ -26,14 +26,13 @@ from lib.landmarks.ensemble.scorer_target_config import (
 from lib.landmarks.ensemble.scorer_training import (
     EVAL_ROWS_CSV,
     SCORER_ARTIFACT,
-    SCORER_V2_ARTIFACT,
     SCORER_V3_ARTIFACT,
     TRAINING_CANDIDATE_TABLE_CSV,
     TRAINING_METRICS_JSON,
     TRAINING_ROWS_CSV,
     train_runtime_resolver_scorer,
     train_runtime_resolver_scorer_suite,
-    train_runtime_resolver_scorer_v2,
+    train_runtime_resolver_scorer_v3,
 )
 from lib.landmarks.ensemble.weights import load_weights
 
@@ -60,22 +59,13 @@ def _parser() -> argparse.ArgumentParser:
         "--target",
         choices=(TARGET_TRANSFORM_REGRET_V3,),
         default=TARGET_TRANSFORM_REGRET_V3,
-        help=(
-            "Active scorer_suite target. v3 training uses only "
-            "transform_alignment_regret_v3; legacy learned_quality_v2 ignores this flag."
-        ),
+        help=("Active scorer_suite target. v3 training uses only transform_alignment_regret_v3."),
     )
     parser.add_argument(
         "--training-mode",
-        choices=(
-            "learned_quality_v2",
-            "scorer_suite",
-        ),
+        choices=("scorer_suite",),
         default="scorer_suite",
-        help=(
-            "Explicit scorer training mode. scorer_suite writes the canonical "
-            "learned_quality_v3 artifact only; learned_quality_v2 is legacy/explicit."
-        ),
+        help="Explicit scorer training mode. Writes the canonical learned_quality_v3 artifact.",
     )
     parser.add_argument("--l2", type=float, default=0.001)
     parser.add_argument("--learning-rate", type=float, default=0.1)
@@ -106,48 +96,25 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     configure_tool_logging(args.log_level)
     weights = load_weights(args.weights)
     candidates = parse_candidates(args.candidates, weights)
-    if args.training_mode == "scorer_suite":
-        metrics = train_runtime_resolver_scorer_suite(
-            gt_manifest=args.gt_manifest,
-            gt_cache_dir=args.gt_cache_dir,
-            production_manifest=args.production_manifest,
-            production_cache_dir=args.production_cache_dir,
-            weights_path=args.weights,
-            candidates=candidates,
-            output_dir=args.output_dir,
-            gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
-            failure_threshold=args.failure_threshold,
-            high_gap_threshold=args.high_gap_threshold,
-            outlier_threshold=args.outlier_threshold,
-            learning_rate=args.learning_rate,
-            iterations=args.iterations,
-            num_leaves=args.num_leaves,
-            eval_fraction=args.eval_fraction,
-            split_seed=args.split_seed,
-            allow_image_backfill=args.allow_image_backfill,
-        )
-    elif args.training_mode == "learned_quality_v2":
-        metrics = train_runtime_resolver_scorer_v2(
-            gt_manifest=args.gt_manifest,
-            gt_cache_dir=args.gt_cache_dir,
-            production_manifest=args.production_manifest,
-            production_cache_dir=args.production_cache_dir,
-            weights_path=args.weights,
-            candidates=candidates,
-            output_dir=args.output_dir,
-            gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
-            failure_threshold=args.failure_threshold,
-            high_gap_threshold=args.high_gap_threshold,
-            outlier_threshold=args.outlier_threshold,
-            learning_rate=args.learning_rate,
-            iterations=args.iterations,
-            num_leaves=args.num_leaves,
-            eval_fraction=args.eval_fraction,
-            split_seed=args.split_seed,
-            allow_image_backfill=args.allow_image_backfill,
-        )
-    else:  # pragma: no cover - argparse choices prevent this.
-        parser.error(f"unsupported training mode: {args.training_mode}")
+    metrics = train_runtime_resolver_scorer_suite(
+        gt_manifest=args.gt_manifest,
+        gt_cache_dir=args.gt_cache_dir,
+        production_manifest=args.production_manifest,
+        production_cache_dir=args.production_cache_dir,
+        weights_path=args.weights,
+        candidates=candidates,
+        output_dir=args.output_dir,
+        gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
+        failure_threshold=args.failure_threshold,
+        high_gap_threshold=args.high_gap_threshold,
+        outlier_threshold=args.outlier_threshold,
+        learning_rate=args.learning_rate,
+        iterations=args.iterations,
+        num_leaves=args.num_leaves,
+        eval_fraction=args.eval_fraction,
+        split_seed=args.split_seed,
+        allow_image_backfill=args.allow_image_backfill,
+    )
     logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])
     return 0
 
@@ -159,7 +126,6 @@ if __name__ == "__main__":
 __all__ = [
     "EVAL_ROWS_CSV",
     "SCORER_ARTIFACT",
-    "SCORER_V2_ARTIFACT",
     "SCORER_V3_ARTIFACT",
     "TRAINING_CANDIDATE_TABLE_CSV",
     "TRAINING_METRICS_JSON",
@@ -167,5 +133,5 @@ __all__ = [
     "main",
     "train_runtime_resolver_scorer",
     "train_runtime_resolver_scorer_suite",
-    "train_runtime_resolver_scorer_v2",
+    "train_runtime_resolver_scorer_v3",
 ]

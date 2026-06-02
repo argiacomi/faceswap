@@ -20,11 +20,8 @@ from lib.landmarks.ensemble.runtime_features import (
 )
 from lib.landmarks.ensemble.scorer_target_config import (
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
-    MODEL_TYPE_LINEAR_REGRESSION,
-    MODEL_TYPE_LOGISTIC_REGRESSION,
     SCORE_SEMANTICS_PREDICTED_COST,
-    SCORE_SEMANTICS_PREDICTED_RISK,
-    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,189 +50,38 @@ def sigmoid(value: float) -> float:
 
 
 @dataclass(frozen=True)
-class RuntimeResolverScorer:
-    """Loaded runtime resolver scorer artifact."""
-
-    features: tuple[str, ...]
-    coefficients: tuple[float, ...]
-    intercept: float
-    artifact_schema_version: int = 1
-    model_type: str = MODEL_TYPE_LOGISTIC_REGRESSION
-    target: str = TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
-    score_semantics: str = SCORE_SEMANTICS_PREDICTED_RISK
-    higher_is_better: bool = False
-    failure_threshold: float = 0.08
-    calibration: dict[str, T.Any] | None = None
-    source_path: str = ""
-    version: str = "learned_quality_v2"
-    selection_target: str = "binary_failure_or_high_gap"
-    promoted_from: str = ""
-    objective: str = "minimize_candidate_failure_risk"
-    training_mode: str = "binary_failure_or_high_gap"
-    runtime_policy: str = "learned_quality_v2"
-    runtime_feature_contract_version: str = RUNTIME_FEATURE_CONTRACT_VERSION
-
-    def __post_init__(self) -> None:
-        """Validate the score direction contract at construction time."""
-        expected_semantics = (
-            SCORE_SEMANTICS_PREDICTED_COST
-            if self.model_type in {MODEL_TYPE_LINEAR_REGRESSION, MODEL_TYPE_LIGHTGBM_LAMBDARANK}
-            else SCORE_SEMANTICS_PREDICTED_RISK
-        )
-        if self.score_semantics != expected_semantics:
-            raise ValueError(
-                "runtime resolver scorer score_semantics/model_type mismatch: "
-                f"{self.score_semantics!r} for {self.model_type!r}"
-            )
-        if self.higher_is_better:
-            raise ValueError("runtime resolver scorer scores must rank lower as better")
-
-    @classmethod
-    def from_payload(
-        cls,
-        payload: T.Mapping[str, T.Any],
-        *,
-        source_path: str = "",
-    ) -> RuntimeResolverScorer:
-        """Build a scorer from a JSON artifact payload."""
-        features = tuple(str(item) for item in payload.get("features", ()))
-        coefficients = tuple(float(item) for item in payload.get("coefficients", ()))
-        if not features:
-            raise ValueError("runtime resolver scorer artifact has no features")
-        if len(features) != len(coefficients):
-            raise ValueError(
-                "runtime resolver scorer features/coefficients length mismatch: "
-                f"{len(features)} != {len(coefficients)}"
-            )
-        model_type = str(payload.get("model_type", MODEL_TYPE_LOGISTIC_REGRESSION))
-        supported_model_types = {MODEL_TYPE_LOGISTIC_REGRESSION, MODEL_TYPE_LINEAR_REGRESSION}
-        if model_type not in supported_model_types:
-            raise ValueError(f"unsupported runtime resolver scorer model_type {model_type!r}")
-        default_score_semantics = (
-            SCORE_SEMANTICS_PREDICTED_COST
-            if model_type == MODEL_TYPE_LINEAR_REGRESSION
-            else SCORE_SEMANTICS_PREDICTED_RISK
-        )
-        score_semantics = str(payload.get("score_semantics", default_score_semantics))
-        if score_semantics != default_score_semantics:
-            raise ValueError(
-                "runtime resolver scorer score_semantics/model_type mismatch: "
-                f"{score_semantics!r} for {model_type!r}"
-            )
-        higher_is_better = bool(payload.get("higher_is_better", False))
-        if higher_is_better:
-            raise ValueError("runtime resolver scorer scores must rank lower as better")
-        calibration = payload.get("calibration", {"type": "none", "params": {}})
-        return cls(
-            features=features,
-            coefficients=coefficients,
-            intercept=float(payload.get("intercept", 0.0)),
-            artifact_schema_version=int(payload.get("artifact_schema_version", 1)),
-            model_type=model_type,
-            target=str(payload.get("target", TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP)),
-            score_semantics=score_semantics,
-            higher_is_better=higher_is_better,
-            failure_threshold=float(payload.get("failure_threshold", 0.08)),
-            calibration=calibration if isinstance(calibration, dict) else None,
-            source_path=source_path,
-            version=str(
-                payload.get("version", payload.get("scorer_version", "learned_quality_v2"))
-            ),
-            selection_target=str(payload.get("selection_target", "binary_failure_or_high_gap")),
-            promoted_from=str(payload.get("promoted_from", "")),
-            objective=str(payload.get("objective", "minimize_candidate_failure_risk")),
-            training_mode=str(payload.get("training_mode", "binary_failure_or_high_gap")),
-            runtime_policy=str(payload.get("runtime_policy", "learned_quality_v2")),
-            runtime_feature_contract_version=str(
-                payload.get("runtime_feature_contract_version", RUNTIME_FEATURE_CONTRACT_VERSION)
-            ),
-        )
-
-    def to_payload(self) -> dict[str, T.Any]:
-        """Serialize this scorer to a portable JSON payload."""
-        return {
-            "artifact_schema_version": self.artifact_schema_version,
-            "model_type": self.model_type,
-            "target": self.target,
-            "score_semantics": self.score_semantics,
-            "higher_is_better": self.higher_is_better,
-            "failure_threshold": self.failure_threshold,
-            "features": list(self.features),
-            "coefficients": list(self.coefficients),
-            "intercept": self.intercept,
-            "calibration": self.calibration or {"type": "none", "params": {}},
-            "version": self.version,
-            "scorer_version": self.version,
-            "selection_target": self.selection_target,
-            "promoted_from": self.promoted_from,
-            "objective": self.objective,
-            "training_mode": self.training_mode,
-            "runtime_policy": self.runtime_policy,
-            "runtime_feature_contract_version": self.runtime_feature_contract_version,
-        }
-
-    def score_feature_map(self, features: T.Mapping[str, float]) -> float:
-        """Return predicted candidate risk/cost for a precomputed feature map."""
-        linear = self.intercept
-        for name, coefficient in zip(self.features, self.coefficients, strict=True):
-            linear += coefficient * _float(features.get(name))
-        if self.model_type == MODEL_TYPE_LINEAR_REGRESSION:
-            return float(linear)
-        return sigmoid(linear)
-
-    def score_feature_maps(self, feature_maps: T.Sequence[T.Mapping[str, float]]) -> list[float]:
-        """Score N feature dicts through one dense matrix path.
-
-        This mirrors RuntimeResolverLightGBMScorer.score_feature_maps so evaluation
-        can batch all scorer policies uniformly. For linear/logistic scorers the
-        result is mathematically identical to repeated score_feature_map calls.
-        """
-        if not feature_maps:
-            return []
-        x = feature_matrix(feature_maps, self.features)
-        coefs = np.asarray(self.coefficients, dtype="float64")
-        linear = x @ coefs + float(self.intercept)
-        if self.model_type == MODEL_TYPE_LINEAR_REGRESSION:
-            return [float(value) for value in linear]
-        return [sigmoid(float(value)) for value in linear]
-
-    def score_candidate(
-        self,
-        candidate: CandidateLike,
-        metric: MetricLike,
-        **context: T.Any,
-    ) -> float:
-        """Return predicted risk for one candidate and diagnostic context."""
-        return self.score_feature_map(candidate_feature_map(candidate, metric, **context))
-
-
-@dataclass(frozen=True)
-class RuntimeResolverLightGBMScorer:
-    """Loaded LightGBM LambdaRank scorer artifact."""
+class RuntimeResolverLearnedScorer:
+    """Loaded learned-quality v3 LambdaRank scorer artifact."""
 
     features: tuple[str, ...]
     model_data: str
     artifact_schema_version: int = 2
     model_type: str = MODEL_TYPE_LIGHTGBM_LAMBDARANK
-    target: str = "selection_cost"
+    target: str = TARGET_TRANSFORM_REGRET_V3
     score_semantics: str = SCORE_SEMANTICS_PREDICTED_COST
     higher_is_better: bool = False
     failure_threshold: float = 0.08
     calibration: dict[str, T.Any] | None = None
     source_path: str = ""
-    version: str = "learned_quality_v2"
-    selection_target: str = "inverse_selection_cost_rank"
+    version: str = "learned_quality_v3"
+    selection_target: str = TARGET_TRANSFORM_REGRET_V3
     promoted_from: str = ""
-    objective: str = "lambdarank_inverse_regret"
-    training_mode: str = "grouped_lambdarank"
-    runtime_policy: str = "learned_quality_v2"
+    objective: str = "lambdarank_transform_regret_v3"
+    training_mode: str = "grouped_lambdarank_v3"
+    runtime_policy: str = "learned_quality_v3"
     runtime_feature_contract_version: str = RUNTIME_FEATURE_CONTRACT_VERSION
     feature_importances: dict[str, float] | None = None
     _booster_cache: T.Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.model_type != MODEL_TYPE_LIGHTGBM_LAMBDARANK:
-            raise ValueError(f"unsupported v2 scorer model_type {self.model_type!r}")
+            raise ValueError(f"unsupported runtime scorer model_type {self.model_type!r}")
+        if self.version != "learned_quality_v3" or self.runtime_policy != "learned_quality_v3":
+            raise ValueError("runtime scorer loader only accepts learned_quality_v3 artifacts")
+        if self.target != TARGET_TRANSFORM_REGRET_V3:
+            raise ValueError(
+                "runtime scorer loader only accepts transform_alignment_regret_v3 artifacts"
+            )
         if self.score_semantics != SCORE_SEMANTICS_PREDICTED_COST:
             raise ValueError("LightGBM runtime scorer must expose predicted_cost semantics")
         if self.higher_is_better:
@@ -247,34 +93,33 @@ class RuntimeResolverLightGBMScorer:
         payload: T.Mapping[str, T.Any],
         *,
         source_path: str = "",
-    ) -> RuntimeResolverLightGBMScorer:
+    ) -> RuntimeResolverLearnedScorer:
         features = tuple(str(item) for item in payload.get("features", ()))
         if not features:
-            raise ValueError("runtime resolver v2 scorer artifact has no features")
+            raise ValueError("runtime resolver scorer artifact has no features")
         model_data = str(payload.get("model_data") or "")
         if not model_data:
-            raise ValueError("runtime resolver v2 scorer artifact has no model_data")
+            raise ValueError("runtime resolver scorer artifact has no model_data")
         calibration = payload.get("calibration", {"type": "none", "params": {}})
         importances = payload.get("feature_importances", {})
+        version = str(payload.get("version", payload.get("scorer_version", "learned_quality_v3")))
         return cls(
             features=features,
             model_data=model_data,
             artifact_schema_version=int(payload.get("artifact_schema_version", 2)),
             model_type=str(payload.get("model_type", MODEL_TYPE_LIGHTGBM_LAMBDARANK)),
-            target=str(payload.get("target", "selection_cost")),
+            target=str(payload.get("target", TARGET_TRANSFORM_REGRET_V3)),
             score_semantics=str(payload.get("score_semantics", SCORE_SEMANTICS_PREDICTED_COST)),
             higher_is_better=bool(payload.get("higher_is_better", False)),
             failure_threshold=float(payload.get("failure_threshold", 0.08)),
             calibration=calibration if isinstance(calibration, dict) else None,
             source_path=source_path,
-            version=str(
-                payload.get("version", payload.get("scorer_version", "learned_quality_v2"))
-            ),
-            selection_target=str(payload.get("selection_target", "inverse_selection_cost_rank")),
+            version=version,
+            selection_target=str(payload.get("selection_target", TARGET_TRANSFORM_REGRET_V3)),
             promoted_from=str(payload.get("promoted_from", "")),
-            objective=str(payload.get("objective", "lambdarank_inverse_regret")),
-            training_mode=str(payload.get("training_mode", "grouped_lambdarank")),
-            runtime_policy=str(payload.get("runtime_policy", "learned_quality_v2")),
+            objective=str(payload.get("objective", "lambdarank_transform_regret_v3")),
+            training_mode=str(payload.get("training_mode", "grouped_lambdarank_v3")),
+            runtime_policy=str(payload.get("runtime_policy", version)),
             runtime_feature_contract_version=str(
                 payload.get("runtime_feature_contract_version", RUNTIME_FEATURE_CONTRACT_VERSION)
             ),
@@ -304,7 +149,7 @@ class RuntimeResolverLightGBMScorer:
             import lightgbm as lgb
         except ModuleNotFoundError as err:  # pragma: no cover - depends on runtime env
             raise RuntimeError(
-                "learned_quality_v2 requires lightgbm to load scorer artifacts"
+                "learned_quality_v3 requires lightgbm to load scorer artifacts"
             ) from err
         logger.debug("[RuntimeResolver] imported lightgbm")
         logger.debug("[RuntimeResolver] constructing LightGBM Booster")
@@ -384,20 +229,20 @@ class RuntimeResolverLightGBMScorer:
 @lru_cache(maxsize=8)
 def _load_runtime_resolver_scorer_cached(
     path: str,
-) -> RuntimeResolverScorer | RuntimeResolverLightGBMScorer:
+) -> RuntimeResolverLearnedScorer:
     """Read and parse a scorer artifact, memoized by resolved path."""
     source = Path(path)
     payload = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("runtime resolver scorer artifact must be a JSON object")
-    if str(payload.get("model_type", "")) == MODEL_TYPE_LIGHTGBM_LAMBDARANK:
-        return RuntimeResolverLightGBMScorer.from_payload(payload, source_path=str(source))
-    return RuntimeResolverScorer.from_payload(payload, source_path=str(source))
+    if str(payload.get("model_type", "")) != MODEL_TYPE_LIGHTGBM_LAMBDARANK:
+        raise ValueError("runtime resolver scorer must be a learned_quality_v3 LightGBM artifact")
+    return RuntimeResolverLearnedScorer.from_payload(payload, source_path=str(source))
 
 
 def load_runtime_resolver_scorer(
     path: str | Path,
-) -> RuntimeResolverScorer | RuntimeResolverLightGBMScorer:
+) -> RuntimeResolverLearnedScorer:
     """Load a runtime resolver scorer artifact from disk.
 
     Scorer artifacts are immutable once promoted, and ``runtime_resolver``
@@ -409,7 +254,7 @@ def load_runtime_resolver_scorer(
 
 
 def write_runtime_resolver_scorer(
-    scorer: RuntimeResolverScorer | RuntimeResolverLightGBMScorer,
+    scorer: RuntimeResolverLearnedScorer,
     path: str | Path,
 ) -> Path:
     """Write a runtime resolver scorer artifact to disk."""
@@ -423,43 +268,32 @@ def write_runtime_resolver_scorer(
 
 
 def candidate_scores(
-    scorer: RuntimeResolverScorer | RuntimeResolverLightGBMScorer,
+    scorer: RuntimeResolverLearnedScorer,
     candidates: T.Sequence[CandidateLike],
     metrics: T.Mapping[str, MetricLike],
     **context: T.Any,
 ) -> dict[str, float]:
     """Score all candidates that have matching metric payloads.
 
-    For the LightGBM (learned_quality_v2) path we build one feature matrix
-    and call ``predict`` once — the old code did N=len(candidates) 1-row
-    predict calls and was the hot spot under load.
+    Build one feature matrix and call ``predict`` once; per-candidate
+    1-row prediction is the hot path this avoids.
     """
     eligible = [c for c in candidates if str(c.name) in metrics]
-    if isinstance(scorer, RuntimeResolverLightGBMScorer):
-        if not eligible:
-            return {}
-        logger.debug(
-            "[RuntimeResolver] batch scoring %d candidate(s) via %s",
-            len(eligible),
-            type(scorer).__name__,
-        )
-        feature_maps = runtime_candidate_feature_maps(eligible, metrics, **context)
-        scores = scorer.score_feature_maps(feature_maps)
-        batched = {
-            str(candidate.name): float(score)
-            for candidate, score in zip(eligible, scores, strict=True)
-        }
-        logger.debug("[RuntimeResolver] batch score done scores=%s", batched)
-        return batched
-
-    per_candidate: dict[str, float] = {}
-    for candidate in eligible:
-        name = str(candidate.name)
-        logger.debug("[RuntimeResolver] score start candidate=%s", name)
-        score = float(scorer.score_candidate(candidate, metrics[name], **context))
-        logger.debug("[RuntimeResolver] score done candidate=%s score=%s", name, score)
-        per_candidate[name] = score
-    return per_candidate
+    if not eligible:
+        return {}
+    logger.debug(
+        "[RuntimeResolver] batch scoring %d candidate(s) via %s",
+        len(eligible),
+        type(scorer).__name__,
+    )
+    feature_maps = runtime_candidate_feature_maps(eligible, metrics, **context)
+    scores = scorer.score_feature_maps(feature_maps)
+    batched = {
+        str(candidate.name): float(score)
+        for candidate, score in zip(eligible, scores, strict=True)
+    }
+    logger.debug("[RuntimeResolver] batch score done scores=%s", batched)
+    return batched
 
 
 def feature_matrix(
@@ -474,8 +308,7 @@ def feature_matrix(
 
 
 __all__ = [
-    "RuntimeResolverScorer",
-    "RuntimeResolverLightGBMScorer",
+    "RuntimeResolverLearnedScorer",
     "candidate_feature_map",
     "candidate_scores",
     "feature_matrix",

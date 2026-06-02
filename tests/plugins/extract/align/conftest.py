@@ -2,13 +2,13 @@
 """Hermetic defaults for the landmark-ensemble plugin test folder.
 
 When the local Faceswap config has ``use_alignment_resolver=True`` and/or
-``resolver_policy="learned_quality_v2"`` (e.g. an installed production
+``resolver_policy="learned_quality_v3"`` (e.g. an installed production
 bundle), ``Ensemble(...)`` calls that don't explicitly opt out fall through
 to those defaults and raise:
 
 * ``ProductionBundleMissing`` when no bundle/setup/scorer kwargs are
   supplied — the test environment intentionally doesn't ship one.
-* ``ValueError: learned_quality_v2 requires resolver_scorer_path`` when the
+* ``ValueError: learned_quality_v3 requires resolver_scorer_path`` when the
   policy demands a scorer path but the test doesn't provide one.
 
 This conftest pins the implicit defaults to:
@@ -18,7 +18,7 @@ This conftest pins the implicit defaults to:
 * ``resolver_policy = "roll_aware_veto"`` — for tests that *do* opt into
   the resolver but don't supply a scorer, ``roll_aware_veto`` runs
   without one (Tk-parity safety check); tests that intentionally exercise
-  ``learned_quality_v2`` still passes its own
+  ``learned_quality_v3`` still passes its own
   ``resolver_policy=...`` kwarg, which the test fixture leaves alone.
 
 Tests that explicitly want the resolver on remain unchanged because they

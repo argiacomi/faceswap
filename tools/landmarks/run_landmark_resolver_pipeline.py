@@ -31,7 +31,7 @@ from lib.landmarks.ensemble.scorer_dataset import (
     SCORER_ROWS_CSV,
 )
 from lib.landmarks.ensemble.scorer_target_config import (
-    TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_training import SCORER_SUITE_METRICS_JSON
 from lib.landmarks.ensemble.static_weight_fit import compute_static_weights
@@ -95,17 +95,13 @@ BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
 HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.json"
 PRODUCTION_CACHE_SENTINEL_FILENAME = ".production_prediction_cache_complete.json"
 PRODUCTION_RESOLVER_METADATA_SENTINEL_FILENAME = ".production_resolver_metadata_complete.json"
-V2_SCORER_TRAINING_SENTINEL_FILENAME = ".v2_scorer_training_complete.json"
 SCORER_TRAINING_SENTINEL_FILENAME = ".scorer_training_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
-SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
-PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V2, SCORER_VERSION_LEARNED_QUALITY_V3)
-STAGE_ALIASES = {
-    "v2_scorer_training": "scorer_training",
-}
+PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V3,)
+STAGE_ALIASES: dict[str, str] = {}
 
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
@@ -171,14 +167,10 @@ class PipelinePaths:
     frozen_gt_metadata: Path = field(init=False)
     scorer_train_dir: Path = field(init=False)
     scorer_artifact: Path = field(init=False)
-    v2_scorer_train_dir: Path = field(init=False)
-    v2_scorer_artifact: Path = field(init=False)
-    v2_scorer_training_sentinel: Path = field(init=False)
     scorer_dataset_dir: Path = field(init=False)
     scorer_rows_csv: Path = field(init=False)
     scorer_dataset_manifest: Path = field(init=False)
     canonical_scorers_dir: Path = field(init=False)
-    canonical_v2_scorer_artifact: Path = field(init=False)
     canonical_v3_scorer_artifact: Path = field(init=False)
     scorer_suite_metrics: Path = field(init=False)
     scorer_training_sentinel: Path = field(init=False)
@@ -284,19 +276,6 @@ class PipelinePaths:
         object.__setattr__(self, "hard_manifest", self.hard_dir / "manifest.json")
         object.__setattr__(self, "frozen_gt_metadata", self.output_root / RESOLVER_METADATA_JSONL)
         object.__setattr__(self, "scorer_train_dir", self.output_root / "scorer_training")
-        object.__setattr__(self, "v2_scorer_train_dir", self.scorer_train_dir / "v2_lambdarank")
-        object.__setattr__(
-            self,
-            "v2_scorer_artifact",
-            self.v2_scorer_train_dir / "runtime_resolver_scorer_v2.json",
-        )
-        object.__setattr__(
-            self,
-            "v2_scorer_training_sentinel",
-            self.v2_scorer_train_dir / V2_SCORER_TRAINING_SENTINEL_FILENAME,
-        )
-
-        object.__setattr__(self, "scorer_artifact", self.v2_scorer_artifact)
         object.__setattr__(self, "scorer_dataset_dir", self.scorer_train_dir / SCORER_DATASET_DIR)
         object.__setattr__(self, "scorer_rows_csv", self.scorer_dataset_dir / SCORER_ROWS_CSV)
         object.__setattr__(
@@ -307,14 +286,10 @@ class PipelinePaths:
         object.__setattr__(self, "canonical_scorers_dir", self.scorer_train_dir / "scorers")
         object.__setattr__(
             self,
-            "canonical_v2_scorer_artifact",
-            self.canonical_scorers_dir / "learned_quality_v2.json",
-        )
-        object.__setattr__(
-            self,
             "canonical_v3_scorer_artifact",
             self.canonical_scorers_dir / "learned_quality_v3.json",
         )
+        object.__setattr__(self, "scorer_artifact", self.canonical_v3_scorer_artifact)
 
         object.__setattr__(
             self,
@@ -742,45 +717,6 @@ def _write_production_resolver_metadata_sentinel(
     )
 
 
-def _v2_scorer_training_sentinel_payload(
-    args: argparse.Namespace,
-    paths: PipelinePaths,
-) -> dict[str, T.Any]:
-    return {
-        "hard_manifest": str(paths.hard_manifest),
-        "hard_manifest_sha256": _sha256_file(paths.hard_manifest),
-        "production_manifest": str(paths.production_manifest),
-        "production_manifest_sha256": _sha256_file(paths.production_manifest),
-        "hard_source_cache_sentinel": str(paths.hard_source_cache_sentinel),
-        "hard_source_cache_sentinel_sha256": _sha256_file(paths.hard_source_cache_sentinel),
-        "production_cache_sentinel": str(paths.production_cache_sentinel),
-        "production_cache_sentinel_sha256": _sha256_file(paths.production_cache_sentinel),
-        "best_weights": str(paths.best_weights),
-        "best_weights_sha256": _sha256_file(paths.best_weights),
-        "frozen_gt_metadata": str(paths.frozen_gt_metadata),
-        "frozen_gt_metadata_sha256": _sha256_file(paths.frozen_gt_metadata),
-        "candidates": str(args.candidates),
-        "split_seed": int(args.split_seed),
-        "eval_fraction": float(args.v2_eval_fraction),
-        "learning_rate": float(args.v2_learning_rate),
-        "iterations": int(args.v2_iterations),
-        "num_leaves": int(args.v2_num_leaves),
-        "scorer_train_arg": list(getattr(args, "scorer_train_arg", [])),
-        "allow_image_backfill": bool(args.allow_image_backfill),
-        "training_mode": SCORER_VERSION_LEARNED_QUALITY_V2,
-    }
-
-
-def _write_v2_scorer_training_sentinel(
-    args: argparse.Namespace,
-    paths: PipelinePaths,
-) -> None:
-    write_json(
-        paths.v2_scorer_training_sentinel,
-        _v2_scorer_training_sentinel_payload(args, paths),
-    )
-
-
 def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -860,16 +796,12 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
         "--production-gate-output",
         str(paths.candidate_dir / "production_gate"),
     ]
-    # The promoted scorer version this pipeline supports
-    # (``learned_quality_v2`` → runtime policy ``learned_quality_v2``) installs a learned
-    # quality runtime policy whose ranker has to choose between *multiple*
-    # fusion candidates that ``runtime_resolver.build_candidates`` derives
-    # from the promoted setup. A single-model or collapsed setup
-    # degenerates to one usable candidate and makes the trained ranker
-    # meaningless, so the candidate search must promote a real ensemble.
-    # ``--require-effective-ensemble`` activates the effective-ensemble
-    # gate (which also blocks dominant-model collapse) without enabling
-    # ``--allow-single-model-promotion``.
+    # The promoted learned-quality policy must choose between multiple fusion
+    # candidates from runtime_resolver.build_candidates. A single-model or
+    # collapsed setup degenerates to one usable candidate and makes the trained
+    # ranker meaningless, so candidate search must promote a real ensemble.
+    # --require-effective-ensemble activates that gate without allowing
+    # single-model promotion.
     argv.append("--require-effective-ensemble")
     return _append_extra(argv, args.candidate_search_arg)
 
@@ -951,15 +883,32 @@ def _scorer_training_sentinel_payload(
     args: argparse.Namespace,
     paths: PipelinePaths,
 ) -> dict[str, T.Any]:
-    payload = dict(_v2_scorer_training_sentinel_payload(args, paths))
-    payload.update(
-        {
-            "training_mode": "scorer_suite",
-            "failure_threshold": float(getattr(args, "failure_threshold", 0.08)),
-            "high_gap_threshold": float(getattr(args, "high_gap_threshold", 0.01)),
-        }
-    )
-    return payload
+    return {
+        "hard_manifest": str(paths.hard_manifest),
+        "hard_manifest_sha256": _sha256_file(paths.hard_manifest),
+        "production_manifest": str(paths.production_manifest),
+        "production_manifest_sha256": _sha256_file(paths.production_manifest),
+        "hard_source_cache_sentinel": str(paths.hard_source_cache_sentinel),
+        "hard_source_cache_sentinel_sha256": _sha256_file(paths.hard_source_cache_sentinel),
+        "production_cache_sentinel": str(paths.production_cache_sentinel),
+        "production_cache_sentinel_sha256": _sha256_file(paths.production_cache_sentinel),
+        "best_weights": str(paths.best_weights),
+        "best_weights_sha256": _sha256_file(paths.best_weights),
+        "frozen_gt_metadata": str(paths.frozen_gt_metadata),
+        "frozen_gt_metadata_sha256": _sha256_file(paths.frozen_gt_metadata),
+        "candidates": str(args.candidates),
+        "split_seed": int(args.split_seed),
+        "eval_fraction": float(args.scorer_eval_fraction),
+        "learning_rate": float(args.scorer_learning_rate),
+        "iterations": int(args.scorer_iterations),
+        "num_leaves": int(args.scorer_num_leaves),
+        "scorer_train_arg": list(getattr(args, "scorer_train_arg", [])),
+        "allow_image_backfill": bool(args.allow_image_backfill),
+        "training_mode": "scorer_suite",
+        "target": TARGET_TRANSFORM_REGRET_V3,
+        "failure_threshold": float(getattr(args, "failure_threshold", 0.08)),
+        "high_gap_threshold": float(getattr(args, "high_gap_threshold", 0.01)),
+    }
 
 
 def _sentinel_matches(path: Path, expected: dict[str, object]) -> bool:
@@ -1016,45 +965,6 @@ def _command_scorer_training(
     return _append_extra(argv, args.scorer_train_arg)
 
 
-def _command_v2_scorer_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    argv = [
-        args.python_executable,
-        _script("train_runtime_resolver_scorer.py"),
-        "--gt-manifest",
-        str(paths.hard_manifest),
-        "--gt-cache-dir",
-        str(paths.run_cache),
-        "--production-manifest",
-        str(paths.production_manifest),
-        "--production-cache-dir",
-        str(paths.production_cache),
-        "--weights",
-        str(paths.best_weights),
-        "--candidates",
-        args.candidates,
-        "--output-dir",
-        str(paths.v2_scorer_train_dir),
-        "--training-mode",
-        "learned_quality_v2",
-        "--target",
-        TARGET_SELECTION_COST,
-        "--split-seed",
-        str(args.split_seed),
-        "--eval-fraction",
-        str(args.v2_eval_fraction),
-        "--learning-rate",
-        str(args.v2_learning_rate),
-        "--iterations",
-        str(args.v2_iterations),
-        "--num-leaves",
-        str(args.v2_num_leaves),
-    ]
-    if args.allow_image_backfill:
-        argv.append("--allow-image-backfill")
-    argv.extend(["--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)])
-    return _append_extra(argv, args.scorer_train_arg)
-
-
 def _command_scorer_suite_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -1076,17 +986,17 @@ def _command_scorer_suite_training(args: argparse.Namespace, paths: PipelinePath
         "--training-mode",
         "scorer_suite",
         "--target",
-        TARGET_SELECTION_COST,
+        TARGET_TRANSFORM_REGRET_V3,
         "--split-seed",
         str(args.split_seed),
         "--eval-fraction",
-        str(args.v2_eval_fraction),
+        str(args.scorer_eval_fraction),
         "--learning-rate",
-        str(args.v2_learning_rate),
+        str(args.scorer_learning_rate),
         "--iterations",
-        str(args.v2_iterations),
+        str(args.scorer_iterations),
         "--num-leaves",
-        str(args.v2_num_leaves),
+        str(args.scorer_num_leaves),
     ]
     if args.allow_image_backfill:
         argv.append("--allow-image-backfill")
@@ -1110,8 +1020,6 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         str(paths.best_weights),
         "--scorer",
         str(_promoted_scorer_source(args, paths)),
-        "--v2-scorer",
-        str(paths.canonical_v2_scorer_artifact),
         "--scorer-rows",
         str(paths.scorer_rows_csv),
         "--candidates",
@@ -1174,7 +1082,6 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "scorer_training": [
-            paths.canonical_v2_scorer_artifact,
             paths.canonical_v3_scorer_artifact,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
@@ -1308,7 +1215,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
     }[stage]
     success = {
         "scorer_training": [
-            "learned_quality_v2 runtime_resolver_scorer_v2.json exists",
+            "canonical learned_quality_v3 scorer artifact exists",
             "canonical scorer rows and manifest exist",
             "scorer training sentinel matches requested inputs and hyperparameters",
         ],
@@ -1332,10 +1239,6 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         ],
         "freeze_resolver_metadata": [
             "frozen resolver_metadata.jsonl exists and validates against the hard manifest"
-        ],
-        "v2_scorer_training": [
-            "learned_quality_v2 runtime_resolver_scorer_v2.json exists",
-            "v2 scorer training sentinel matches requested inputs and hyperparameters",
         ],
         "scorer_evaluation": ["scorer_policy_report.json exists"],
         "production_promotion_check": ["scorer report promotion_status/status is pass"],
@@ -1426,25 +1329,6 @@ def _dataset_manifest_sentinel_matches(args: argparse.Namespace, paths: Pipeline
         and payload.get("datasets") == list(_base_datasets(args))
         and payload.get("dataset_sources") == expected_sources
         and payload.get("dataset_build_args") == list(getattr(args, "dataset_build_arg", []))
-    )
-
-
-def _v2_scorer_training_sentinel_matches(
-    args: argparse.Namespace,
-    paths: PipelinePaths,
-) -> bool:
-    if (
-        not paths.v2_scorer_training_sentinel.is_file()
-        or not paths.hard_manifest.is_file()
-        or not paths.production_manifest.is_file()
-        or not paths.hard_source_cache_sentinel.is_file()
-        or not paths.production_cache_sentinel.is_file()
-        or not paths.best_weights.is_file()
-        or not paths.frozen_gt_metadata.is_file()
-    ):
-        return False
-    return _read_json(paths.v2_scorer_training_sentinel) == _v2_scorer_training_sentinel_payload(
-        args, paths
     )
 
 
@@ -1858,17 +1742,17 @@ def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any
         if isinstance(metrics, dict):
             return metrics
     raise RuntimeError(
-        "learned_quality_v2 promotion check failed: missing static_weighted_downweight "
+        "learned_quality_v3 promotion check failed: missing static_weighted_downweight "
         "baseline metrics"
     )
 
 
-def _validate_v2_promotion_gate(
+def _validate_learned_promotion_gate(
     report: T.Mapping[str, T.Any],
     *,
-    policy_name: str = SCORER_VERSION_LEARNED_QUALITY_V2,
+    policy_name: str = SCORER_VERSION_LEARNED_QUALITY_V3,
 ) -> list[str]:
-    """Validate legacy learned-quality promotion fields when no installed baseline exists."""
+    """Validate learned-quality promotion fields when no installed baseline exists."""
     status_keys: tuple[str, ...] = (
         f"{policy_name}_gate_status",
         f"{policy_name}_production_gate_status",
@@ -1878,18 +1762,6 @@ def _validate_v2_promotion_gate(
         f"{policy_name}_failed_gates",
         f"{policy_name}_production_failed_gates",
     )
-    if policy_name == SCORER_VERSION_LEARNED_QUALITY_V2:
-        status_keys = (
-            *status_keys,
-            "v2_gate_status",
-            "v2_production_gate_status",
-            "v2_promotion_status",
-        )
-        failed_keys = (
-            *failed_keys,
-            "v2_failed_gates",
-            "v2_production_failed_gates",
-        )
     for key in status_keys:
         status = report.get(key)
         if status is not None and str(status) != "pass":
@@ -2018,7 +1890,7 @@ def _promotion_check(
     report = _read_json(paths.scorer_report)
 
     policy_name = (
-        _promoted_runtime_policy(args) if args is not None else SCORER_VERSION_LEARNED_QUALITY_V2
+        _promoted_runtime_policy(args) if args is not None else SCORER_VERSION_LEARNED_QUALITY_V3
     )
 
     gates = report.get("installed_baseline_promotion")
@@ -2052,7 +1924,10 @@ def _promotion_check(
             f"production_failed_gates={production_failed}"
         )
 
-    promoted_notes: list[str] = _validate_v2_promotion_gate(report, policy_name=policy_name)
+    promoted_notes: list[str] = _validate_learned_promotion_gate(
+        report,
+        policy_name=policy_name,
+    )
 
     if promotion_scope == "universal":
         gt_status = str(report.get("gt_hard_gate_status") or "")
@@ -2186,21 +2061,21 @@ def _validate_stage_outputs(
 
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
     policy = _promoted_runtime_policy(args)
-    if policy == SCORER_VERSION_LEARNED_QUALITY_V3:
-        return paths.canonical_v3_scorer_artifact
-    return paths.canonical_v2_scorer_artifact
+    if policy != SCORER_VERSION_LEARNED_QUALITY_V3:
+        raise PipelineContractError(f"unsupported promoted learned policy {policy!r}")
+    return paths.canonical_v3_scorer_artifact
 
 
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
     explicit = str(getattr(args, "promoted_policy", "") or "")
     if explicit:
         return explicit
-    return str(getattr(args, "promoted_scorer_version", "") or SCORER_VERSION_LEARNED_QUALITY_V2)
+    return str(getattr(args, "promoted_scorer_version", "") or SCORER_VERSION_LEARNED_QUALITY_V3)
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
     payload = _read_json(_promoted_scorer_source(args, paths))
-    return str(payload.get("target") or TARGET_SELECTION_COST)
+    return str(payload.get("target") or TARGET_TRANSFORM_REGRET_V3)
 
 
 def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
@@ -2449,7 +2324,6 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
     automatically selects the matching scorer.
     """
     scorer_sources = {
-        "learned_quality_v2": paths.canonical_v2_scorer_artifact,
         "learned_quality_v3": paths.canonical_v3_scorer_artifact,
     }
     return install_production_bundle(
@@ -3138,16 +3012,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--split-seed", type=int, default=1337)
     parser.add_argument(
         "--scorer-target",
-        choices=(TARGET_SELECTION_COST,),
-        default=TARGET_SELECTION_COST,
+        choices=(TARGET_TRANSFORM_REGRET_V3,),
+        default=TARGET_TRANSFORM_REGRET_V3,
     )
     parser.add_argument(
         "--promoted-scorer-version",
         choices=PROMOTED_POLICIES,
-        default=SCORER_VERSION_LEARNED_QUALITY_V2,
+        default=SCORER_VERSION_LEARNED_QUALITY_V3,
         help=(
             "Scorer artifact to export into the stable runtime resolver scorer path. "
-            "Defaults to learned_quality_v2."
+            "Defaults to learned_quality_v3."
         ),
     )
     parser.add_argument(
@@ -3175,10 +3049,10 @@ def _parser() -> argparse.ArgumentParser:
             "Use --no-require-installed-baseline only for first-time bootstrap runs."
         ),
     )
-    parser.add_argument("--v2-eval-fraction", type=float, default=0.20)
-    parser.add_argument("--v2-learning-rate", type=float, default=0.05)
-    parser.add_argument("--v2-iterations", type=int, default=150)
-    parser.add_argument("--v2-num-leaves", type=int, default=31)
+    parser.add_argument("--scorer-eval-fraction", type=float, default=0.20)
+    parser.add_argument("--scorer-learning-rate", type=float, default=0.05)
+    parser.add_argument("--scorer-iterations", type=int, default=150)
+    parser.add_argument("--scorer-num-leaves", type=int, default=31)
     parser.add_argument(
         "--prediction-cache-mode",
         choices=("run-models", "fixtures"),

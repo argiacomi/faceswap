@@ -22,8 +22,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     _high_risk_safe_fallback_candidate,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
-    RuntimeResolverLightGBMScorer,
-    RuntimeResolverScorer,
+    RuntimeResolverLearnedScorer,
     load_runtime_resolver_scorer,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
@@ -46,13 +45,12 @@ from lib.landmarks.pipeline_conventions import (
     SOURCE_PRODUCTION_VALIDATED,
 )
 
-RuntimeResolverScorerLike = RuntimeResolverScorer | RuntimeResolverLightGBMScorer
+RuntimeResolverLearnedScorerLike = RuntimeResolverLearnedScorer
 
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
 DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
 PROMOTION_SCOPES = ("universal", "production")
-SCORER_VERSION_REPORT_LABEL = "learned_quality_v2"
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
 RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
 MIN_V3_ORACLE_GAP = 1e-4
@@ -1421,7 +1419,7 @@ def fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, 
     }
 
 
-def scorer_policy_key(scorer: RuntimeResolverScorerLike) -> str:
+def scorer_policy_key(scorer: RuntimeResolverLearnedScorerLike) -> str:
     """Return the stable report key for a learned scorer policy."""
     runtime_policy = str(getattr(scorer, "runtime_policy", "") or "")
     if runtime_policy in LEARNED_POLICIES:
@@ -1432,10 +1430,10 @@ def scorer_policy_key(scorer: RuntimeResolverScorerLike) -> str:
     target = str(getattr(scorer, "target", "") or "")
     if target == TARGET_TRANSFORM_REGRET_V3:
         return SCORER_VERSION_LEARNED_QUALITY_V3
-    return SCORER_VERSION_REPORT_LABEL
+    return SCORER_VERSION_LEARNED_QUALITY_V3
 
 
-def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) -> str:
+def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverLearnedScorerLike) -> str:
     """Return a stable policy key for a scorer path/artifact."""
     name = path.stem
     if name in LEARNED_POLICIES:
@@ -1451,7 +1449,7 @@ def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) ->
 
 def score_policy_choices(
     contexts: T.Sequence[SampleCandidateContext],
-    scorer: RuntimeResolverScorerLike,
+    scorer: RuntimeResolverLearnedScorerLike,
     *,
     risk_floor_for_safe_fallback: float,
     safe_fallback_min_delta: float,
@@ -1472,7 +1470,7 @@ def score_policy_choices(
 
 def load_installed_policy_scorers(
     scorer_dir: Path | None,
-) -> tuple[str, dict[str, RuntimeResolverScorerLike], str]:
+) -> tuple[str, dict[str, RuntimeResolverLearnedScorerLike], str]:
     """Load installed current production scorers keyed by runtime policy."""
     if scorer_dir is None:
         return "", {}, "not_configured"
@@ -1500,7 +1498,7 @@ def load_installed_policy_scorers(
         if bundle is not None and (bundle.bundle_dir / "scorers").resolve() == scorer_dir:
             active_policy = str(bundle.active_policy or "")
 
-    scorers: dict[str, RuntimeResolverScorerLike] = {}
+    scorers: dict[str, RuntimeResolverLearnedScorerLike] = {}
     for path in sorted(scorer_dir.glob("*.json")):
         try:
             scorer = load_runtime_resolver_scorer(path)
@@ -1568,7 +1566,7 @@ def installed_baseline_promotion_gates(
     return gates
 
 
-def assert_lower_score_is_better(scorer: RuntimeResolverScorerLike) -> None:
+def assert_lower_score_is_better(scorer: RuntimeResolverLearnedScorerLike) -> None:
     """Fail fast if a scorer artifact cannot be ranked by ascending score."""
     if scorer.higher_is_better:
         raise ValueError(
@@ -1839,7 +1837,6 @@ def evaluate_runtime_resolver_scorer(
     production_cache_dir: Path | None,
     weights_path: Path,
     scorer_path: Path,
-    v2_scorer_path: Path | None = None,
     candidates: T.Sequence[str],
     output_dir: Path,
     eval_split: Path | None = None,
@@ -1870,9 +1867,6 @@ def evaluate_runtime_resolver_scorer(
 
     scorer = load_runtime_resolver_scorer(scorer_path)
     assert_lower_score_is_better(scorer)
-    v2_scorer = None if v2_scorer_path is None else load_runtime_resolver_scorer(v2_scorer_path)
-    if v2_scorer is not None:
-        assert_lower_score_is_better(v2_scorer)
     source_by_sample_id: dict[str, str] = {}
     if scorer_rows is not None:
         contexts, source_by_sample_id = row_contexts_from_scorer_rows(scorer_rows)
@@ -1903,7 +1897,6 @@ def evaluate_runtime_resolver_scorer(
 
     rows: list[dict[str, T.Any]] = []
     scorer_choices: dict[str, str] = {}
-    v2_scorer_choices: dict[str, str] = {}
     current_choices: dict[str, str] = {}
     oracle_choices: dict[str, str] = {}
     fallback_impacts: list[dict[str, T.Any]] = []
@@ -1914,15 +1907,6 @@ def evaluate_runtime_resolver_scorer(
     for context in contexts:
         context_rows = _context_rows_for_eval(context)
         score_by_candidate = _score_context_rows(scorer, context_rows)
-        if v2_scorer is not None:
-            v2_score_by_candidate = _score_context_rows(v2_scorer, context_rows)
-            v2_chosen = choose_scorer(
-                context,
-                v2_score_by_candidate,
-                risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
-                safe_fallback_min_delta=safe_fallback_min_delta,
-            )[0]
-            v2_scorer_choices[context.sample_id] = v2_chosen
         (
             chosen,
             fallback_used,
@@ -2047,8 +2031,6 @@ def evaluate_runtime_resolver_scorer(
     extra_scorer_choices: dict[str, T.Mapping[str, str]] = {
         primary_scorer_policy: scorer_choices,
     }
-    if v2_scorer is not None:
-        extra_scorer_choices["learned_quality_v2"] = v2_scorer_choices
 
     report_extra_scorer_choices = dict(extra_scorer_choices)
 
@@ -2253,32 +2235,6 @@ def evaluate_runtime_resolver_scorer(
             *production_failed_gates,
             *hard_bucket_failed_gates,
         ]
-    v2_summary = (
-        policy_summary(
-            contexts,
-            v2_scorer_choices,
-            source_by_sample_id=source_by_sample_id,
-        )
-        if v2_scorer is not None
-        else None
-    )
-    v2_failed_gates: list[str] = []
-    if v2_summary is not None:
-        if (
-            use_v3_transform_metrics
-            and int(v2_summary.get("transform_eval_count_v3", 0) or 0) > 0
-            and int(scorer_summary.get("transform_eval_count_v3", 0) or 0) > 0
-        ):
-            if float(v2_summary["mean_transform_regret_v3"]) > float(
-                scorer_summary["mean_transform_regret_v3"]
-            ):
-                v2_failed_gates.append("v2_transform_regret_v3_regresses_vs_promoted_scorer")
-        else:
-            if v2_summary["mean_nme"] > scorer_summary["mean_nme"] + epsilon_mean_nme:
-                v2_failed_gates.append("v2_mean_nme_regresses_vs_promoted_scorer")
-            if v2_summary["failure_rate"] > scorer_summary["failure_rate"] + epsilon_failure_rate:
-                v2_failed_gates.append("v2_failure_rate_regresses_vs_promoted_scorer")
-
     if not promotion_policy:
         promotion_policy = primary_scorer_policy
 
@@ -2299,21 +2255,11 @@ def evaluate_runtime_resolver_scorer(
                 if key in LEARNED_POLICIES and isinstance(value, dict)
             }
         )
-        if primary_scorer_policy == SCORER_VERSION_REPORT_LABEL:
-            selected_policy_metrics.setdefault(
-                SCORER_VERSION_REPORT_LABEL,
-                production_only_policy_metrics[primary_scorer_policy],
-            )
     else:
         selected_policy_metrics.update(
             {
                 key: value
-                for key, value in {
-                    primary_scorer_policy: scorer_summary,
-                    "learned_quality_v2": scorer_summary
-                    if primary_scorer_policy == "learned_quality_v2"
-                    else (v2_summary or {}),
-                }.items()
+                for key, value in {primary_scorer_policy: scorer_summary}.items()
                 if key in LEARNED_POLICIES and isinstance(value, dict) and value
             }
         )
@@ -2323,9 +2269,6 @@ def evaluate_runtime_resolver_scorer(
         if use_v3_transform_metrics
         else scorer_summary,
     )
-    if v2_summary is not None:
-        selected_policy_metrics.setdefault(SCORER_VERSION_REPORT_LABEL, v2_summary)
-
     installed_metrics = None
     installed_choices = installed_scorer_choices.get(installed_policy)
     if installed_choices:
@@ -2427,32 +2370,18 @@ def evaluate_runtime_resolver_scorer(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
-        "v2_scorer_path": "" if v2_scorer_path is None else str(v2_scorer_path),
         "scorer_comparison": {
             "context_count": len(contexts),
             "candidate_count": len(candidates),
             "uses_same_contexts": True,
             "uses_same_candidates": True,
             "batched_policy_scoring": True,
-            "v2_scorer_present": v2_scorer is not None,
         },
         "primary_scorer_policy": primary_scorer_policy,
         "scorer_model_type": scorer.model_type,
         "scorer_target": scorer.target,
-        "promoted_scorer_version": (
-            v2_scorer.version
-            if promotion_policy == "learned_quality_v2"
-            and v2_scorer is not None
-            and primary_scorer_policy != "learned_quality_v2"
-            else scorer.version
-        ),
-        "promoted_scorer_target": (
-            v2_scorer.target
-            if promotion_policy == "learned_quality_v2"
-            and v2_scorer is not None
-            and primary_scorer_policy != "learned_quality_v2"
-            else scorer.target
-        ),
+        "promoted_scorer_version": scorer.version,
+        "promoted_scorer_target": scorer.target,
         "promoted_scorer_label": primary_scorer_policy,
         "runtime_policy": promotion_policy,
         "best_single": {"candidate": best_single_name, **best_single_report_summary},
@@ -2460,23 +2389,6 @@ def evaluate_runtime_resolver_scorer(
         primary_scorer_policy: scorer_summary,
         RUNTIME_POLICY_REPORT_LABEL: current_summary,
         "oracle": oracle_summary,
-        "learned_quality_v2": (
-            scorer_summary if primary_scorer_policy == "learned_quality_v2" else (v2_summary or {})
-        ),
-        "learned_quality_v2_promotion_status": (
-            ""
-            if v2_summary is None
-            else str(
-                installed_baseline_gates.get("learned_quality_v2", {}).get("status")
-                or ("pass" if not v2_failed_gates else "fail")
-            )
-        ),
-        "learned_quality_v2_failed_gates": list(
-            installed_baseline_gates.get("learned_quality_v2", {}).get(
-                "failed_gates",
-                v2_failed_gates,
-            )
-        ),
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
         "hard_slice_fallback_count": hard_slice_fallback_count,
@@ -2544,7 +2456,6 @@ def evaluate_runtime_resolver_scorer(
     }
     report["artifacts"] = {
         "scorer_path": str(scorer_path),
-        "v2_scorer_path": "" if v2_scorer_path is None else str(v2_scorer_path),
     }
     report["primary_scorer"] = {
         "label": primary_scorer_policy,

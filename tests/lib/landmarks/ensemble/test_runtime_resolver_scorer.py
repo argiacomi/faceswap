@@ -33,22 +33,17 @@ from lib.landmarks.ensemble.runtime_resolver import (
     CandidateRecord,
     bucket_candidate_name,
 )
-from lib.landmarks.ensemble.runtime_resolver_scorer import (
-    RuntimeResolverScorer,
-    load_runtime_resolver_scorer,
-    write_runtime_resolver_scorer,
-)
+from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
 from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_COLLAPSE_COST_PENALTY,
     DEFAULT_FAILURE_COST_PENALTY,
     DEFAULT_REGRET_NORMALIZER,
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     SCORE_SEMANTICS_PREDICTED_COST,
-    TARGET_ORACLE_REGRET,
-    TARGET_SELECTION_COST,
     TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.weights import save_weights
+from tests.lib.landmarks.ensemble.scorer_test_utils import LinearTestScorer
 from tools.landmarks.backfill_runtime_resolver_metadata import (
     backfill_runtime_resolver_metadata,
 )
@@ -66,9 +61,9 @@ from tools.landmarks.production_promotion_gate import (
     run_production_promotion_gate,
 )
 from tools.landmarks.train_runtime_resolver_scorer import (
-    SCORER_V2_ARTIFACT,
+    SCORER_V3_ARTIFACT,
     train_runtime_resolver_scorer,
-    train_runtime_resolver_scorer_v2,
+    train_runtime_resolver_scorer_v3,
 )
 
 
@@ -234,7 +229,7 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return manifest_path, cache_dir, weights_path
 
 
-def _write_fixture_v2_bucket_weights(weights_path: Path) -> None:
+def _write_fixture_bucket_weights(weights_path: Path) -> None:
     models = ("hrnet", "spiga", "orformer")
     write_best_weights(
         weights_path,
@@ -254,7 +249,7 @@ def _write_fixture_images(manifest_path: Path) -> None:
 
 
 def _install_fake_lightgbm(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install a deterministic fake LightGBM module for v2 scorer tests."""
+    """Install a deterministic fake LightGBM module for scorer tests."""
 
     class FakeBooster:
         def __init__(
@@ -304,6 +299,124 @@ def _install_fake_lightgbm(monkeypatch: pytest.MonkeyPatch) -> None:
         sys.modules,
         "lightgbm",
         SimpleNamespace(LGBMRanker=FakeRanker, Booster=FakeBooster),
+    )
+
+
+def _write_v3_test_scorer(
+    path: Path,
+    *,
+    features: tuple[str, ...],
+    runtime_policy: str = "learned_quality_v3",
+    version: str = "learned_quality_v3",
+) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": 2,
+                "version": version,
+                "scorer_version": version,
+                "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
+                "target": TARGET_TRANSFORM_REGRET_V3,
+                "objective": "lambdarank_transform_regret_v3",
+                "training_mode": "grouped_lambdarank_v3",
+                "selection_target": TARGET_TRANSFORM_REGRET_V3,
+                "runtime_policy": runtime_policy,
+                "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
+                "higher_is_better": False,
+                "failure_threshold": 0.08,
+                "features": list(features),
+                "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
+                "model_data": "fake-model",
+                "feature_importances": {feature: 1.0 for feature in features},
+                "calibration": {"type": "none", "params": {}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _v3_training_row(
+    *,
+    sample_id: str,
+    candidate_name: str,
+    transform_regret_v3: float,
+) -> scorer_data.CandidateQualityRow:
+    return scorer_data.CandidateQualityRow(
+        sample_id=sample_id,
+        face_index=0,
+        dataset="test",
+        condition="profile",
+        candidate_name=candidate_name,
+        candidate_nme=0.0,
+        oracle_nme=0.0,
+        regret_vs_oracle=0.0,
+        normalized_regret=0.0,
+        failure_label=False,
+        large_regret_label=False,
+        candidate_failure_or_high_gap=False,
+        selection_cost=0.0,
+        is_oracle=candidate_name == "hrnet",
+        was_selected_by_current_policy=candidate_name == "hrnet",
+        gap_vs_oracle=0.0,
+        runtime_bucket="profile_left",
+        hard_case_tags=("profile",),
+        risk_route="high_risk",
+        feature_values={
+            f"candidate_name={candidate_name}": 1.0,
+            "candidate_is_single_model": 1.0,
+            "candidate_is_fusion": 0.0,
+            "candidate_distance_to_hrnet": 0.0 if candidate_name == "hrnet" else 1.0,
+            "single_model_disagreement_px": 1.0,
+            "hrnet_geometry_valid": 1.0,
+            "runtime_bucket_source=stored_manifest_landmark_ensemble": 1.0,
+        },
+        selected_by_current_policy="hrnet",
+        selected_candidate_missing_from_eval=False,
+        oracle="hrnet",
+        runtime_bucket_source="stored_manifest_landmark_ensemble",
+        geometry_veto_reasons=(),
+        transform_cost_v3=transform_regret_v3,
+        center_delta_v3=0.0,
+        scale_delta_v3=0.0,
+        roll_delta_degrees_v3=0.0,
+        fit_delta_v3=0.0,
+        transform_oracle_cost_v3=0.0,
+        transform_regret_v3=transform_regret_v3,
+        transform_oracle_candidate_v3="hrnet",
+        transform_oracle_gap_v3=0.25,
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        hard_invalid_reasons_v3=(),
+        soft_structural_penalty_v3=0.0,
+    )
+
+
+def _patch_v3_training_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    regrets = {
+        "hrnet": 0.0,
+        "spiga": 0.25,
+        "static_weighted_downweight": 0.10,
+    }
+    rows = [
+        (
+            _v3_training_row(
+                sample_id=sample_id,
+                candidate_name=candidate_name,
+                transform_regret_v3=regret,
+            ),
+            "gt_hard",
+        )
+        for sample_id in ("s1", "s2")
+        for candidate_name, regret in regrets.items()
+    ]
+    monkeypatch.setattr(scorer_training, "load_scorer_contexts", lambda **_kwargs: [])
+    monkeypatch.setattr(scorer_training, "tagged_quality_rows", lambda *_args, **_kwargs: rows)
+    monkeypatch.setattr(
+        scorer_training,
+        "scorer_candidate_table_rows",
+        lambda *_args, **_kwargs: [],
     )
 
 
@@ -433,21 +546,6 @@ def test_scorer_training_weights_hard_condition_rows() -> None:
 
     assert scorer_eval_impl is not None
     assert scorer_training.scorer_sample_weight(row, "gt_hard") >= 4.0
-
-
-def test_oracle_regret_target_uses_raw_candidate_minus_oracle_nme() -> None:
-    context = _candidate_context(
-        nme_by_candidate={
-            "oracle": 0.01,
-            "zero": 0.01,
-            "small": 0.015,
-            "large": 0.05,
-            "failure": 0.02,
-        }
-    )
-    row = {item.candidate_name: item for item in scorer_data.rows_for_context(context)}["large"]
-
-    assert scorer_training.scorer_target_value(row, TARGET_ORACLE_REGRET) == pytest.approx(0.04)
 
 
 def test_hard_bucket_gates_fail_on_profile_failures() -> None:
@@ -693,14 +791,12 @@ def test_scorer_suite_trains_only_active_v3_target_and_persists_feature_contract
     )
 
     canonical_v3 = output_dir / "scorers" / "learned_quality_v3.json"
-    canonical_v2 = output_dir / "scorers" / "learned_quality_v2.json"
     artifact = json.loads(canonical_v3.read_text(encoding="utf-8"))
 
     assert set(metrics["scorers"]) == {"learned_quality_v3"}
     assert metrics["active_target"] == TARGET_TRANSFORM_REGRET_V3
     assert metrics["artifact"] == str(canonical_v3)
     assert canonical_v3.is_file()
-    assert not canonical_v2.exists()
     assert artifact["target"] == TARGET_TRANSFORM_REGRET_V3
     assert artifact["runtime_feature_contract_version"] == RUNTIME_FEATURE_CONTRACT_VERSION
     assert metrics["scorers"]["learned_quality_v3"]["runtime_feature_contract_version"] == (
@@ -708,11 +804,12 @@ def test_scorer_suite_trains_only_active_v3_target_and_persists_feature_contract
     )
 
 
-def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
+def test_train_runtime_resolver_scorer_wrapper_writes_v3_artifact_and_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     output_dir = tmp_path / "train"
 
@@ -728,23 +825,23 @@ def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
         eval_fraction=0.0,
     )
 
-    artifact_path = output_dir / SCORER_V2_ARTIFACT
+    artifact_path = output_dir / SCORER_V3_ARTIFACT
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
 
     assert artifact_path.is_file()
     assert metrics["artifact"] == str(artifact_path)
-    assert metrics["target"] == TARGET_SELECTION_COST
+    assert metrics["target"] == TARGET_TRANSFORM_REGRET_V3
     assert metrics["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert metrics["higher_is_better"] is False
     assert metrics["training_data_counts"]["row_count"] == 6
     assert metrics["training_data_counts"]["sample_group_count"] == 2
 
-    assert artifact["version"] == "learned_quality_v2"
-    assert artifact["scorer_version"] == "learned_quality_v2"
-    assert artifact["runtime_policy"] == "learned_quality_v2"
+    assert artifact["version"] == "learned_quality_v3"
+    assert artifact["scorer_version"] == "learned_quality_v3"
+    assert artifact["runtime_policy"] == "learned_quality_v3"
     assert artifact["runtime_feature_contract_version"] == RUNTIME_FEATURE_CONTRACT_VERSION
-    assert artifact["target"] == TARGET_SELECTION_COST
+    assert artifact["target"] == TARGET_TRANSFORM_REGRET_V3
     assert artifact["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert artifact["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert artifact["higher_is_better"] is False
@@ -756,7 +853,7 @@ def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
 
     assert (output_dir / "runtime_resolver_scorer_training_rows.csv").is_file()
     assert (output_dir / "runtime_resolver_scorer_eval_rows.csv").is_file()
-    assert (output_dir / "runtime_resolver_scorer_v2_feature_importances.csv").is_file()
+    assert (output_dir / "runtime_resolver_scorer_v3_feature_importances.csv").is_file()
 
     training_rows = output_dir / "runtime_resolver_scorer_training_rows.csv"
     with training_rows.open("r", newline="", encoding="utf-8") as handle:
@@ -769,11 +866,12 @@ def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
     assert "selection_cost" in header
 
 
-def test_train_runtime_resolver_scorer_supports_downstream_cost_v2_ranker(
+def test_train_runtime_resolver_scorer_supports_v3_ranker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     output_dir = tmp_path / "train_regressor"
 
@@ -787,35 +885,36 @@ def test_train_runtime_resolver_scorer_supports_downstream_cost_v2_ranker(
         output_dir=output_dir,
         iterations=20,
         eval_fraction=0.0,
-        target=TARGET_SELECTION_COST,
+        target=TARGET_TRANSFORM_REGRET_V3,
     )
 
-    artifact = json.loads((output_dir / SCORER_V2_ARTIFACT).read_text(encoding="utf-8"))
-    assert metrics["target"] == TARGET_SELECTION_COST
+    artifact = json.loads((output_dir / SCORER_V3_ARTIFACT).read_text(encoding="utf-8"))
+    assert metrics["target"] == TARGET_TRANSFORM_REGRET_V3
     assert metrics["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert metrics["higher_is_better"] is False
     assert metrics["training_data_counts"]["row_count"] == 6
     assert metrics["training_data_counts"]["sample_group_count"] == 2
-    assert metrics["sample_weighting"]["strategy"] == "hard_case_weighting_single_scorer"
+    assert metrics["sample_weighting"]["strategy"] == "v3_condition_query_weighting"
 
-    assert artifact["target"] == TARGET_SELECTION_COST
+    assert artifact["target"] == TARGET_TRANSFORM_REGRET_V3
     assert artifact["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert artifact["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert artifact["higher_is_better"] is False
-    assert artifact["version"] == "learned_quality_v2"
-    assert artifact["scorer_version"] == "learned_quality_v2"
-    assert artifact["selection_target"] == "inverse_selection_cost_rank"
-    assert artifact["objective"] == "lambdarank_inverse_regret"
-    assert artifact["training_mode"] == "grouped_lambdarank"
-    assert artifact["runtime_policy"] == "learned_quality_v2"
+    assert artifact["version"] == "learned_quality_v3"
+    assert artifact["scorer_version"] == "learned_quality_v3"
+    assert artifact["selection_target"] == "inverse_transform_regret_v3_rank"
+    assert artifact["objective"] == "lambdarank_visible_transform_regret"
+    assert artifact["training_mode"] == "grouped_lambdarank_rankable_v3_only"
+    assert artifact["runtime_policy"] == "learned_quality_v3"
 
 
-def test_downstream_cost_v2_artifact_ranks_lower_cost_features_first(
+def test_v3_artifact_ranks_lower_cost_features_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     output_dir = tmp_path / "train_rank_smoke"
 
@@ -829,10 +928,10 @@ def test_downstream_cost_v2_artifact_ranks_lower_cost_features_first(
         output_dir=output_dir,
         iterations=20,
         eval_fraction=0.0,
-        target=TARGET_SELECTION_COST,
+        target=TARGET_TRANSFORM_REGRET_V3,
     )
 
-    scorer = load_runtime_resolver_scorer(output_dir / "runtime_resolver_scorer_v2.json")
+    scorer = load_runtime_resolver_scorer(output_dir / "runtime_resolver_scorer_v3.json")
     low_cost_score = scorer.score_feature_map({"candidate_name=hrnet": 1.0})
     high_cost_score = scorer.score_feature_map({"candidate_name=spiga": 1.0})
 
@@ -842,32 +941,17 @@ def test_downstream_cost_v2_artifact_ranks_lower_cost_features_first(
     assert np.isfinite(low_cost_score)
     assert np.isfinite(high_cost_score)
 
-    label_context = _candidate_context(
-        nme_by_candidate={
-            "oracle": 0.01,
-            "zero": 0.01,
-            "small": 0.015,
-            "large": 0.05,
-            "failure": 0.02,
-        },
-        failure_by_candidate={"failure": True},
-        geometry_veto_reasons={"failure": ("cloud_area_too_small",)},
-    )
-    label_rows = {row.candidate_name: row for row in scorer_data.rows_for_context(label_context)}
-    assert scorer_training._lambdarank_label(
-        label_rows["oracle"]
-    ) > scorer_training._lambdarank_label(label_rows["failure"])
 
-
-def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
+def test_train_runtime_resolver_scorer_v3_writes_lightgbm_ranker_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    output_dir = tmp_path / "train_v2"
+    output_dir = tmp_path / "train_v3"
 
-    metrics = train_runtime_resolver_scorer_v2(
+    metrics = train_runtime_resolver_scorer_v3(
         gt_manifest=None,
         gt_cache_dir=None,
         production_manifest=manifest_path,
@@ -880,20 +964,20 @@ def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
         split_seed=7,
     )
 
-    artifact = json.loads((output_dir / SCORER_V2_ARTIFACT).read_text(encoding="utf-8"))
-    scorer = load_runtime_resolver_scorer(output_dir / SCORER_V2_ARTIFACT)
+    artifact = json.loads((output_dir / SCORER_V3_ARTIFACT).read_text(encoding="utf-8"))
+    scorer = load_runtime_resolver_scorer(output_dir / SCORER_V3_ARTIFACT)
     feature_map = {"candidate_name=hrnet": 1.0}
 
     assert metrics["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert artifact["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
-    assert artifact["version"] == "learned_quality_v2"
-    assert artifact["runtime_policy"] == "learned_quality_v2"
+    assert artifact["version"] == "learned_quality_v3"
+    assert artifact["runtime_policy"] == "learned_quality_v3"
     assert artifact["higher_is_better"] is False
     assert artifact["training_data_counts"]["sample_group_count"] == 2
     assert artifact["split_ids"]["seed"] == 7
     assert artifact["feature_importances"]
-    assert (output_dir / "runtime_resolver_scorer_v2_feature_importances.csv").is_file()
+    assert (output_dir / "runtime_resolver_scorer_v3_feature_importances.csv").is_file()
     assert scorer.model_type == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert scorer.score_semantics == SCORE_SEMANTICS_PREDICTED_COST
     assert scorer.higher_is_better is False
@@ -902,15 +986,16 @@ def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
     )
 
 
-def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None:
+def test_evaluate_runtime_resolver_scorer_reports_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet", "candidate_name=spiga"),
-            coefficients=(-5.0, 5.0),
-            intercept=0.0,
-        ),
-        tmp_path / "runtime_resolver_scorer_v2.json",
+    scorer_path = _write_v3_test_scorer(
+        tmp_path / "runtime_resolver_scorer_v3.json",
+        features=("candidate_name=hrnet", "candidate_name=spiga"),
     )
 
     report = evaluate_runtime_resolver_scorer(
@@ -925,15 +1010,15 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     )
 
     assert report["status"] == "fail"
-    assert "scorer_mean_nme_not_better_than_static_downweight" in report["failed_gates"]
+    assert "transform_error_missing_rankable_pair_eval" in report["failed_gates"]
     assert report["heldout_eval"] is False
-    assert report["runtime_policy"] == "learned_quality_v2"
-    assert report["promoted_scorer_label"] == "learned_quality_v2"
-    assert "learned_quality_v2" in report
-    assert report["learned_quality_v2"]["pick_counts"] == {"hrnet": 2}
+    assert report["runtime_policy"] == "learned_quality_v3"
+    assert report["promoted_scorer_label"] == "learned_quality_v3"
+    assert "learned_quality_v3" in report
+    assert report["learned_quality_v3"]["pick_counts"] == {"hrnet": 2}
     assert report["production_only_policy_metrics"]["sample_count"] == 2
-    assert "learned_quality_v2" in report["production_only_policy_metrics"]
-    assert report["production_only_policy_metrics"]["learned_quality_v2"]["pick_counts"] == {
+    assert "learned_quality_v3" in report["production_only_policy_metrics"]
+    assert report["production_only_policy_metrics"]["learned_quality_v3"]["pick_counts"] == {
         "hrnet": 2
     }
     assert report["gt_hard_only_policy_metrics"]["sample_count"] == 0
@@ -964,14 +1049,15 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     }
 
 
-def test_evaluate_runtime_resolver_scorer_reports_v2_primary_policy(
+def test_evaluate_runtime_resolver_scorer_reports_v3_primary_policy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    train_dir = tmp_path / "train_v2_primary"
-    train_runtime_resolver_scorer_v2(
+    train_dir = tmp_path / "train_v3_primary"
+    train_runtime_resolver_scorer_v3(
         gt_manifest=None,
         gt_cache_dir=None,
         production_manifest=manifest_path,
@@ -982,7 +1068,7 @@ def test_evaluate_runtime_resolver_scorer_reports_v2_primary_policy(
         iterations=4,
         eval_fraction=0.0,
     )
-    v2_scorer_path = train_dir / SCORER_V2_ARTIFACT
+    scorer_path = train_dir / SCORER_V3_ARTIFACT
 
     report = evaluate_runtime_resolver_scorer(
         gt_manifest=None,
@@ -990,29 +1076,30 @@ def test_evaluate_runtime_resolver_scorer_reports_v2_primary_policy(
         production_manifest=manifest_path,
         production_cache_dir=cache_dir,
         weights_path=weights_path,
-        scorer_path=v2_scorer_path,
+        scorer_path=scorer_path,
         candidates=("hrnet", "spiga", "static_weighted_downweight"),
-        output_dir=tmp_path / "eval_v2",
+        output_dir=tmp_path / "eval_v3",
     )
 
-    assert report["primary_scorer_policy"] == "learned_quality_v2"
-    assert report["runtime_policy"] == "learned_quality_v2"
-    assert report["promoted_scorer_label"] == "learned_quality_v2"
-    assert report["promoted_scorer_target"] == TARGET_SELECTION_COST
-    assert report["scorer_target"] == TARGET_SELECTION_COST
-    assert "learned_quality_v2" in report
-    assert report["primary_scorer"]["label"] == "learned_quality_v2"
-    assert report["primary_scorer"]["metrics"] == report["learned_quality_v2"]
+    assert report["primary_scorer_policy"] == "learned_quality_v3"
+    assert report["runtime_policy"] == "learned_quality_v3"
+    assert report["promoted_scorer_label"] == "learned_quality_v3"
+    assert report["promoted_scorer_target"] == TARGET_TRANSFORM_REGRET_V3
+    assert report["scorer_target"] == TARGET_TRANSFORM_REGRET_V3
+    assert "learned_quality_v3" in report
+    assert report["primary_scorer"]["label"] == "learned_quality_v3"
+    assert report["primary_scorer"]["metrics"] == report["learned_quality_v3"]
 
 
-def test_evaluate_runtime_resolver_scorer_emits_stable_v2_only_keys(
+def test_evaluate_runtime_resolver_scorer_emits_stable_v3_keys(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lightgbm(monkeypatch)
+    _patch_v3_training_rows(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    train_dir = tmp_path / "train_v2_only_keys"
-    train_runtime_resolver_scorer_v2(
+    train_dir = tmp_path / "train_v3_only_keys"
+    train_runtime_resolver_scorer_v3(
         gt_manifest=None,
         gt_cache_dir=None,
         production_manifest=manifest_path,
@@ -1023,7 +1110,7 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_v2_only_keys(
         iterations=4,
         eval_fraction=0.0,
     )
-    v2_scorer_path = train_dir / SCORER_V2_ARTIFACT
+    scorer_path = train_dir / SCORER_V3_ARTIFACT
 
     report = evaluate_runtime_resolver_scorer(
         gt_manifest=None,
@@ -1031,30 +1118,30 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_v2_only_keys(
         production_manifest=manifest_path,
         production_cache_dir=cache_dir,
         weights_path=weights_path,
-        scorer_path=v2_scorer_path,
+        scorer_path=scorer_path,
         candidates=("hrnet", "spiga", "static_weighted_downweight"),
-        output_dir=tmp_path / "eval_v2_only",
+        output_dir=tmp_path / "eval_v3_only",
     )
 
-    assert report["primary_scorer_policy"] == "learned_quality_v2"
-    assert report["runtime_policy"] == "learned_quality_v2"
-    assert report["primary_scorer"]["label"] == "learned_quality_v2"
-    assert report["primary_scorer"]["metrics"] == report["learned_quality_v2"]
+    assert report["primary_scorer_policy"] == "learned_quality_v3"
+    assert report["runtime_policy"] == "learned_quality_v3"
+    assert report["primary_scorer"]["label"] == "learned_quality_v3"
+    assert report["primary_scorer"]["metrics"] == report["learned_quality_v3"]
 
     production = report["production_only_policy_metrics"]
-    assert "learned_quality_v2" in production
-    assert "learned_quality_v2" in report
+    assert "learned_quality_v3" in production
+    assert "learned_quality_v3" in report
 
 
-def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) -> None:
+def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_lightgbm(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet",),
-            coefficients=(-5.0,),
-            intercept=0.0,
-        ),
-        tmp_path / "runtime_resolver_scorer_v2.json",
+    scorer_path = _write_v3_test_scorer(
+        tmp_path / "runtime_resolver_scorer_v3.json",
+        features=("candidate_name=hrnet",),
     )
     eval_split = tmp_path / "runtime_resolver_scorer_eval_rows.csv"
     eval_split.write_text(
@@ -1087,15 +1174,13 @@ def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) 
 
 def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_delta(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_fake_lightgbm(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=static_weighted",),
-            coefficients=(-0.25,),
-            intercept=1.0,
-        ),
-        tmp_path / "runtime_resolver_scorer_v2.json",
+    scorer_path = _write_v3_test_scorer(
+        tmp_path / "runtime_resolver_scorer_v3.json",
+        features=("candidate_name=static_weighted",),
     )
 
     report = evaluate_runtime_resolver_scorer(
@@ -1115,7 +1200,7 @@ def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_del
         output_dir=tmp_path / "eval_safe",
     )
 
-    assert report["learned_quality_v2"]["pick_counts"] == {"static_weighted": 2}
+    assert report["learned_quality_v3"]["pick_counts"] == {"static_weighted": 2}
     assert report["safe_fallback_count"] == 0
     assert report["safe_fallback_min_delta"] == 0.05
     assert report["fallback_impact"]["count_with_rejected_candidate"] == 0
@@ -1123,7 +1208,9 @@ def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_del
 
 def test_evaluate_runtime_resolver_scorer_refuses_gt_hard_without_sidecar(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_fake_lightgbm(monkeypatch)
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     save_weights(
         weights_path,
@@ -1143,13 +1230,9 @@ def test_evaluate_runtime_resolver_scorer_refuses_gt_hard_without_sidecar(
                 checkpoint="test",
             )
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=static_weighted", "candidate_name=orformer"),
-            coefficients=(-5.0, -4.0),
-            intercept=0.0,
-        ),
-        tmp_path / "runtime_resolver_scorer_v2.json",
+    scorer_path = _write_v3_test_scorer(
+        tmp_path / "runtime_resolver_scorer_v3.json",
+        features=("candidate_name=static_weighted", "candidate_name=orformer"),
     )
 
     with pytest.raises(RuntimeError, match="GT-hard sample missing stored resolver metadata"):
@@ -1242,7 +1325,7 @@ def test_load_contexts_can_backfill_image_aware_runtime_metadata(
 
 def test_load_contexts_explicit_candidates_do_not_gain_adaptive_rows(tmp_path: Path) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    _write_fixture_v2_bucket_weights(weights_path)
+    _write_fixture_bucket_weights(weights_path)
 
     contexts = scorer_data.load_contexts(
         manifest_path=manifest_path,
@@ -1258,7 +1341,7 @@ def test_load_contexts_explicit_candidates_do_not_gain_adaptive_rows(tmp_path: P
 
 def test_load_contexts_can_request_adaptive_candidate_explicitly(tmp_path: Path) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    _write_fixture_v2_bucket_weights(weights_path)
+    _write_fixture_bucket_weights(weights_path)
     candidate_name = bucket_candidate_name("static_weighted", "frontal")
 
     contexts = scorer_data.load_contexts(
@@ -1438,13 +1521,9 @@ def test_scorer_evaluator_fails_when_current_policy_candidate_missing(
     for sample in payload["samples"]:
         sample.pop("metadata", None)
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet", "candidate_name=spiga"),
-            coefficients=(-5.0, 5.0),
-            intercept=0.0,
-        ),
-        tmp_path / "runtime_resolver_scorer_v2.json",
+    scorer_path = _write_v3_test_scorer(
+        tmp_path / "runtime_resolver_scorer_v3.json",
+        features=("candidate_name=hrnet", "candidate_name=spiga"),
     )
     monkeypatch.setattr(
         scorer_data,
@@ -1709,34 +1788,27 @@ def test_policy_summary_reports_v3_transform_metrics_and_skips_production() -> N
 
 
 def test_scorer_policy_key_detects_v3_transform_artifact() -> None:
-    scorer = RuntimeResolverScorer(
+    scorer = LinearTestScorer(
         features=("candidate_name=hrnet",),
         coefficients=(1.0,),
-        intercept=0.0,
-        target=TARGET_TRANSFORM_REGRET_V3,
-        version="learned_quality_v3",
-        runtime_policy="learned_quality_v3",
     )
 
-    assert scorer_eval_impl.scorer_policy_key(scorer) == "learned_quality_v3"
+    assert scorer_eval_impl.scorer_policy_key(T.cast(T.Any, scorer)) == "learned_quality_v3"
 
 
 def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebuild(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_fake_lightgbm(monkeypatch)
     rows_path = _write_canonical_scorer_rows(tmp_path / "rows.csv")
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=(
-                "candidate_name=hrnet",
-                "candidate_name=spiga",
-                "candidate_name=static_weighted_downweight",
-            ),
-            coefficients=(-5.0, 5.0, 0.0),
-            intercept=0.0,
+    scorer_path = _write_v3_test_scorer(
+        tmp_path / "runtime_resolver_scorer_v3.json",
+        features=(
+            "candidate_name=hrnet",
+            "candidate_name=spiga",
+            "candidate_name=static_weighted_downweight",
         ),
-        tmp_path / "runtime_resolver_scorer_v2.json",
     )
 
     def fail_context_rebuild(**_kwargs: object) -> object:
@@ -1763,7 +1835,7 @@ def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebui
     assert report["scorer_rows"] == str(rows_path)
     assert report["eval_split"] == ""
     assert report["production_only_policy_metrics"]["sample_count"] == 1
-    assert report["learned_quality_v2"]["pick_counts"] == {"hrnet": 1}
+    assert report["learned_quality_v3"]["pick_counts"] == {"hrnet": 1}
     assert (tmp_path / "row_backed_eval" / "scorer_policy_eval_report.json").is_file()
 
 
@@ -1771,14 +1843,11 @@ def test_row_backed_eval_high_risk_safe_fallback_handles_fusion_flags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_fake_lightgbm(monkeypatch)
     rows_path = _write_canonical_scorer_rows(tmp_path / "rows.csv")
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet",),
-            coefficients=(0.0,),
-            intercept=1.0,
-        ),
+    scorer_path = _write_v3_test_scorer(
         tmp_path / "high_risk_scorer.json",
+        features=("candidate_name=hrnet",),
     )
 
     def fail_context_rebuild(**_kwargs: object) -> object:
@@ -1802,7 +1871,7 @@ def test_row_backed_eval_high_risk_safe_fallback_handles_fusion_flags(
 
     assert report["row_backed_eval"] is True
     assert report["sample_count"] == 1
-    assert report["learned_quality_v2"]["pick_counts"]
+    assert report["learned_quality_v3"]["pick_counts"]
 
 
 def _v3_eval_row_for_summary(

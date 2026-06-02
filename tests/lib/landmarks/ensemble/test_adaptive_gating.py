@@ -11,7 +11,10 @@ feature contract.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from lib.landmarks.ensemble import runtime_resolver
 from lib.landmarks.ensemble.runtime_features import (
@@ -26,12 +29,20 @@ from lib.landmarks.ensemble.runtime_resolver import (
     bucket_candidate_name,
     resolve_runtime,
 )
-from lib.landmarks.ensemble.runtime_resolver_scorer import (
-    RuntimeResolverScorer,
-    write_runtime_resolver_scorer,
-)
+from tests.lib.landmarks.ensemble.scorer_test_utils import LinearTestScorer
 
 MODELS = ("hrnet", "spiga", "orformer")
+
+
+def _scorer_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    scorer: LinearTestScorer,
+) -> Path:
+    path = tmp_path / "runtime_resolver_scorer.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runtime_resolver, "load_runtime_resolver_scorer", lambda _path: scorer)
+    return path
 
 
 def _face() -> np.ndarray:
@@ -66,18 +77,19 @@ def test_scorer_can_select_bucket_weighted_candidate(monkeypatch, tmp_path) -> N
         lambda **kwargs: RuntimeBucketResult(bucket="profile_left", features={}),
     )
     name = bucket_candidate_name("static_weighted", "profile")
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=(f"candidate_name={name}",),
             coefficients=(-5.0,),
             intercept=0.0,
         ),
-        tmp_path / "scorer.json",
     )
     result = resolve_runtime(
         _predictions(),
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={model: [1.0 / 3.0] * 68 for model in MODELS},
             bucket_weights={
@@ -97,18 +109,19 @@ def test_scorer_can_select_region_weighted_candidate(monkeypatch, tmp_path) -> N
         "infer_runtime_bucket",
         lambda **kwargs: RuntimeBucketResult(bucket="frontal", features={}),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(
             features=("candidate_name=region_weighted",),
             coefficients=(-5.0,),
             intercept=0.0,
         ),
-        tmp_path / "scorer.json",
     )
     result = resolve_runtime(
         _predictions(),
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={model: [1.0 / 3.0] * 68 for model in MODELS},
             region_weights={
@@ -136,16 +149,15 @@ def test_adaptive_candidates_absent_without_weights(monkeypatch, tmp_path) -> No
         "infer_runtime_bucket",
         lambda **kwargs: RuntimeBucketResult(bucket="profile_left", features={}),
     )
-    scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet",), coefficients=(-1.0,), intercept=0.0
-        ),
-        tmp_path / "scorer.json",
+    scorer_path = _scorer_path(
+        monkeypatch,
+        tmp_path,
+        LinearTestScorer(features=("candidate_name=hrnet",), coefficients=(-1.0,), intercept=0.0),
     )
     result = resolve_runtime(
         _predictions(),
         RuntimeResolverConfig(
-            policy="learned_quality_v2",
+            policy="learned_quality_v3",
             scorer_path=str(scorer_path),
             weights={model: [1.0 / 3.0] * 68 for model in MODELS},
         ),

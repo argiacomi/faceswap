@@ -12,8 +12,8 @@ per supported runtime policy.
 The runtime used to read each artifact path directly out of
 ``extract.ini`` (``setup_path``, ``weights_path``, ``resolver_scorer_path``).
 That made paths user-settable production knobs that could fall out of
-sync with the artifact contents — e.g. ``resolver_policy=learned_quality_v2``
-pointing at a v2 LightGBM scorer JSON. The runtime loader picks the scorer
+sync with the artifact contents — e.g. a learned resolver policy pointing
+at the wrong LightGBM scorer JSON. The runtime loader picks the scorer
 implementation from the artifact's ``model_type``, not from the policy
 name, so the mismatch only surfaced at predict time.
 
@@ -35,16 +35,16 @@ it at an alternate ``current/`` directory).
         best_setup.json
         best_weights.json
         scorers/
-            learned_quality_v2.json
+            learned_quality_v3.json
 
 Manifest schema::
 
     {
         "artifact_schema_version": 1,
-        "active_policy": "learned_quality_v2",
+        "active_policy": "learned_quality_v3",
         "setup": "best_setup.json",
         "scorers": {
-            "learned_quality_v2": "scorers/learned_quality_v2.json"
+            "learned_quality_v3": "scorers/learned_quality_v3.json"
         },
         "created_by": "run_landmark_resolver_pipeline.py",
         "source_output_root": "outputs/landmarks/run_.../resolver_pipeline"
@@ -93,7 +93,7 @@ SETUP_FILENAME = "best_setup.json"
 WEIGHTS_FILENAME = "best_weights.json"
 SCORERS_SUBDIR = "scorers"
 
-LEARNED_POLICIES: tuple[str, ...] = ("learned_quality_v2", "learned_quality_v3")
+LEARNED_POLICIES: tuple[str, ...] = ("learned_quality_v3",)
 """Resolver policies that consume a scorer artifact.
 
 ``roll_aware_veto`` is intentionally absent — its runtime path runs
