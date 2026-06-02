@@ -1553,3 +1553,150 @@ def test_row_backed_eval_high_risk_safe_fallback_handles_fusion_flags(
     assert report["row_backed_eval"] is True
     assert report["sample_count"] == 1
     assert report["learned_quality_v2"]["pick_counts"]
+
+
+def _v3_eval_row_for_summary(
+    *,
+    candidate_name: str,
+    transform_regret_v3: float = 0.0,
+    oracle: str = "",
+    oracle_gap: float = 0.2,
+    rankable: bool = True,
+    hard_invalid: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        candidate_name=candidate_name,
+        feature_values={},
+        transform_cost_v3=transform_regret_v3,
+        transform_oracle_cost_v3=0.0,
+        transform_regret_v3=transform_regret_v3,
+        transform_oracle_candidate_v3=oracle,
+        transform_oracle_gap_v3=oracle_gap,
+        rankable_v3=rankable,
+        hard_invalid_v3=hard_invalid,
+        hard_invalid_reasons_v3=("hard_invalid",) if hard_invalid else (),
+        soft_structural_penalty_v3=0.0,
+    )
+
+
+def _v3_eval_context_for_summary(
+    sample_id: str,
+    rows: tuple[SimpleNamespace, ...],
+    *,
+    source: str = "gt_hard",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        sample_id=sample_id,
+        source=source,
+        dataset="gt_hard",
+        runtime_bucket_source="",
+        scorer_rows=rows,
+    )
+
+
+def test_transform_policy_summary_v3_excludes_single_valid_no_choice_group() -> None:
+    context = _v3_eval_context_for_summary(
+        "single_valid",
+        (
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_a",
+                transform_regret_v3=0.0,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=True,
+                hard_invalid=False,
+            ),
+        ),
+    )
+
+    summary = scorer_eval_impl.transform_policy_summary_v3(
+        [context],
+        {"single_valid": "candidate_a"},
+        source_by_sample_id={},
+    )
+
+    assert summary["transform_group_count_v3"] == 1
+    assert summary["transform_eval_count_v3"] == 0
+    assert summary["too_few_valid_group_count_v3"] == 1
+    assert summary["single_valid_group_count_v3"] == 1
+    assert summary["zero_valid_group_count_v3"] == 0
+    assert summary["near_tie_excluded_count_v3"] == 0
+    assert summary["mean_transform_regret_v3"] == pytest.approx(0.0)
+    assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
+
+
+def test_transform_policy_summary_v3_counts_only_rankable_pair_groups_as_eval() -> None:
+    context = _v3_eval_context_for_summary(
+        "rankable_pair",
+        (
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_a",
+                transform_regret_v3=0.0,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=True,
+                hard_invalid=False,
+            ),
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_b",
+                transform_regret_v3=0.25,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=True,
+                hard_invalid=False,
+            ),
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_c",
+                transform_regret_v3=0.0,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=False,
+                hard_invalid=True,
+            ),
+        ),
+    )
+
+    summary = scorer_eval_impl.transform_policy_summary_v3(
+        [context],
+        {"rankable_pair": "candidate_b"},
+        source_by_sample_id={},
+    )
+
+    assert summary["transform_group_count_v3"] == 1
+    assert summary["transform_eval_count_v3"] == 1
+    assert summary["too_few_valid_group_count_v3"] == 0
+    assert summary["single_valid_group_count_v3"] == 0
+    assert summary["invalid_selection_count_v3"] == 0
+    assert summary["mean_transform_regret_v3"] == pytest.approx(0.25)
+    assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
+
+
+def test_transform_policy_summary_v3_keeps_zero_valid_separate_from_too_few_valid() -> None:
+    context = _v3_eval_context_for_summary(
+        "zero_valid",
+        (
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_a",
+                rankable=False,
+                hard_invalid=True,
+            ),
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_b",
+                rankable=False,
+                hard_invalid=True,
+            ),
+        ),
+    )
+
+    summary = scorer_eval_impl.transform_policy_summary_v3(
+        [context],
+        {"zero_valid": "candidate_a"},
+        source_by_sample_id={},
+    )
+
+    assert summary["transform_group_count_v3"] == 1
+    assert summary["transform_eval_count_v3"] == 0
+    assert summary["zero_valid_group_count_v3"] == 1
+    assert summary["too_few_valid_group_count_v3"] == 0
+    assert summary["single_valid_group_count_v3"] == 0
+    assert summary["invalid_selection_count_v3"] == 1

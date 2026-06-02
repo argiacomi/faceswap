@@ -111,6 +111,11 @@ REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
     "p95_transform_regret_v3",
     "oracle_match_rate_v3",
     "invalid_selection_rate_v3",
+    "near_tie_excluded_count_v3",
+    "zero_valid_group_count_v3",
+    "too_few_valid_group_count_v3",
+    "single_valid_group_count_v3",
+    "transform_group_count_v3",
     "transform_eval_count_v3",
 )
 V3_RESERVED_ROW_FIELDS: tuple[str, ...] = (
@@ -370,8 +375,9 @@ def _v3_group_diagnostics(context: T.Any) -> tuple[dict[str, T.Any], bool, bool,
         and not _row_bool(_v3_row_value(row, "hard_invalid_v3", False))
     }
     zero_valid = not valid
-    if len(valid) < 2:
-        return rows, zero_valid, False, False
+    too_few_valid = 0 < len(valid) < 2
+    if zero_valid or too_few_valid:
+        return rows, zero_valid, too_few_valid, False
     oracle_gap = min(
         _row_float(_v3_row_value(row, "transform_oracle_gap_v3")) for row in valid.values()
     )
@@ -387,6 +393,9 @@ def _transform_summary_empty() -> dict[str, T.Any]:
         "invalid_selection_rate_v3": 0.0,
         "near_tie_excluded_count_v3": 0,
         "zero_valid_group_count_v3": 0,
+        "too_few_valid_group_count_v3": 0,
+        "single_valid_group_count_v3": 0,
+        "transform_group_count_v3": 0,
         "transform_eval_count_v3": 0,
     }
 
@@ -403,6 +412,7 @@ def transform_policy_summary_v3(
     invalid_selection_count = 0
     near_tie_count = 0
     zero_valid_count = 0
+    too_few_valid_count = 0
     eval_count = 0
     valid_eval_count = 0
     for context in contexts:
@@ -416,6 +426,8 @@ def transform_policy_summary_v3(
         selected_row = rows.get(selected)
         if zero_valid:
             zero_valid_count += 1
+        if too_few_valid:
+            too_few_valid_count += 1
         if near_tie:
             near_tie_count += 1
         selected_invalid = (
@@ -441,7 +453,10 @@ def transform_policy_summary_v3(
         "invalid_selection_rate_v3": invalid_selection_count / eval_count,
         "near_tie_excluded_count_v3": near_tie_count,
         "zero_valid_group_count_v3": zero_valid_count,
-        "transform_eval_count_v3": eval_count,
+        "too_few_valid_group_count_v3": too_few_valid_count,
+        "single_valid_group_count_v3": too_few_valid_count,
+        "transform_group_count_v3": eval_count,
+        "transform_eval_count_v3": valid_eval_count,
     }
 
 
