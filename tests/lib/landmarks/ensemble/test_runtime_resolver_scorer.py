@@ -20,7 +20,7 @@ import lib.landmarks.ensemble.scorer_eval as scorer_eval_impl
 import lib.landmarks.ensemble.scorer_training as scorer_training
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
-from lib.landmarks.ensemble.promoted_setup import write_best_setup
+from lib.landmarks.ensemble.promoted_setup import write_best_setup, write_best_weights
 from lib.landmarks.ensemble.runtime_features import (
     RUNTIME_FEATURE_CONTRACT_VERSION,
     RUNTIME_PREFERRED_FEATURE_ORDER,
@@ -28,7 +28,11 @@ from lib.landmarks.ensemble.runtime_features import (
     runtime_candidate_feature_maps,
     runtime_feature_order,
 )
-from lib.landmarks.ensemble.runtime_resolver import CandidateMetrics, CandidateRecord
+from lib.landmarks.ensemble.runtime_resolver import (
+    CandidateMetrics,
+    CandidateRecord,
+    bucket_candidate_name,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     load_runtime_resolver_scorer,
@@ -228,6 +232,16 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
     return manifest_path, cache_dir, weights_path
+
+
+def _write_fixture_v2_bucket_weights(weights_path: Path) -> None:
+    models = ("hrnet", "spiga", "orformer")
+    write_best_weights(
+        weights_path,
+        {"hrnet": [1.0] * 68, "spiga": [0.0] * 68, "orformer": [0.0] * 68},
+        models=models,
+        bucket_weights={"frontal": {model: [1.0] * 68 for model in models}},
+    )
 
 
 def _write_fixture_images(manifest_path: Path) -> None:
@@ -1224,6 +1238,39 @@ def test_load_contexts_can_backfill_image_aware_runtime_metadata(
 
     assert len(contexts) == 2
     assert {context.runtime_bucket_source for context in contexts} == {"image_aware_backfill"}
+
+
+def test_load_contexts_explicit_candidates_do_not_gain_adaptive_rows(tmp_path: Path) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    _write_fixture_v2_bucket_weights(weights_path)
+
+    contexts = scorer_data.load_contexts(
+        manifest_path=manifest_path,
+        cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga"),
+    )
+
+    assert len(contexts) == 2
+    for context in contexts:
+        assert tuple(candidate.name for candidate in context.candidates) == ("hrnet", "spiga")
+
+
+def test_load_contexts_can_request_adaptive_candidate_explicitly(tmp_path: Path) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    _write_fixture_v2_bucket_weights(weights_path)
+    candidate_name = bucket_candidate_name("static_weighted", "frontal")
+
+    contexts = scorer_data.load_contexts(
+        manifest_path=manifest_path,
+        cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=(candidate_name,),
+    )
+
+    assert len(contexts) == 2
+    for context in contexts:
+        assert tuple(candidate.name for candidate in context.candidates) == (candidate_name,)
 
 
 def test_gt_hard_uses_stored_resolver_metadata(tmp_path: Path) -> None:

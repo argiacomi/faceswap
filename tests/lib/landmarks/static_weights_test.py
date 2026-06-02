@@ -178,3 +178,46 @@ def test_compute_static_weights_skips_non_canonical_68_gt(
     assert tuple(weights) == MODEL_NAMES
     assert all(len(mean_errors[model]) == LANDMARK_COUNT for model in MODEL_NAMES)
     assert "non-canonical-68" in caplog.text
+
+
+def test_compute_bucket_weights_falls_back_when_below_min_samples(tmp_path: Path) -> None:
+    """Buckets below ``min_samples`` are omitted so the runtime uses global weights."""
+    from lib.landmarks.ensemble.static_weight_fit import compute_bucket_weights
+
+    manifest = _write_manifest(tmp_path, ("a", "b"))
+    cache = DiskPredictionCache(tmp_path / "cache")
+    for sample_id in ("a", "b"):
+        cache.write(sample_id, LandmarkPrediction(_points(1.0), model_name="hrnet"))
+        cache.write(sample_id, LandmarkPrediction(_points(2.0), model_name="spiga"))
+        cache.write(sample_id, LandmarkPrediction(_points(4.0), model_name="orformer"))
+
+    global_weights, mean_errors, bucket_weights = compute_bucket_weights(
+        manifest, tmp_path / "cache", min_samples=1000
+    )
+
+    assert tuple(global_weights) == MODEL_NAMES
+    assert all(len(mean_errors[model]) == LANDMARK_COUNT for model in MODEL_NAMES)
+    assert bucket_weights == {}
+
+
+def test_compute_bucket_weights_emits_normalized_bucket_sets(tmp_path: Path) -> None:
+    """With a low threshold every assigned bucket gets normalized per-model weights."""
+    from lib.landmarks.ensemble.hard_condition_taxonomy import WEIGHT_BUCKETS
+    from lib.landmarks.ensemble.static_weight_fit import compute_bucket_weights
+
+    manifest = _write_manifest(tmp_path, ("a", "b"))
+    cache = DiskPredictionCache(tmp_path / "cache")
+    for sample_id in ("a", "b"):
+        cache.write(sample_id, LandmarkPrediction(_points(1.0), model_name="hrnet"))
+        cache.write(sample_id, LandmarkPrediction(_points(2.0), model_name="spiga"))
+        cache.write(sample_id, LandmarkPrediction(_points(4.0), model_name="orformer"))
+
+    _, _, bucket_weights = compute_bucket_weights(manifest, tmp_path / "cache", min_samples=1)
+
+    assert bucket_weights, "expected at least one fitted bucket"
+    for bucket, columns in bucket_weights.items():
+        assert bucket in WEIGHT_BUCKETS
+        assert tuple(columns) == MODEL_NAMES
+        for landmark_index in range(LANDMARK_COUNT):
+            total = sum(columns[model][landmark_index] for model in MODEL_NAMES)
+            assert total == pytest.approx(1.0)

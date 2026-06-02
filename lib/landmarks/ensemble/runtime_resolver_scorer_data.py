@@ -38,6 +38,8 @@ from lib.landmarks.ensemble.runtime_resolver import (
     _metric_for_candidate,
     _populate_consensus_geometry,
     _shape_reasons,
+    append_bucket_weight_candidates,
+    append_region_weight_candidate,
     build_candidates,
     infer_runtime_bucket,
     resolve_runtime,
@@ -50,7 +52,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_REGRET_NORMALIZER,
 )
 from lib.landmarks.ensemble.strategies import canonical_strategy
-from lib.landmarks.ensemble.weights import load_weights
+from lib.landmarks.ensemble.weights import load_optional_weight_blocks, load_weights
 from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
 from lib.landmarks.evaluation.transform_alignment_cost import (
     TransformCostV3,
@@ -424,6 +426,16 @@ def parse_candidates(
     return tuple(dict.fromkeys(ordered))
 
 
+def _is_adaptive_candidate(name: str) -> bool:
+    """Return True for candidates appended after runtime bucket inference."""
+    if name == "region_weighted":
+        return True
+    if "@" not in name:
+        return False
+    base, _ = name.split("@", 1)
+    return _is_strategy(base)
+
+
 def _is_strategy(name: str) -> bool:
     try:
         canonical_strategy(name)
@@ -681,10 +693,14 @@ def _candidate_config(
     weights: T.Mapping[str, T.Sequence[float]],
     *,
     outlier_threshold: float,
+    bucket_weights: T.Mapping[str, T.Mapping[str, T.Sequence[float]]] | None = None,
+    region_weights: T.Mapping[str, T.Mapping[str, float]] | None = None,
 ) -> RuntimeResolverConfig:
     return RuntimeResolverConfig(
         policy="roll_aware_veto",
         weights=weights,
+        bucket_weights=bucket_weights,
+        region_weights=region_weights,
         general_strategy="static_weighted",
         hard_case_strategy="static_weighted_downweight",
         secondary_hard_case_strategy="static_weighted_hard_drop",
@@ -737,23 +753,38 @@ def build_sample_context(
     resolver_metadata: T.Mapping[tuple[str, int], dict[str, T.Any]] | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    bucket_weights: T.Mapping[str, T.Mapping[str, T.Sequence[float]]] | None = None,
+    region_weights: T.Mapping[str, T.Mapping[str, float]] | None = None,
+    include_adaptive_candidates: bool = True,
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
 ) -> SampleCandidateContext:
     """Build candidates, diagnostics, labels, and current-policy choice for one sample."""
-    single_models = {name for name in requested_candidates if not _is_strategy(name)}
+    requested_adaptive = {name for name in requested_candidates if _is_adaptive_candidate(name)}
+    single_models = {
+        name
+        for name in requested_candidates
+        if name not in requested_adaptive and not _is_strategy(name)
+    }
     model_names = tuple(dict.fromkeys((*weights.keys(), *single_models)))
     predictions = _read_predictions(cache, sample, models=model_names)
     if not predictions:
         raise FileNotFoundError(f"sample {sample.sample_id!r} has no cached model predictions")
-    config = _candidate_config(weights, outlier_threshold=outlier_threshold)
+    config = _candidate_config(
+        weights,
+        outlier_threshold=outlier_threshold,
+        bucket_weights=bucket_weights,
+        region_weights=region_weights,
+    )
     all_candidates = build_candidates(predictions, config)
     by_name = {candidate.name: candidate for candidate in all_candidates}
-    missing = [name for name in requested_candidates if name not in by_name]
-    if missing:
-        logger.warning("sample %s could not build candidates: %s", sample.sample_id, missing)
-    candidates = tuple(by_name[name] for name in requested_candidates if name in by_name)
+    seed_names = [name for name in requested_candidates if name not in requested_adaptive]
+    if requested_adaptive:
+        seed_names.extend(
+            candidate.name for candidate in all_candidates if not candidate.is_fusion
+        )
+    candidates = tuple(by_name[name] for name in dict.fromkeys(seed_names) if name in by_name)
     if not candidates:
         raise ValueError(f"sample {sample.sample_id!r} produced no requested candidates")
     truth = _load_truth(sample)
@@ -836,6 +867,36 @@ def build_sample_context(
         )
         if stored_yaw is not None:
             yaw_estimate = stored_yaw
+    append_adaptive = (include_adaptive_candidates or bool(requested_adaptive)) and (
+        config.bucket_weights or config.region_weights
+    )
+    if append_adaptive:
+        candidate_list = list(candidates)
+        append_bucket_weight_candidates(
+            candidate_list,
+            config,
+            bucket=bucket_result.bucket,
+            metrics=metrics,
+            reference_bbox=reference_bbox,
+        )
+        append_region_weight_candidate(
+            candidate_list,
+            config,
+            metrics=metrics,
+            reference_bbox=reference_bbox,
+        )
+        candidates = tuple(candidate_list)
+    if requested_adaptive:
+        by_requested_name = {candidate.name: candidate for candidate in candidates}
+        candidates = tuple(
+            by_requested_name[name] for name in requested_candidates if name in by_requested_name
+        )
+    candidate_names = {candidate.name for candidate in candidates}
+    missing = [name for name in requested_candidates if name not in candidate_names]
+    if missing:
+        logger.warning("sample %s could not build candidates: %s", sample.sample_id, missing)
+    if not candidates:
+        raise ValueError(f"sample {sample.sample_id!r} produced no requested candidates")
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket_result.bucket, name, metric)
     taxonomy = derive_hard_condition_taxonomy(
@@ -1262,6 +1323,9 @@ def load_contexts(
 ) -> list[SampleCandidateContext]:
     """Load all sample contexts for one manifest/cache pair."""
     weights = load_weights(weights_path)
+    bucket_weights, region_weights = load_optional_weight_blocks(weights_path)
+    explicit_candidates = bool(candidates)
+    include_adaptive_candidates = not explicit_candidates
     requested = tuple(candidates or parse_candidates(None, weights))
     cache = DiskPredictionCache(cache_dir)
     contexts: list[SampleCandidateContext] = []
@@ -1279,6 +1343,9 @@ def load_contexts(
                     resolver_metadata=resolver_metadata,
                     failure_threshold=failure_threshold,
                     outlier_threshold=outlier_threshold,
+                    bucket_weights=bucket_weights,
+                    region_weights=region_weights,
+                    include_adaptive_candidates=include_adaptive_candidates,
                     allow_image_backfill=allow_image_backfill,
                     image_backfill_crop_scale=image_backfill_crop_scale,
                     image_backfill_crop_size=image_backfill_crop_size,

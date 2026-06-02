@@ -16,6 +16,7 @@ CANONICAL_STRATEGIES: tuple[str, ...] = (
     "static_weighted_hard_drop",
     "static_weighted_downweight",
     "weighted_median",
+    "region_weighted",
 )
 
 _OUTLIER_METHOD_BY_STRATEGY: dict[str, str] = {
@@ -24,6 +25,10 @@ _OUTLIER_METHOD_BY_STRATEGY: dict[str, str] = {
     "static_weighted_hard_drop": "hard_drop",
     "static_weighted_downweight": "downweight",
     "weighted_median": "weighted_median",
+    # Region-weighted fusion (Phase 5 #9) assembles a static-weighted average
+    # from a region-broadcast weight vector; it runs no outlier rejection of
+    # its own (the per-region weights already encode the model trust profile).
+    "region_weighted": "none",
 }
 
 _THRESHOLD_STRATEGIES: frozenset[str] = frozenset(
