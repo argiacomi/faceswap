@@ -38,7 +38,6 @@ from lib.landmarks.evaluation.geometry_signals import (
 
 _CORE_START = 17
 _CORE_END = 68
-_CORE_COUNT = _CORE_END - _CORE_START
 _DEFAULT_MIN_VISIBLE_POINTS = 8
 _DEFAULT_CENTERING = "face"
 
@@ -110,10 +109,6 @@ class VisibleAlignmentSummary:
     coverage_ratio: float
 
 
-# Backward-compatible alias for the initial Step-1 name used on this branch.
-VisibleSubsetAlignmentSummary = VisibleAlignmentSummary
-
-
 def _as_68_landmarks(landmarks: np.ndarray, *, name: str) -> np.ndarray:
     """Return landmarks as finite ``float64`` with shape ``(68, 2)``."""
     points = np.asarray(landmarks, dtype="float64")
@@ -156,18 +151,6 @@ def _fit_indices_from_visible_indices(
             f"{min_visible_points} visible core landmarks; got {len(fit_indices)}"
         )
     return fit_indices
-
-
-def visible_core_indices(
-    visibility: T.Sequence[bool] | None,
-    *,
-    min_visible_points: int = _DEFAULT_MIN_VISIBLE_POINTS,
-) -> tuple[int, ...]:
-    """Return visible core fit indices for Faceswap's 68-point Umeyama fit."""
-    return _fit_indices_from_visible_indices(
-        visible_landmark_indices(visibility),
-        min_visible_points=min_visible_points,
-    )
 
 
 def _fit_matrix_from_visible_core(
@@ -247,7 +230,7 @@ def _decompose_similarity_matrix(matrix: np.ndarray) -> tuple[float, float, tupl
 
 def visible_subset_alignment_summary(
     landmarks: np.ndarray,
-    visibility: T.Sequence[bool] | None,
+    visibility: T.Sequence[bool] | None = None,
     *,
     size: int = DEFAULT_ALIGNED_SIZE,
     coverage_ratio: float = 1.0,
@@ -376,9 +359,7 @@ __all__ = [
     "TransformCostV3",
     "TransformCostWeightsV3",
     "VisibleAlignmentSummary",
-    "VisibleSubsetAlignmentSummary",
     "transform_cost_v3",
-    "visible_core_indices",
     "visible_landmark_indices",
     "visible_subset_alignment_summary",
 ]
