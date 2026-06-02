@@ -1062,6 +1062,19 @@ def v3_learnability_promotion_gates(
     scorer_p95 = _policy_metric_float(scorer, "p95_transform_regret_v3")
     scorer_invalid = _policy_metric_float(scorer, "invalid_selection_rate_v3")
 
+    best_single = comparison_metrics.get("best_single", {})
+    best_single_count = _policy_metric_count(best_single, "transform_eval_count_v3")
+    if scorer_count > 0 and best_single_count <= 0:
+        fail(
+            "transform_error_missing_best_single_baseline_eval",
+            attribution="evaluation_coverage_problem",
+            geometry_gate="transform_error",
+            observed=best_single_count,
+            threshold=1,
+            baseline_policy="best_single",
+            detail={"reason": "best_single baseline missing transform_eval_count_v3"},
+        )
+
     for baseline_name in ("best_single", "static_weighted_downweight"):
         baseline = comparison_metrics.get(baseline_name, {})
         baseline_count = _policy_metric_count(baseline, "transform_eval_count_v3")
@@ -1108,7 +1121,14 @@ def v3_learnability_promotion_gates(
                 },
             )
     elif scorer_count > 0:
-        skipped_gates.append("transform_error_p95_skipped_missing_simple_baseline")
+        fail(
+            "transform_error_missing_simple_baseline_eval",
+            attribution="evaluation_coverage_problem",
+            geometry_gate="transform_error",
+            observed=0,
+            threshold=1,
+            detail={"reason": "no simple baseline had transform_eval_count_v3 > 0"},
+        )
 
     if scorer_count > 0 and scorer_invalid > invalid_selection_rate_threshold:
         fail(
