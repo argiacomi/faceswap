@@ -1617,7 +1617,6 @@ def test_transform_policy_summary_v3_excludes_single_valid_no_choice_group() -> 
 
     assert summary["transform_group_count_v3"] == 1
     assert summary["transform_eval_count_v3"] == 0
-    assert summary["too_few_valid_group_count_v3"] == 1
     assert summary["single_valid_group_count_v3"] == 1
     assert summary["zero_valid_group_count_v3"] == 0
     assert summary["near_tie_excluded_count_v3"] == 0
@@ -1664,14 +1663,13 @@ def test_transform_policy_summary_v3_counts_only_rankable_pair_groups_as_eval() 
 
     assert summary["transform_group_count_v3"] == 1
     assert summary["transform_eval_count_v3"] == 1
-    assert summary["too_few_valid_group_count_v3"] == 0
     assert summary["single_valid_group_count_v3"] == 0
     assert summary["invalid_selection_count_v3"] == 0
     assert summary["mean_transform_regret_v3"] == pytest.approx(0.25)
     assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
 
 
-def test_transform_policy_summary_v3_keeps_zero_valid_separate_from_too_few_valid() -> None:
+def test_transform_policy_summary_v3_keeps_zero_valid_separate_from_single_valid() -> None:
     context = _v3_eval_context_for_summary(
         "zero_valid",
         (
@@ -1697,6 +1695,5 @@ def test_transform_policy_summary_v3_keeps_zero_valid_separate_from_too_few_vali
     assert summary["transform_group_count_v3"] == 1
     assert summary["transform_eval_count_v3"] == 0
     assert summary["zero_valid_group_count_v3"] == 1
-    assert summary["too_few_valid_group_count_v3"] == 0
     assert summary["single_valid_group_count_v3"] == 0
     assert summary["invalid_selection_count_v3"] == 1

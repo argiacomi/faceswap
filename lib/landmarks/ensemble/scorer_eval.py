@@ -113,7 +113,6 @@ REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
     "invalid_selection_rate_v3",
     "near_tie_excluded_count_v3",
     "zero_valid_group_count_v3",
-    "too_few_valid_group_count_v3",
     "single_valid_group_count_v3",
     "transform_group_count_v3",
     "transform_eval_count_v3",
@@ -375,9 +374,9 @@ def _v3_group_diagnostics(context: T.Any) -> tuple[dict[str, T.Any], bool, bool,
         and not _row_bool(_v3_row_value(row, "hard_invalid_v3", False))
     }
     zero_valid = not valid
-    too_few_valid = 0 < len(valid) < 2
-    if zero_valid or too_few_valid:
-        return rows, zero_valid, too_few_valid, False
+    single_valid = len(valid) == 1
+    if zero_valid or single_valid:
+        return rows, zero_valid, single_valid, False
     oracle_gap = min(
         _row_float(_v3_row_value(row, "transform_oracle_gap_v3")) for row in valid.values()
     )
@@ -393,7 +392,6 @@ def _transform_summary_empty() -> dict[str, T.Any]:
         "invalid_selection_rate_v3": 0.0,
         "near_tie_excluded_count_v3": 0,
         "zero_valid_group_count_v3": 0,
-        "too_few_valid_group_count_v3": 0,
         "single_valid_group_count_v3": 0,
         "transform_group_count_v3": 0,
         "transform_eval_count_v3": 0,
@@ -412,13 +410,13 @@ def transform_policy_summary_v3(
     invalid_selection_count = 0
     near_tie_count = 0
     zero_valid_count = 0
-    too_few_valid_count = 0
+    single_valid_count = 0
     eval_count = 0
     valid_eval_count = 0
     for context in contexts:
         if context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED:
             continue
-        rows, zero_valid, too_few_valid, near_tie = _v3_group_diagnostics(context)
+        rows, zero_valid, single_valid, near_tie = _v3_group_diagnostics(context)
         if not rows:
             continue
         eval_count += 1
@@ -426,8 +424,8 @@ def transform_policy_summary_v3(
         selected_row = rows.get(selected)
         if zero_valid:
             zero_valid_count += 1
-        if too_few_valid:
-            too_few_valid_count += 1
+        if single_valid:
+            single_valid_count += 1
         if near_tie:
             near_tie_count += 1
         selected_invalid = (
@@ -436,7 +434,7 @@ def transform_policy_summary_v3(
             or _row_bool(_v3_row_value(selected_row, "hard_invalid_v3", False))
         )
         invalid_selection_count += int(selected_invalid)
-        if selected_invalid or zero_valid or too_few_valid or near_tie:
+        if selected_invalid or zero_valid or single_valid or near_tie:
             continue
         valid_eval_count += 1
         oracle = str(_v3_row_value(selected_row, "transform_oracle_candidate_v3", "") or "")
@@ -453,8 +451,7 @@ def transform_policy_summary_v3(
         "invalid_selection_rate_v3": invalid_selection_count / eval_count,
         "near_tie_excluded_count_v3": near_tie_count,
         "zero_valid_group_count_v3": zero_valid_count,
-        "too_few_valid_group_count_v3": too_few_valid_count,
-        "single_valid_group_count_v3": too_few_valid_count,
+        "single_valid_group_count_v3": single_valid_count,
         "transform_group_count_v3": eval_count,
         "transform_eval_count_v3": valid_eval_count,
     }
