@@ -21,7 +21,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     parse_candidates,
 )
 from lib.landmarks.ensemble.scorer_target_config import (
-    TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_training import (
     EVAL_ROWS_CSV,
@@ -58,11 +58,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--outlier-threshold", type=float, default=DEFAULT_OUTLIER_THRESHOLD)
     parser.add_argument(
         "--target",
-        choices=(TARGET_SELECTION_COST,),
-        default=TARGET_SELECTION_COST,
+        choices=(TARGET_TRANSFORM_REGRET_V3,),
+        default=TARGET_TRANSFORM_REGRET_V3,
         help=(
-            "Target for learned_quality_v2. scorer_suite also trains learned_quality_v3 "
-            "from visible transform-regret rows."
+            "Active scorer_suite target. v3 training uses only "
+            "transform_alignment_regret_v3; legacy learned_quality_v2 ignores this flag."
         ),
     )
     parser.add_argument(
@@ -71,10 +71,10 @@ def _parser() -> argparse.ArgumentParser:
             "learned_quality_v2",
             "scorer_suite",
         ),
-        default="learned_quality_v2",
+        default="scorer_suite",
         help=(
-            "Explicit scorer training mode. scorer_suite writes canonical "
-            "learned_quality_v2 and learned_quality_v3 artifacts."
+            "Explicit scorer training mode. scorer_suite writes the canonical "
+            "learned_quality_v3 artifact only; learned_quality_v2 is legacy/explicit."
         ),
     )
     parser.add_argument("--l2", type=float, default=0.001)
@@ -125,9 +125,6 @@ def main(argv: T.Sequence[str] | None = None) -> int:
             eval_fraction=args.eval_fraction,
             split_seed=args.split_seed,
             allow_image_backfill=args.allow_image_backfill,
-            v2_learning_rate=args.learning_rate,
-            v2_iterations=args.iterations,
-            v2_num_leaves=args.num_leaves,
         )
     elif args.training_mode == "learned_quality_v2":
         metrics = train_runtime_resolver_scorer_v2(

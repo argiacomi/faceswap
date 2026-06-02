@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from lib.landmarks.ensemble.runtime_features import (
+    RUNTIME_FEATURE_CONTRACT_VERSION,
     candidate_feature_map,
     runtime_candidate_feature_maps,
 )
@@ -72,6 +73,7 @@ class RuntimeResolverScorer:
     objective: str = "minimize_candidate_failure_risk"
     training_mode: str = "binary_failure_or_high_gap"
     runtime_policy: str = "learned_quality_v2"
+    runtime_feature_contract_version: str = RUNTIME_FEATURE_CONTRACT_VERSION
 
     def __post_init__(self) -> None:
         """Validate the score direction contract at construction time."""
@@ -144,6 +146,9 @@ class RuntimeResolverScorer:
             objective=str(payload.get("objective", "minimize_candidate_failure_risk")),
             training_mode=str(payload.get("training_mode", "binary_failure_or_high_gap")),
             runtime_policy=str(payload.get("runtime_policy", "learned_quality_v2")),
+            runtime_feature_contract_version=str(
+                payload.get("runtime_feature_contract_version", RUNTIME_FEATURE_CONTRACT_VERSION)
+            ),
         )
 
     def to_payload(self) -> dict[str, T.Any]:
@@ -166,6 +171,7 @@ class RuntimeResolverScorer:
             "objective": self.objective,
             "training_mode": self.training_mode,
             "runtime_policy": self.runtime_policy,
+            "runtime_feature_contract_version": self.runtime_feature_contract_version,
         }
 
     def score_feature_map(self, features: T.Mapping[str, float]) -> float:
@@ -223,6 +229,7 @@ class RuntimeResolverLightGBMScorer:
     objective: str = "lambdarank_inverse_regret"
     training_mode: str = "grouped_lambdarank"
     runtime_policy: str = "learned_quality_v2"
+    runtime_feature_contract_version: str = RUNTIME_FEATURE_CONTRACT_VERSION
     feature_importances: dict[str, float] | None = None
     _booster_cache: T.Any = field(default=None, init=False, repr=False, compare=False)
 
@@ -268,6 +275,9 @@ class RuntimeResolverLightGBMScorer:
             objective=str(payload.get("objective", "lambdarank_inverse_regret")),
             training_mode=str(payload.get("training_mode", "grouped_lambdarank")),
             runtime_policy=str(payload.get("runtime_policy", "learned_quality_v2")),
+            runtime_feature_contract_version=str(
+                payload.get("runtime_feature_contract_version", RUNTIME_FEATURE_CONTRACT_VERSION)
+            ),
             feature_importances=(
                 {str(key): float(value) for key, value in importances.items()}
                 if isinstance(importances, dict)
@@ -330,6 +340,7 @@ class RuntimeResolverLightGBMScorer:
             "objective": self.objective,
             "training_mode": self.training_mode,
             "runtime_policy": self.runtime_policy,
+            "runtime_feature_contract_version": self.runtime_feature_contract_version,
             "feature_importances": self.feature_importances or {},
         }
 

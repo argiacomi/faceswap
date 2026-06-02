@@ -22,6 +22,7 @@ from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
 from lib.landmarks.ensemble.runtime_features import (
+    RUNTIME_FEATURE_CONTRACT_VERSION,
     RUNTIME_PREFERRED_FEATURE_ORDER,
     candidate_feature_map,
     runtime_candidate_feature_maps,
@@ -145,6 +146,14 @@ def test_runtime_feature_extractor_is_single_source_of_truth_for_train_and_runti
     assert "geometry_veto_reason=jaw_crop_warning" in direct
     assert "shape_veto_reason=borderline_hull" in direct
     assert "candidate_is_consensus_like" in direct
+    assert {
+        "candidate_nme",
+        "oracle_nme",
+        "selection_cost",
+        "transform_cost_v3",
+        "transform_regret_v3",
+        "transform_oracle_candidate_v3",
+    }.isdisjoint(direct)
 
     ordered = runtime_feature_order([direct])
     assert ordered[:2] == ("candidate_is_single_model", "candidate_is_fusion")
@@ -582,6 +591,105 @@ def test_rows_and_candidate_table_include_hard_case_tags() -> None:
     assert row.feature_values["hard_case_tag=profile_occlusion"] == pytest.approx(1.0)
 
 
+def test_scorer_suite_trains_only_active_v3_target_and_persists_feature_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_lightgbm(monkeypatch)
+    weights_path = tmp_path / "weights.json"
+    save_weights(weights_path, {"hrnet": [1.0] * 68, "spiga": [0.0] * 68})
+
+    def v3_row(
+        *,
+        sample_id: str,
+        candidate_name: str,
+        transform_regret_v3: float,
+    ) -> scorer_data.CandidateQualityRow:
+        return scorer_data.CandidateQualityRow(
+            sample_id=sample_id,
+            face_index=0,
+            dataset="test",
+            condition="profile",
+            candidate_name=candidate_name,
+            candidate_nme=0.0,
+            oracle_nme=0.0,
+            regret_vs_oracle=0.0,
+            normalized_regret=0.0,
+            failure_label=False,
+            large_regret_label=False,
+            candidate_failure_or_high_gap=False,
+            selection_cost=0.0,
+            is_oracle=candidate_name == "hrnet",
+            was_selected_by_current_policy=candidate_name == "hrnet",
+            gap_vs_oracle=0.0,
+            runtime_bucket="profile_left",
+            hard_case_tags=("profile",),
+            risk_route="high_risk",
+            feature_values={
+                f"candidate_name={candidate_name}": 1.0,
+                "candidate_is_single_model": 1.0,
+                "candidate_is_fusion": 0.0,
+            },
+            selected_by_current_policy="hrnet",
+            selected_candidate_missing_from_eval=False,
+            oracle="hrnet",
+            runtime_bucket_source="test",
+            geometry_veto_reasons=(),
+            transform_cost_v3=transform_regret_v3,
+            transform_oracle_cost_v3=0.0,
+            transform_regret_v3=transform_regret_v3,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=True,
+            hard_invalid_v3=False,
+            hard_invalid_reasons_v3=(),
+            soft_structural_penalty_v3=0.0,
+        )
+
+    fake_rows = [
+        (v3_row(sample_id="s1", candidate_name="hrnet", transform_regret_v3=0.0), "gt_hard"),
+        (v3_row(sample_id="s1", candidate_name="spiga", transform_regret_v3=0.25), "gt_hard"),
+        (v3_row(sample_id="s2", candidate_name="hrnet", transform_regret_v3=0.0), "gt_hard"),
+        (v3_row(sample_id="s2", candidate_name="spiga", transform_regret_v3=0.30), "gt_hard"),
+    ]
+
+    monkeypatch.setattr(scorer_training, "load_scorer_contexts", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        scorer_training, "tagged_quality_rows", lambda *_args, **_kwargs: fake_rows
+    )
+    monkeypatch.setattr(
+        scorer_training, "scorer_candidate_table_rows", lambda *_args, **_kwargs: []
+    )
+
+    output_dir = tmp_path / "train_suite_v3_only"
+    metrics = scorer_training.train_runtime_resolver_scorer_suite(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=None,
+        production_cache_dir=None,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga"),
+        output_dir=output_dir,
+        iterations=4,
+        eval_fraction=0.0,
+    )
+
+    canonical_v3 = output_dir / "scorers" / "learned_quality_v3.json"
+    canonical_v2 = output_dir / "scorers" / "learned_quality_v2.json"
+    artifact = json.loads(canonical_v3.read_text(encoding="utf-8"))
+
+    assert set(metrics["scorers"]) == {"learned_quality_v3"}
+    assert metrics["active_target"] == TARGET_TRANSFORM_REGRET_V3
+    assert metrics["artifact"] == str(canonical_v3)
+    assert canonical_v3.is_file()
+    assert not canonical_v2.exists()
+    assert artifact["target"] == TARGET_TRANSFORM_REGRET_V3
+    assert artifact["runtime_feature_contract_version"] == RUNTIME_FEATURE_CONTRACT_VERSION
+    assert metrics["scorers"]["learned_quality_v3"]["runtime_feature_contract_version"] == (
+        RUNTIME_FEATURE_CONTRACT_VERSION
+    )
+
+
 def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -617,6 +725,7 @@ def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
     assert artifact["version"] == "learned_quality_v2"
     assert artifact["scorer_version"] == "learned_quality_v2"
     assert artifact["runtime_policy"] == "learned_quality_v2"
+    assert artifact["runtime_feature_contract_version"] == RUNTIME_FEATURE_CONTRACT_VERSION
     assert artifact["target"] == TARGET_SELECTION_COST
     assert artifact["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert artifact["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST

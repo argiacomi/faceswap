@@ -12,7 +12,10 @@ from pathlib import Path
 
 import numpy as np
 
-from lib.landmarks.ensemble.runtime_features import runtime_feature_order
+from lib.landmarks.ensemble.runtime_features import (
+    RUNTIME_FEATURE_CONTRACT_VERSION,
+    runtime_feature_order,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     feature_matrix,
@@ -658,6 +661,7 @@ def _train_v3_lambdarank_from_tagged_rows(
         "higher_is_better": False,
         "failure_threshold": failure_threshold,
         "features": list(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "model_data": booster.model_to_string(),
         "training_data_counts": {
             "row_count": len(train_rows),
@@ -707,6 +711,7 @@ def _train_v3_lambdarank_from_tagged_rows(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "feature_count": len(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "target": TARGET_TRANSFORM_REGRET_V3,
         "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
         "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
@@ -844,6 +849,7 @@ def _train_lambdarank_from_tagged_rows(
         "higher_is_better": False,
         "failure_threshold": failure_threshold,
         "features": list(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "model_data": booster.model_to_string(),
         "training_data_counts": {
             "row_count": len(train_rows),
@@ -883,6 +889,7 @@ def _train_lambdarank_from_tagged_rows(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "feature_count": len(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "target": TARGET_SELECTION_COST,
         "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
         "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
@@ -918,14 +925,11 @@ def train_runtime_resolver_scorer_suite(
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
-    v2_learning_rate: float = 0.05,
-    v2_iterations: int = 150,
-    v2_num_leaves: int = 31,
     v3_learning_rate: float = 0.05,
     v3_iterations: int = 150,
     v3_num_leaves: int = 31,
 ) -> dict[str, T.Any]:
-    """Train all learned runtime resolver scorers from one canonical row split."""
+    """Train the active learned_quality_v3 scorer from one canonical row split."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     contexts = load_scorer_contexts(
@@ -977,23 +981,9 @@ def train_runtime_resolver_scorer_suite(
         scorer_candidate_table_rows(contexts),
         output_dir / TRAINING_CANDIDATE_TABLE_CSV,
     )
-    v2_dir = output_dir / "v2_lambdarank"
     v3_dir = output_dir / "v3_lambdarank"
     scorers_dir = output_dir / SCORERS_DIR
     scorers_dir.mkdir(parents=True, exist_ok=True)
-
-    v2_metrics = _train_lambdarank_from_tagged_rows(
-        train_tagged_rows=train_tagged_rows,
-        eval_tagged_rows=eval_tagged_rows,
-        candidates=candidates,
-        output_dir=v2_dir,
-        failure_threshold=failure_threshold,
-        eval_fraction=eval_fraction,
-        split_seed=split_seed,
-        learning_rate=v2_learning_rate,
-        iterations=v2_iterations,
-        num_leaves=v2_num_leaves,
-    )
 
     v3_metrics = _train_v3_lambdarank_from_tagged_rows(
         train_tagged_rows=train_tagged_rows,
@@ -1008,19 +998,14 @@ def train_runtime_resolver_scorer_suite(
         num_leaves=v3_num_leaves,
     )
 
-    canonical_v2 = scorers_dir / "learned_quality_v2.json"
-    shutil.copy2(v2_dir / SCORER_V2_ARTIFACT, canonical_v2)
     canonical_v3 = scorers_dir / "learned_quality_v3.json"
     shutil.copy2(v3_dir / SCORER_V3_ARTIFACT, canonical_v3)
 
     metrics = {
         "artifact_schema_version": 1,
         "scorer_dataset": dataset_manifest,
+        "active_target": TARGET_TRANSFORM_REGRET_V3,
         "scorers": {
-            "learned_quality_v2": {
-                **v2_metrics,
-                "canonical_artifact": str(canonical_v2),
-            },
             "learned_quality_v3": {
                 **v3_metrics,
                 "canonical_artifact": str(canonical_v3),
@@ -1029,18 +1014,17 @@ def train_runtime_resolver_scorer_suite(
         "candidate_table": str(candidate_table_path),
         "compatibility_artifacts": {
             "legacy_per_scorer_training_rows": [
-                str(v2_dir / TRAINING_ROWS_CSV),
                 str(v3_dir / TRAINING_ROWS_CSV),
             ],
             "legacy_per_scorer_eval_rows": [
-                str(v2_dir / EVAL_ROWS_CSV),
                 str(v3_dir / EVAL_ROWS_CSV),
             ],
             "candidate_table": str(candidate_table_path),
             "note": (
-                "Legacy linear/logistic scorer training has been removed. New consumers should use "
+                "Legacy linear/logistic scorer training has been removed. The active scorer_suite "
+                "target is transform_alignment_regret_v3 only. New consumers should use "
                 "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and the canonical "
-                "learned_quality artifacts."
+                "learned_quality_v3 artifact."
             ),
         },
         "candidate_table_status": "compatibility_derived_from_scorer_contexts",
@@ -1050,7 +1034,7 @@ def train_runtime_resolver_scorer_suite(
     }
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
-    metrics["artifact"] = str(canonical_v2)
+    metrics["artifact"] = str(canonical_v3)
     return metrics
 
 
@@ -1142,6 +1126,7 @@ def train_runtime_resolver_scorer_v2(
         "higher_is_better": False,
         "failure_threshold": failure_threshold,
         "features": list(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "model_data": booster.model_to_string(),
         "training_data_counts": {
             "row_count": len(train_rows),
@@ -1181,6 +1166,7 @@ def train_runtime_resolver_scorer_v2(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "feature_count": len(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "target": TARGET_SELECTION_COST,
         "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
         "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
