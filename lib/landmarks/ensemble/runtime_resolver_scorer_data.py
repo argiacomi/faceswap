@@ -313,6 +313,10 @@ _V3_SOFT_SUSPECT_TOKENS: tuple[str, ...] = (
     "warning",
 )
 
+# Keep this aligned with runtime_resolver.DEFAULT_MAX_SHAPE_PLAUSIBILITY_SCORE
+# without importing runtime_resolver here and expanding scorer-data dependencies.
+DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 1.10
+
 
 def _dedupe_reasons(reasons: T.Iterable[str]) -> tuple[str, ...]:
     """Return non-empty reason strings in stable order."""
@@ -341,14 +345,31 @@ def _v3_hard_invalid_reasons(metric: CandidateMetrics) -> tuple[str, ...]:
     return _dedupe_reasons(reasons)
 
 
-def _v3_soft_suspect_reasons(metric: CandidateMetrics) -> tuple[str, ...]:
-    """Return soft geometry warnings that remain finite v3 cost penalties."""
+def _v3_soft_suspect_reasons(
+    metric: CandidateMetrics,
+    *,
+    hard_invalid_reasons: T.Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Return soft geometry warnings that remain finite v3 cost penalties.
+
+    Hard-invalid reasons win the split.  A diagnostic that excludes a candidate
+    from v3 ranking must not also appear as a soft-suspect penalty reason.
+    """
+    hard_reason_set = {
+        str(reason or "").strip() for reason in hard_invalid_reasons if str(reason or "").strip()
+    }
     reasons: list[str] = []
     for reason in (*metric.geometry_veto_reasons, *metric.shape_veto_reasons):
-        lowered = str(reason).lower()
+        text = str(reason or "").strip()
+        if not text or text in hard_reason_set:
+            continue
+        lowered = text.lower()
         if any(token in lowered for token in _V3_SOFT_SUSPECT_TOKENS):
-            reasons.append(str(reason))
-    if metric.shape_plausibility_score is not None and metric.shape_plausibility_score > 0:
+            reasons.append(text)
+    if (
+        metric.shape_plausibility_score is not None
+        and metric.shape_plausibility_score > DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE
+    ):
         reasons.append("low_plausibility")
     return _dedupe_reasons(reasons)
 
@@ -1042,7 +1063,10 @@ def rows_for_context(
             truth_for_v3,
             visibility=context.visibility,
             hard_invalid_reasons=hard_invalid_reasons,
-            soft_suspect_reasons=_v3_soft_suspect_reasons(metric),
+            soft_suspect_reasons=_v3_soft_suspect_reasons(
+                metric,
+                hard_invalid_reasons=hard_invalid_reasons,
+            ),
         )
 
     rankable_v3 = {
@@ -1315,6 +1339,7 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
     feature_names = sorted({name for row in rows for name in row.feature_values})
     fieldnames = [
         "sample_id",
+        "face_index",
         "dataset",
         "condition",
         "candidate_name",

@@ -38,6 +38,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     TARGET_NORMALIZED_REGRET,
     TARGET_ORACLE_REGRET,
     TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_targets import (
     TaggedRow,
@@ -215,6 +216,8 @@ def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
         return max(float(row.candidate_nme - row.oracle_nme), 0.0)
     if target == TARGET_SELECTION_COST:
         return float(row.selection_cost)
+    if target == TARGET_TRANSFORM_REGRET_V3:
+        return float(row.transform_regret_v3)
     raise ValueError(f"unsupported scorer target {target!r}")
 
 
