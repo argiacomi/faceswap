@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import typing as T
 
 import numpy as np
 import pytest
@@ -42,7 +43,7 @@ def _truth_face() -> np.ndarray:
 
 def _alignment_crop_center(points: np.ndarray) -> np.ndarray:
     """Return the fitted source-frame crop center for stable pure transforms."""
-    return visible_subset_alignment_summary(points).summary.roi.mean(axis=0)
+    return T.cast(np.ndarray, visible_subset_alignment_summary(points).summary.roi.mean(axis=0))
 
 
 def test_visible_landmark_indices_default_to_all_68() -> None:
