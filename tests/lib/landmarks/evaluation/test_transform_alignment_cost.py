@@ -40,6 +40,11 @@ def _truth_face() -> np.ndarray:
     return points
 
 
+def _alignment_crop_center(points: np.ndarray) -> np.ndarray:
+    """Return the fitted source-frame crop center for stable pure transforms."""
+    return visible_subset_alignment_summary(points).summary.roi.mean(axis=0)
+
+
 def test_visible_landmark_indices_default_to_all_68() -> None:
     assert visible_landmark_indices(None) == tuple(range(68))
 
@@ -78,7 +83,7 @@ def test_transform_cost_v3_zero_for_identical_landmarks() -> None:
     assert cost.total_cost == pytest.approx(0.0, abs=1e-9)
 
 
-def test_transform_cost_v3_center_delta_uses_gt_output_frame() -> None:
+def test_transform_cost_v3_translation_only_changes_center_delta() -> None:
     truth = _truth_face()
     predicted = truth + np.asarray([8.0, 0.0], dtype="float64")
 
@@ -87,14 +92,17 @@ def test_transform_cost_v3_center_delta_uses_gt_output_frame() -> None:
 
     assert cost_512.hard_invalid is False
     assert cost_512.center_delta > 0.0
+    assert cost_512.scale_delta == pytest.approx(0.0, abs=1e-9)
+    assert cost_512.roll_delta_degrees == pytest.approx(0.0, abs=1e-9)
+    assert cost_512.fit_delta == pytest.approx(0.0, abs=1e-9)
     # The delta is normalized by aligned crop size, so changing output size
     # should not materially change the label.
     assert cost_256.center_delta == pytest.approx(cost_512.center_delta, rel=1e-6)
 
 
-def test_transform_cost_v3_scale_delta_uses_log_ratio() -> None:
+def test_transform_cost_v3_scale_only_changes_scale_delta() -> None:
     truth = _truth_face()
-    center = truth.mean(axis=0)
+    center = _alignment_crop_center(truth)
     predicted = center + (truth - center) * 1.10
 
     pred_summary = visible_subset_alignment_summary(predicted)
@@ -102,22 +110,29 @@ def test_transform_cost_v3_scale_delta_uses_log_ratio() -> None:
     expected = abs(math.log(pred_summary.summary.scale / truth_summary.summary.scale))
     cost = transform_cost_v3(predicted, truth)
 
+    assert cost.center_delta == pytest.approx(0.0, abs=1e-6)
     assert cost.scale_delta == pytest.approx(expected)
+    assert cost.roll_delta_degrees == pytest.approx(0.0, abs=1e-6)
+    assert cost.fit_delta == pytest.approx(0.0, abs=1e-6)
 
 
-def test_transform_cost_v3_roll_delta_wraps_degrees() -> None:
+def test_transform_cost_v3_roll_only_changes_roll_delta() -> None:
     truth = _truth_face()
-    angle = math.radians(7.5)
+    angle_degrees = 7.5
+    angle = math.radians(angle_degrees)
     rotation = np.asarray(
         [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]],
         dtype="float64",
     )
-    center = truth.mean(axis=0)
+    center = _alignment_crop_center(truth)
     predicted = (truth - center) @ rotation.T + center
 
     cost = transform_cost_v3(predicted, truth)
 
-    assert cost.roll_delta_degrees == pytest.approx(7.5, abs=1e-3)
+    assert cost.center_delta == pytest.approx(0.0, abs=1e-6)
+    assert cost.scale_delta == pytest.approx(0.0, abs=1e-6)
+    assert cost.roll_delta_degrees == pytest.approx(angle_degrees, abs=1e-3)
+    assert cost.fit_delta == pytest.approx(0.0, abs=1e-6)
 
 
 def test_transform_cost_v3_fit_delta_uses_output_frame_rms_regret() -> None:
@@ -212,6 +227,39 @@ def test_visibility_gates_transform_fit_for_candidate_and_gt() -> None:
         abs=1e-6,
     )
     assert visible_cost.total_cost < full_cost.total_cost
+
+
+def test_profile_hidden_landmarks_do_not_pollute_gt_visible_subset_transform() -> None:
+    truth = _truth_face()
+    polluted_truth = truth.copy()
+    profile_hidden_indices = (
+        *range(9, 17),
+        *range(22, 27),
+        *range(42, 48),
+    )
+    polluted_truth[list(profile_hidden_indices)] += np.asarray([500.0, -300.0], dtype="float64")
+
+    visibility = [True] * 68
+    for index in profile_hidden_indices:
+        visibility[index] = False
+
+    visible_summary = visible_subset_alignment_summary(polluted_truth, visibility)
+    clean_visible_summary = visible_subset_alignment_summary(truth, visibility)
+    visible_cost = transform_cost_v3(truth, polluted_truth, visibility=visibility)
+    full_cost = transform_cost_v3(truth, polluted_truth)
+
+    assert set(profile_hidden_indices).isdisjoint(visible_summary.fit_indices)
+    assert visible_summary.summary.translation == pytest.approx(
+        clean_visible_summary.summary.translation,
+        abs=1e-6,
+    )
+    assert visible_summary.summary.scale == pytest.approx(clean_visible_summary.summary.scale)
+    assert visible_summary.summary.rotation_degrees == pytest.approx(
+        clean_visible_summary.summary.rotation_degrees,
+        abs=1e-6,
+    )
+    assert visible_cost.total_cost == pytest.approx(0.0, abs=1e-9)
+    assert full_cost.total_cost > visible_cost.total_cost
 
 
 def test_transform_fit_failure_marks_hard_invalid_without_inf_cost() -> None:
