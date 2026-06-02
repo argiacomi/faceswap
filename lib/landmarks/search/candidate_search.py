@@ -65,6 +65,7 @@ from lib.landmarks.search.candidates import (
 
 DEFAULT_OBJECTIVE: str = "extract_alignment_v1"
 DEFAULT_REGRESSION_EPSILON_NME: float = 0.001
+SampleProgress = T.Callable[[T.Sequence[LandmarkSample], str], T.Iterable[LandmarkSample]]
 
 
 @dataclass(frozen=True)
@@ -203,12 +204,22 @@ class _CandidateSearchContext:
         cache: DiskPredictionCache,
         models: T.Sequence[str],
         failure_threshold: float,
+        progress: SampleProgress | None = None,
     ) -> None:
         self.cache = cache
         self.models = tuple(dict.fromkeys(models))
         self.failure_threshold = float(failure_threshold)
-        self.fit_data = self._load_samples(fit_samples, include_single_metrics=False)
-        self.select_data = self._load_samples(select_samples, include_single_metrics=True)
+        self.progress = progress
+        self.fit_data = self._load_samples(
+            fit_samples,
+            include_single_metrics=False,
+            progress_desc="Load candidate search fit samples",
+        )
+        self.select_data = self._load_samples(
+            select_samples,
+            include_single_metrics=True,
+            progress_desc="Load candidate search select samples",
+        )
         self._error_tables: dict[tuple[str, ...], ErrorTable] = {}
         self._fit_results: dict[
             tuple[tuple[str, ...], str, tuple[tuple[str, float], ...]], WeightFitResult
@@ -219,9 +230,11 @@ class _CandidateSearchContext:
         samples: T.Sequence[LandmarkSample],
         *,
         include_single_metrics: bool,
+        progress_desc: str,
     ) -> list[_SearchSampleData]:
         rows: list[_SearchSampleData] = []
-        for sample in samples:
+        iterator = self.progress(samples, progress_desc) if self.progress is not None else samples
+        for sample in iterator:
             truth = np.load(sample.landmarks).astype("float32")
             predictions = {
                 model: self.cache.read(sample.sample_id, model) for model in self.models
@@ -587,6 +600,7 @@ def run_candidate_search(
     regression_epsilon_nme: float = DEFAULT_REGRESSION_EPSILON_NME,
     failure_threshold: float = 0.08,
     progress: CandidateProgress | None = None,
+    sample_progress: SampleProgress | None = None,
 ) -> list[CandidateResult]:
     """Evaluate every candidate and return CandidateResults sorted by score.
 
@@ -606,6 +620,7 @@ def run_candidate_search(
         cache=cache,
         models=all_models,
         failure_threshold=failure_threshold,
+        progress=sample_progress,
     )
     iterator = progress(candidates) if progress is not None else candidates
     for candidate in iterator:

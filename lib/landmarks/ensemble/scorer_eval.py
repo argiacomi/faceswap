@@ -1453,10 +1453,12 @@ def score_policy_choices(
     *,
     risk_floor_for_safe_fallback: float,
     safe_fallback_min_delta: float,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, str]:
     """Choose one candidate per sample for a scorer artifact."""
     choices: dict[str, str] = {}
-    for context in contexts:
+    iterator = progress(contexts, "Score scorer policy") if progress is not None else contexts
+    for context in iterator:
         context_rows = _context_rows_for_eval(context)
         scores = _score_context_rows(scorer, context_rows)
         choices[context.sample_id] = choose_scorer(
@@ -1855,6 +1857,7 @@ def evaluate_runtime_resolver_scorer(
     allow_image_backfill: bool = False,
     allow_derived_no_image_gt_hard: bool = False,
     gt_hard_resolver_metadata: Path | None = None,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
     if promotion_scope not in PROMOTION_SCOPES:
@@ -1883,6 +1886,7 @@ def evaluate_runtime_resolver_scorer(
             allow_image_backfill=allow_image_backfill,
             gt_hard_resolver_metadata=gt_hard_resolver_metadata,
             require_gt_hard_metadata=not allow_derived_no_image_gt_hard,
+            progress=progress,
         )
         if eval_split is not None:
             contexts, source_by_sample_id = filter_contexts_by_eval_split(contexts, eval_split)
@@ -1904,7 +1908,8 @@ def evaluate_runtime_resolver_scorer(
     safe_fallback_count = 0
     hard_slice_fallback_count = 0
     fallback_used_by_sample_id: dict[str, bool] = {}
-    for context in contexts:
+    score_iter = progress(contexts, "Score resolver scorer") if progress is not None else contexts
+    for context in score_iter:
         context_rows = _context_rows_for_eval(context)
         score_by_candidate = _score_context_rows(scorer, context_rows)
         (
@@ -2039,11 +2044,23 @@ def evaluate_runtime_resolver_scorer(
     )
     installed_scorer_choices: dict[str, dict[str, str]] = {}
     for policy_name, installed_scorer in installed_scorers.items():
+        installed_progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None
+        if progress is not None:
+
+            def installed_progress(
+                values: T.Sequence[T.Any],
+                desc: str,
+                *,
+                _policy_name: str = policy_name,
+            ) -> T.Iterable[T.Any]:
+                return progress(values, f"Score installed scorer [{_policy_name}]")
+
         installed_scorer_choices[policy_name] = score_policy_choices(
             contexts,
             installed_scorer,
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
             safe_fallback_min_delta=safe_fallback_min_delta,
+            progress=installed_progress,
         )
         extra_scorer_choices[f"installed_current_{policy_name}"] = installed_scorer_choices[
             policy_name

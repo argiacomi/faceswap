@@ -9,6 +9,8 @@ import sys
 import typing as T
 from pathlib import Path
 
+from tqdm import tqdm
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -25,6 +27,23 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
 from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("export_resolver_candidate_table")
+
+
+def _show_progress() -> bool:
+    return logger.isEnabledFor(logging.INFO) and sys.stderr.isatty()
+
+
+def _context_progress(values: T.Sequence[T.Any], desc: str) -> T.Iterable[T.Any]:
+    return T.cast(
+        T.Iterable[T.Any],
+        tqdm(
+            values,
+            total=len(values),
+            desc=desc,
+            unit="sample",
+            disable=not _show_progress(),
+        ),
+    )
 
 
 def export_resolver_candidate_table(
@@ -48,6 +67,7 @@ def export_resolver_candidate_table(
         failure_threshold=failure_threshold,
         outlier_threshold=outlier_threshold,
         allow_image_backfill=allow_image_backfill,
+        progress=_context_progress,
     )
     artifacts: dict[str, str] = {}
     if output_csv is not None:

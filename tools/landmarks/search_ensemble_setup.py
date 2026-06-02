@@ -148,6 +148,32 @@ def _geometry_candidate_progress(
     )
 
 
+def _sample_progress(values: T.Sequence[T.Any], *, desc: str, enabled: bool) -> T.Iterable[T.Any]:
+    return tqdm(  # type: ignore[no-any-return]
+        values,
+        total=len(values),
+        desc=desc,
+        unit="sample",
+        disable=not enabled,
+    )
+
+
+def _profile_context_progress(samples: T.Sequence[T.Any], *, enabled: bool) -> T.Iterable[T.Any]:
+    return _sample_progress(samples, desc="Build profile context", enabled=enabled)
+
+
+def _profile_candidate_progress(
+    results: T.Sequence[CandidateResult], *, enabled: bool
+) -> T.Iterable[CandidateResult]:
+    return tqdm(  # type: ignore[no-any-return]
+        results,
+        total=len(results),
+        desc="Evaluate profile candidates",
+        unit="candidate",
+        disable=not enabled,
+    )
+
+
 def _load_inputs(args: argparse.Namespace) -> tuple[SplitAssignment, str, DiskPredictionCache]:
     assignment = load_split_file(args.splits)
     return assignment, split_assignment_hash(assignment), DiskPredictionCache(args.cache_dir)
@@ -190,6 +216,7 @@ def _build_profile_context(
     *,
     cache: DiskPredictionCache,
     models: T.Sequence[str],
+    progress: T.Callable[[T.Sequence[T.Any]], T.Iterable[T.Any]] | None = None,
 ) -> list[_ProfileContextRow]:
     """Preload truth landmarks, bbox, and per-model cached predictions once.
 
@@ -199,7 +226,8 @@ def _build_profile_context(
     behavior.
     """
     rows: list[_ProfileContextRow] = []
-    for sample in samples:
+    iterator = progress(samples) if progress is not None else samples
+    for sample in iterator:
         try:
             truth = np.load(sample.landmarks).astype("float32")
         except OSError:
@@ -941,6 +969,11 @@ def main(argv: list[str] | None = None) -> int:
             regression_epsilon_nme=args.regression_epsilon_nme,
             failure_threshold=args.failure_threshold,
             progress=lambda values: _candidate_progress(values, enabled=_show_progress(args)),
+            sample_progress=lambda values, desc: _sample_progress(
+                values,
+                desc=desc,
+                enabled=_show_progress(args),
+            ),
         ),
     )
 
@@ -1016,8 +1049,12 @@ def main(argv: list[str] | None = None) -> int:
                 report_samples,
                 cache=cache,
                 models=_candidate_models(results),
+                progress=lambda values: _profile_context_progress(
+                    values,
+                    enabled=_show_progress(args),
+                ),
             )
-            for result in results:
+            for result in _profile_candidate_progress(results, enabled=_show_progress(args)):
                 aggregate = _candidate_profile_aggregate(
                     result,
                     context=context,
@@ -1172,6 +1209,11 @@ def main(argv: list[str] | None = None) -> int:
                             if winner.candidate.outlier_threshold is None
                             else float(winner.candidate.outlier_threshold)
                         ),
+                    ),
+                    progress=lambda values, desc: _sample_progress(
+                        values,
+                        desc=desc,
+                        enabled=_show_progress(args),
                     ),
                 )
 

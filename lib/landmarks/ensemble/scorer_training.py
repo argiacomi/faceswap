@@ -696,6 +696,7 @@ def train_runtime_resolver_scorer_suite(
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Train the active v3 scorer from one canonical row split."""
 
@@ -712,6 +713,7 @@ def train_runtime_resolver_scorer_suite(
         allow_image_backfill=allow_image_backfill,
         gt_hard_resolver_metadata=gt_hard_resolver_metadata,
         require_gt_hard_metadata=True,
+        progress=progress,
     )
     tagged_rows = tagged_quality_rows(contexts, high_gap_threshold=high_gap_threshold)
     if not tagged_rows:
@@ -824,6 +826,7 @@ def train_runtime_resolver_scorer_v3(
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
     learning_rate: float = 0.05,
     iterations: int = 150,
     num_leaves: int = 31,
@@ -841,6 +844,7 @@ def train_runtime_resolver_scorer_v3(
         allow_image_backfill=allow_image_backfill,
         gt_hard_resolver_metadata=gt_hard_resolver_metadata,
         require_gt_hard_metadata=True,
+        progress=progress,
     )
     tagged_rows = tagged_quality_rows(contexts, high_gap_threshold=high_gap_threshold)
     if not tagged_rows:

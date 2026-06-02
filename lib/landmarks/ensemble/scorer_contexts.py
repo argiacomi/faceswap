@@ -70,6 +70,7 @@ def load_scorer_contexts(
     allow_image_backfill: bool = False,
     gt_hard_resolver_metadata: Path | None = None,
     require_gt_hard_metadata: bool = True,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> list[SampleCandidateContext]:
     """Load scorer contexts across GT-hard and production sources."""
     pairs = scorer_manifest_cache_pairs(
@@ -111,6 +112,7 @@ def load_scorer_contexts(
             failure_threshold=failure_threshold,
             outlier_threshold=outlier_threshold,
             allow_image_backfill=allow_image_backfill,
+            progress=progress,
         )
         if context_source != source:
             loaded_contexts = [replace(context, source=source) for context in loaded_contexts]

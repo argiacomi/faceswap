@@ -9,6 +9,8 @@ import sys
 import typing as T
 from pathlib import Path
 
+from tqdm import tqdm
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -150,7 +152,13 @@ def build_gt_hard_resolver_metadata(
     rows: list[dict[str, T.Any]] = []
     failures: list[str] = []
     samples = load_manifest(manifest)
-    for sample in samples:
+    for sample in tqdm(
+        samples,
+        total=len(samples),
+        desc="Build resolver metadata",
+        unit="sample",
+        disable=not logger.isEnabledFor(logging.INFO) or not sys.stderr.isatty(),
+    ):
         try:
             context_sample = _sample_without_manifest_runtime_metadata(sample)
             context = build_sample_context(

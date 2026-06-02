@@ -61,6 +61,9 @@ from lib.landmarks.evaluation.transform_alignment_cost import (
 
 logger = logging.getLogger(__name__)
 
+ContextProgress = T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]]
+
+
 DEFAULT_FAILURE_THRESHOLD: float = DEFAULT_NME_FAILURE_THRESHOLD
 DEFAULT_HIGH_GAP_THRESHOLD: float = DEFAULT_LARGE_REGRET_THRESHOLD
 DEFAULT_OUTLIER_THRESHOLD: float = 3.5
@@ -1320,6 +1323,7 @@ def load_contexts(
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    progress: ContextProgress | None = None,
 ) -> list[SampleCandidateContext]:
     """Load all sample contexts for one manifest/cache pair."""
     weights = load_weights(weights_path)
@@ -1329,9 +1333,13 @@ def load_contexts(
     requested = tuple(candidates or parse_candidates(None, weights))
     cache = DiskPredictionCache(cache_dir)
     contexts: list[SampleCandidateContext] = []
-    for sample in filter_canonical_68_samples(
-        load_manifest(manifest_path), context="scorer dataset"
-    ):
+    samples = filter_canonical_68_samples(load_manifest(manifest_path), context="scorer dataset")
+    iterator = (
+        progress(samples, f"Load contexts [{source or manifest_path.stem}]")
+        if progress is not None
+        else samples
+    )
+    for sample in iterator:
         try:
             contexts.append(
                 build_sample_context(
@@ -1396,6 +1404,7 @@ def export_candidate_table(
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    progress: ContextProgress | None = None,
 ) -> list[dict[str, T.Any]]:
     """Build the canonical candidate diagnostic table for one manifest/cache pair."""
     contexts = load_contexts(
@@ -1408,6 +1417,7 @@ def export_candidate_table(
         allow_image_backfill=allow_image_backfill,
         image_backfill_crop_scale=image_backfill_crop_scale,
         image_backfill_crop_size=image_backfill_crop_size,
+        progress=progress,
     )
     return candidate_table_rows(contexts)
 

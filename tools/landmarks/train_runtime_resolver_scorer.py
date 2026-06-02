@@ -9,6 +9,8 @@ import sys
 import typing as T
 from pathlib import Path
 
+from tqdm import tqdm
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -37,6 +39,23 @@ from lib.landmarks.ensemble.scorer_training import (
 from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("train_runtime_resolver_scorer")
+
+
+def _show_progress() -> bool:
+    return logger.isEnabledFor(logging.INFO) and sys.stderr.isatty()
+
+
+def _context_progress(values: T.Sequence[T.Any], desc: str) -> T.Iterable[T.Any]:
+    return T.cast(
+        T.Iterable[T.Any],
+        tqdm(
+            values,
+            total=len(values),
+            desc=desc,
+            unit="sample",
+            disable=not _show_progress(),
+        ),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -114,6 +133,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         eval_fraction=args.eval_fraction,
         split_seed=args.split_seed,
         allow_image_backfill=args.allow_image_backfill,
+        progress=_context_progress,
     )
     logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])
     return 0

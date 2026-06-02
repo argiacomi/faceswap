@@ -26,6 +26,7 @@ import typing as T
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
@@ -77,7 +78,13 @@ def evaluate_manifest(
     rows: list[dict[str, T.Any]] = []
     skipped: list[str] = []
 
-    for sample in samples:
+    for sample in tqdm(
+        samples,
+        total=len(samples),
+        desc="Evaluate geometry",
+        unit="sample",
+        disable=not logger.isEnabledFor(logging.INFO) or not sys.stderr.isatty(),
+    ):
         available = cache.available_models(sample.sample_id)
         missing = [name for name in models if name not in available]
         if missing:

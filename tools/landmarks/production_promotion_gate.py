@@ -328,6 +328,7 @@ def evaluate_production_gate(
     weights_path: Path,
     config: ProductionGateConfig,
     resolver_metadata_path: Path | None = None,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> tuple[dict[str, T.Any], list[ProductionSampleEvaluation]]:
     """Evaluate a production manifest and return gate report plus per-sample rows."""
     raw_metadata = _raw_manifest_metadata(manifest_path)
@@ -350,6 +351,7 @@ def evaluate_production_gate(
         resolver_metadata=context_resolver_metadata or None,
         failure_threshold=config.failure_threshold,
         outlier_threshold=config.outlier_threshold,
+        progress=progress,
     )
     missing_current = [
         context.sample_id for context in contexts if context.selected_candidate_missing_from_eval
@@ -360,7 +362,10 @@ def evaluate_production_gate(
             f"{len(missing_current)} sample(s): {missing_current[:10]}"
         )
     evaluations: list[ProductionSampleEvaluation] = []
-    for context in contexts:
+    evaluation_iter = (
+        progress(contexts, "Evaluate production policy") if progress is not None else contexts
+    )
+    for context in evaluation_iter:
         metadata = sidecar_metadata.get(
             metadata_key(context.sample_id, context.face_index),
             raw_metadata.get(context.sample_id, {}),
@@ -686,6 +691,7 @@ def run_production_promotion_gate(
     output_dir: Path,
     config: ProductionGateConfig | None = None,
     resolver_metadata_path: Path | None = None,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Evaluate production validation and write promotion-gate artifacts."""
     gate_config = config or ProductionGateConfig()
@@ -695,6 +701,7 @@ def run_production_promotion_gate(
         weights_path=weights_path,
         config=gate_config,
         resolver_metadata_path=resolver_metadata_path,
+        progress=progress,
     )
     report["artifacts"] = write_production_gate_artifacts(
         report,

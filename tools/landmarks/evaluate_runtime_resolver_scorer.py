@@ -9,6 +9,8 @@ import sys
 import typing as T
 from pathlib import Path
 
+from tqdm import tqdm
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -28,6 +30,23 @@ from lib.landmarks.ensemble.scorer_eval import (
 from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("evaluate_runtime_resolver_scorer")
+
+
+def _show_progress() -> bool:
+    return logger.isEnabledFor(logging.INFO) and sys.stderr.isatty()
+
+
+def _context_progress(values: T.Sequence[T.Any], desc: str) -> T.Iterable[T.Any]:
+    return T.cast(
+        T.Iterable[T.Any],
+        tqdm(
+            values,
+            total=len(values),
+            desc=desc,
+            unit="sample",
+            disable=not _show_progress(),
+        ),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -156,6 +175,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         allow_image_backfill=args.allow_image_backfill,
         allow_derived_no_image_gt_hard=args.allow_derived_no_image_gt_hard,
         gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
+        progress=_context_progress,
     )
     logger.info("Scorer policy status: %s", report["status"])
     return 0
