@@ -187,7 +187,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     v3_payload = {
         **v2_payload,
         "artifact_schema_version": 3,
-        "target": "transform_regret_v3",
+        "target": "transform_alignment_regret_v3",
         "version": "learned_quality_v3",
         "scorer_version": "learned_quality_v3",
         "runtime_policy": "learned_quality_v3",
@@ -1609,8 +1609,12 @@ def test_apply_config_installs_production_bundle(
         "learned_quality_v2",
         "learned_quality_v3",
     }
-    assert loaded.scorer_path_for("learned_quality_v2").is_file()  # type: ignore[union-attr]
-    assert loaded.scorer_path_for("learned_quality_v3").is_file()  # type: ignore[union-attr]
+    v2_scorer = loaded.scorer_path_for("learned_quality_v2")
+    v3_scorer = loaded.scorer_path_for("learned_quality_v3")
+    assert v2_scorer is not None
+    assert v3_scorer is not None
+    assert v2_scorer.is_file()
+    assert v3_scorer.is_file()
     assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
 
 

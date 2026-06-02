@@ -21,13 +21,16 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
 from lib.landmarks.ensemble.scorer_dataset import _fieldnames
 from lib.landmarks.ensemble.scorer_target_config import (
     REGRESSION_TARGETS,
+    TARGET_TRANSFORM_COST_V3,
     TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_training import (
     MIN_V3_ORACLE_GAP,
+    _lambdarank_label_v3,
     _rankable_v3_tagged_rows,
-    _v3_lambdarank_label,
+    _v3_lambdarank_item_weights,
     scorer_target_value,
+    v3_lambdarank_query_weight,
     write_tagged_rows_csv,
 )
 
@@ -207,9 +210,13 @@ def test_rows_for_context_all_invalid_group_has_no_v3_oracle() -> None:
 
 
 def test_transform_regret_v3_is_registered_training_target() -> None:
-    row = _row(transform_regret_v3=0.375)
+    row = _row(transform_cost_v3=0.625, transform_regret_v3=0.375)
 
+    assert TARGET_TRANSFORM_COST_V3 in REGRESSION_TARGETS
     assert TARGET_TRANSFORM_REGRET_V3 in REGRESSION_TARGETS
+    assert TARGET_TRANSFORM_COST_V3 == "transform_alignment_cost_v3"
+    assert TARGET_TRANSFORM_REGRET_V3 == "transform_alignment_regret_v3"
+    assert scorer_target_value(row, TARGET_TRANSFORM_COST_V3) == pytest.approx(0.625)
     assert scorer_target_value(row, TARGET_TRANSFORM_REGRET_V3) == pytest.approx(0.375)
 
 
@@ -318,4 +325,50 @@ def test_v3_lambdarank_label_uses_transform_regret_not_nme_or_selection_cost() -
         transform_regret_v3=1.0,
     )
 
-    assert _v3_lambdarank_label(transform_oracle) > _v3_lambdarank_label(transform_bad)
+    assert _lambdarank_label_v3(transform_oracle) > _lambdarank_label_v3(transform_bad)
+
+
+def test_v3_query_weight_ignores_candidate_specific_signals() -> None:
+    clean = _row(
+        condition="profile",
+        runtime_bucket="profile",
+        geometry_veto_reasons=(),
+        soft_structural_penalty_v3=0.0,
+        hard_invalid_v3=False,
+    )
+    candidate_penalized = _row(
+        condition="profile",
+        runtime_bucket="profile",
+        geometry_veto_reasons=("jaw_crop_warning",),
+        soft_structural_penalty_v3=0.5,
+        hard_invalid_v3=True,
+        hard_invalid_reasons_v3=("cloud_collapse",),
+    )
+
+    assert v3_lambdarank_query_weight(candidate_penalized, "gt") == pytest.approx(
+        v3_lambdarank_query_weight(clean, "gt")
+    )
+
+
+def test_v3_item_weights_repeat_query_weight_for_whole_group() -> None:
+    first = _row(
+        sample_id="profile_group",
+        candidate_name="candidate_a",
+        condition="profile",
+        runtime_bucket="profile",
+        geometry_veto_reasons=(),
+        soft_structural_penalty_v3=0.0,
+    )
+    second = _row(
+        sample_id="profile_group",
+        candidate_name="candidate_b",
+        condition="profile",
+        runtime_bucket="profile",
+        geometry_veto_reasons=("eye_warning",),
+        soft_structural_penalty_v3=0.75,
+    )
+    grouped = [(first, "gt"), (second, "gt")]
+
+    weights = _v3_lambdarank_item_weights(grouped, [2])
+
+    assert weights.tolist() == pytest.approx([v3_lambdarank_query_weight(first, "gt")] * 2)

@@ -771,10 +771,7 @@ def _fuse_strategy(
     method = strategy_outlier_method(canonical)
     threshold = config.outlier_threshold if strategy_uses_threshold(canonical) else 3.5
     if not strategy_requires_weights(canonical):
-        return T.cast(
-            np.ndarray,
-            plain_average(items, outlier_method=method, outlier_threshold=threshold).points,
-        )
+        return plain_average(items, outlier_method=method, outlier_threshold=threshold).points
     models = tuple(candidate.name for candidate in singles)
     if config.weights is None:
         matrix = np.array(
@@ -793,16 +790,13 @@ def _fuse_strategy(
             model_count=stack.shape[0],
             landmark_count=stack.shape[1],
         )
-        return T.cast(np.ndarray, weighted_median(stack, normalized).astype("float32", copy=False))
-    return T.cast(
-        np.ndarray,
-        static_weighted(
-            items,
-            matrix,
-            outlier_method=method,
-            outlier_threshold=threshold,
-        ).points,
-    )
+        return weighted_median(stack, normalized).astype("float32", copy=False)
+    return static_weighted(
+        items,
+        matrix,
+        outlier_method=method,
+        outlier_threshold=threshold,
+    ).points
 
 
 def build_candidates(

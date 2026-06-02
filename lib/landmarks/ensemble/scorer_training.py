@@ -38,6 +38,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     TARGET_NORMALIZED_REGRET,
     TARGET_ORACLE_REGRET,
     TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_COST_V3,
     TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_targets import (
@@ -54,6 +55,7 @@ from lib.landmarks.pipeline_conventions import (
 SCORER_ARTIFACT = "runtime_resolver_scorer.json"
 SCORER_V2_ARTIFACT = "runtime_resolver_scorer_v2.json"
 SCORER_V3_ARTIFACT = "runtime_resolver_scorer_v3.json"
+SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
 SCORERS_DIR = "scorers"
 SCORER_SUITE_METRICS_JSON = "metrics.json"
 SCORER_SUITE_SENTINEL_JSON = ".scorer_training_complete.json"
@@ -67,6 +69,8 @@ SCORER_CONDITION_REPORT_CSV = "scorer_report_by_condition.csv"
 SCORER_REGION_REPORT_CSV = "scorer_report_by_region.csv"
 MIN_V3_ORACLE_GAP = 1e-4
 """Minimum cost gap required to use a v3 group for ranking supervision."""
+V3_REGRET_LABEL_CLAMP = 1.0
+"""Maximum v3 transform regret mapped into LambdaRank relevance labels."""
 
 HARD_CASE_SAMPLE_WEIGHTS: dict[str, float] = {
     "normal": 1.0,
@@ -220,6 +224,8 @@ def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
         return max(float(row.candidate_nme - row.oracle_nme), 0.0)
     if target == TARGET_SELECTION_COST:
         return float(row.selection_cost)
+    if target == TARGET_TRANSFORM_COST_V3:
+        return float(row.transform_cost_v3)
     if target == TARGET_TRANSFORM_REGRET_V3:
         return float(row.transform_regret_v3)
     raise ValueError(f"unsupported scorer target {target!r}")
@@ -474,8 +480,8 @@ def scorer_row_metrics(
     }
 
 
-def _v3_hard_case_split_label(row: CandidateQualityRow, source: str = "") -> str:
-    """Return hard-case weighting label for v3 without using NME/failure labels."""
+def _v3_query_condition_label(row: CandidateQualityRow, source: str = "") -> str:
+    """Return the face-level condition label for v3 query weighting."""
     del source
     tags = {
         str(row.condition or "").strip().lower(),
@@ -494,14 +500,10 @@ def _v3_hard_case_split_label(row: CandidateQualityRow, source: str = "") -> str
     return "normal"
 
 
-def v3_lambdarank_sample_weight(row: CandidateQualityRow, source: str = "") -> float:
-    """Return v3 item weight without using NME/proxy-cost targets."""
-    label = _v3_hard_case_split_label(row, source)
-    weight = HARD_CASE_SAMPLE_WEIGHTS[label]
-    weight += _crop_breaking_weight_bonus(row)
-    if float(row.soft_structural_penalty_v3) > 0.0:
-        weight += 0.5
-    return float(weight)
+def v3_lambdarank_query_weight(row: CandidateQualityRow, source: str = "") -> float:
+    """Return face-level v3 query weight without candidate-specific signals."""
+    label = _v3_query_condition_label(row, source)
+    return float(HARD_CASE_SAMPLE_WEIGHTS[label])
 
 
 def _v3_sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, str, str, str]:
@@ -589,21 +591,29 @@ def _v3_grouped_rows(rows: T.Sequence[TaggedRow]) -> tuple[list[TaggedRow], list
     return ordered, group_sizes
 
 
-def _v3_lambdarank_label(row: CandidateQualityRow) -> int:
+def _v3_lambdarank_item_weights(
+    grouped_rows: T.Sequence[TaggedRow],
+    group_sizes: T.Sequence[int],
+) -> np.ndarray:
+    """Return per-row LightGBM weights from one query weight per group."""
+    weights: list[float] = []
+    offset = 0
+    for size in group_sizes:
+        row, source = grouped_rows[offset]
+        weights.extend([v3_lambdarank_query_weight(row, source)] * size)
+        offset += size
+    return T.cast(np.ndarray, np.asarray(weights, dtype="float64"))
+
+
+def _lambdarank_label_v3(row: CandidateQualityRow) -> int:
     """Return v3 relevance where higher means lower transform regret.
 
     This intentionally ignores candidate_nme, oracle_nme, and selection_cost.
     """
-    clipped_regret = min(max(float(row.transform_regret_v3), 0.0), DEFAULT_LARGE_COST_THRESHOLD)
-    if DEFAULT_LARGE_COST_THRESHOLD <= 0.0:
+    if V3_REGRET_LABEL_CLAMP <= 0.0:
         return 0
-    return max(
-        0,
-        min(
-            30,
-            int(round((1.0 - clipped_regret / DEFAULT_LARGE_COST_THRESHOLD) * 30.0)),
-        ),
-    )
+    clipped = min(max(float(row.transform_regret_v3), 0.0), V3_REGRET_LABEL_CLAMP)
+    return round((1.0 - clipped / V3_REGRET_LABEL_CLAMP) * 30.0)
 
 
 def _train_v3_lambdarank_from_tagged_rows(
@@ -641,11 +651,8 @@ def _train_v3_lambdarank_from_tagged_rows(
     train_rows = untag_quality_rows(grouped_train)
     features = feature_order(train_rows)
     x = feature_matrix([row.feature_values for row in train_rows], features)
-    y = np.asarray([_v3_lambdarank_label(row) for row in train_rows], dtype="int32")
-    item_weights = np.asarray(
-        [v3_lambdarank_sample_weight(row, source) for row, source in grouped_train],
-        dtype="float64",
-    )
+    y = np.asarray([_lambdarank_label_v3(row) for row in train_rows], dtype="int32")
+    item_weights = _v3_lambdarank_item_weights(grouped_train, train_group_sizes)
 
     ranker = lgb.LGBMRanker(
         objective="lambdarank",
@@ -664,14 +671,14 @@ def _train_v3_lambdarank_from_tagged_rows(
     )
     artifact = {
         "artifact_schema_version": 3,
-        "version": "learned_quality_v3",
-        "scorer_version": "learned_quality_v3",
+        "version": SCORER_VERSION_LEARNED_QUALITY_V3,
+        "scorer_version": SCORER_VERSION_LEARNED_QUALITY_V3,
         "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
         "target": TARGET_TRANSFORM_REGRET_V3,
         "objective": "lambdarank_visible_transform_regret",
         "training_mode": "grouped_lambdarank_rankable_v3_only",
         "selection_target": "inverse_transform_regret_v3_rank",
-        "runtime_policy": "learned_quality_v3",
+        "runtime_policy": SCORER_VERSION_LEARNED_QUALITY_V3,
         "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
         "higher_is_better": False,
         "failure_threshold": failure_threshold,
@@ -695,8 +702,9 @@ def _train_v3_lambdarank_from_tagged_rows(
         "feature_importances": importances,
         "calibration": {"type": "none", "params": {}},
         "sample_weighting": {
-            "strategy": "v3_hard_case_distribution_weighting",
+            "strategy": "v3_condition_query_weighting",
             "row_count": len(train_rows),
+            "query_count": len(train_group_sizes),
             "mean_weight": float(np.mean(item_weights)) if item_weights.size else 0.0,
             "max_weight": float(np.max(item_weights)) if item_weights.size else 0.0,
         },
@@ -1272,6 +1280,8 @@ def train_runtime_resolver_scorer(
 __all__ = [
     "SCORER_ARTIFACT",
     "SCORER_V2_ARTIFACT",
+    "SCORER_V3_ARTIFACT",
+    "SCORER_VERSION_LEARNED_QUALITY_V3",
     "SCORERS_DIR",
     "SCORER_SUITE_METRICS_JSON",
     "SCORER_SUITE_SENTINEL_JSON",
