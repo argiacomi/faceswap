@@ -14,8 +14,8 @@ separate, explicit v3 scoring primitive for candidate-selection labels:
 The deltas are computed from the same Faceswap alignment vocabulary used by the
 existing geometry stack: Umeyama alignment matrices, crop/ROI deltas, roll deltas,
 and average-distance fit deltas.  Unlike ``alignment_summary()``, the transform
-fit here can be gated by landmark visibility, so profile/occluded GT points do
-not pollute the transform used as the v3 oracle target.
+fit here is gated by manifest landmark visibility, so profile/occluded GT points
+do not pollute the transform used as the v3 oracle target.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from lib.align.aligned_face import batch_umeyama
-from lib.align.constants import EXTRACT_RATIOS, MEAN_FACE, CenteringType, LandmarkType
+from lib.align.constants import EXTRACT_RATIOS, MEAN_FACE, LandmarkType
 from lib.landmarks.evaluation.geometry_signals import (
     DEFAULT_ALIGNED_SIZE,
     AlignmentSummary,
@@ -37,8 +37,10 @@ from lib.landmarks.evaluation.geometry_signals import (
 )
 
 _CORE_START = 17
-_CORE_COUNT = 51
+_CORE_END = 68
+_CORE_COUNT = _CORE_END - _CORE_START
 _DEFAULT_MIN_VISIBLE_POINTS = 8
+_DEFAULT_CENTERING = "face"
 
 
 @dataclass(frozen=True)
@@ -91,13 +93,25 @@ class TransformCostV3:
 
 
 @dataclass(frozen=True)
-class VisibleSubsetAlignmentSummary:
-    """Alignment summary fitted from a visibility-gated landmark subset."""
+class VisibleAlignmentSummary:
+    """Alignment summary fitted from a visibility-gated landmark subset.
+
+    ``visible_indices`` is the manifest-visible 68-point set, defaulting to all
+    landmarks when no manifest visibility is available.  ``fit_indices`` is the
+    usable visible subset consumed by Faceswap's 68-point Umeyama convention.
+    Faceswap fits 68-point alignments from landmarks 17..67 against
+    ``MEAN_FACE[LM_2D_51]``, so non-core visible landmarks are tracked for
+    diagnostics but not used by the transform fit.
+    """
 
     summary: AlignmentSummary
     visible_indices: tuple[int, ...]
+    fit_indices: tuple[int, ...]
     coverage_ratio: float
-    centering: CenteringType
+
+
+# Backward-compatible alias for the initial Step-1 name used on this branch.
+VisibleSubsetAlignmentSummary = VisibleAlignmentSummary
 
 
 def _as_68_landmarks(landmarks: np.ndarray, *, name: str) -> np.ndarray:
@@ -120,38 +134,51 @@ def _visibility_mask(visibility: T.Sequence[bool] | None) -> np.ndarray:
     return mask
 
 
+def visible_landmark_indices(visibility: T.Sequence[bool] | None) -> tuple[int, ...]:
+    """Return manifest-visible 68-point indices, defaulting to all landmarks."""
+    mask = _visibility_mask(visibility)
+    return tuple(int(index) for index in np.flatnonzero(mask))
+
+
+def _fit_indices_from_visible_indices(
+    visible_indices: T.Sequence[int],
+    *,
+    min_visible_points: int = _DEFAULT_MIN_VISIBLE_POINTS,
+) -> tuple[int, ...]:
+    """Return the visible core subset usable by Faceswap's 68-point fit."""
+    if min_visible_points < 3:
+        raise ValueError("min_visible_points must be at least 3 for a similarity transform")
+    visible_set = {int(index) for index in visible_indices}
+    fit_indices = tuple(index for index in range(_CORE_START, _CORE_END) if index in visible_set)
+    if len(fit_indices) < min_visible_points:
+        raise ValueError(
+            "visible-subset transform fit needs at least "
+            f"{min_visible_points} visible core landmarks; got {len(fit_indices)}"
+        )
+    return fit_indices
+
+
 def visible_core_indices(
     visibility: T.Sequence[bool] | None,
     *,
     min_visible_points: int = _DEFAULT_MIN_VISIBLE_POINTS,
 ) -> tuple[int, ...]:
-    """Return visible 68-point indices used by the v3 transform fit.
-
-    Faceswap's 68-point alignment matrix is fitted from the 51 core landmarks
-    (indices 17..67) against ``MEAN_FACE[LM_2D_51]``.  v3 preserves that
-    convention and applies visibility only within that core subset.
-    """
-    if min_visible_points < 3:
-        raise ValueError("min_visible_points must be at least 3 for a similarity transform")
-    mask = _visibility_mask(visibility)
-    core_visible = np.flatnonzero(mask[_CORE_START : _CORE_START + _CORE_COUNT])
-    if core_visible.size < min_visible_points:
-        raise ValueError(
-            "visible-subset transform fit needs at least "
-            f"{min_visible_points} visible core landmarks; got {core_visible.size}"
-        )
-    return tuple(int(index + _CORE_START) for index in core_visible)
+    """Return visible core fit indices for Faceswap's 68-point Umeyama fit."""
+    return _fit_indices_from_visible_indices(
+        visible_landmark_indices(visibility),
+        min_visible_points=min_visible_points,
+    )
 
 
 def _fit_matrix_from_visible_core(
     landmarks: np.ndarray,
-    visible_indices: T.Sequence[int],
+    fit_indices: T.Sequence[int],
 ) -> np.ndarray:
     """Fit a 2×3 Umeyama matrix from visible core landmarks to the mean face."""
-    core_offsets = np.asarray(visible_indices, dtype=np.intp) - _CORE_START
+    core_offsets = np.asarray(fit_indices, dtype=np.intp) - _CORE_START
     if core_offsets.size < 3:
         raise ValueError("at least 3 visible core landmarks are required")
-    source = landmarks[np.asarray(visible_indices, dtype=np.intp)]
+    source = landmarks[np.asarray(fit_indices, dtype=np.intp)]
     destination = MEAN_FACE[LandmarkType.LM_2D_51][core_offsets]
     matrix = batch_umeyama(source[np.newaxis, ...], destination, estimate_scale=True)[0][:2]
     if not np.isfinite(matrix).all():
@@ -178,29 +205,20 @@ def _invert_affine(matrix: np.ndarray) -> np.ndarray:
     return T.cast(np.ndarray, inverse[:2, :])
 
 
-def _padding_from_coverage(
-    *,
-    size: int,
-    coverage_ratio: float,
-    centering: CenteringType,
-) -> int:
-    """Return Faceswap's padding for ``size``/``coverage_ratio``/``centering``."""
+def _padding_from_coverage(*, size: int, coverage_ratio: float) -> int:
+    """Return Faceswap's face-centering padding for ``size``/``coverage_ratio``."""
     if size <= 0:
         raise ValueError(f"size must be positive, got {size!r}")
     if coverage_ratio <= 0:
         raise ValueError(f"coverage_ratio must be positive, got {coverage_ratio!r}")
-    return round(size * (EXTRACT_RATIOS[centering] + coverage_ratio - 1) / (2 * coverage_ratio))
+    return round(
+        size * (EXTRACT_RATIOS[_DEFAULT_CENTERING] + coverage_ratio - 1) / (2 * coverage_ratio)
+    )
 
 
-def _adjusted_matrix(
-    matrix: np.ndarray,
-    *,
-    size: int,
-    coverage_ratio: float,
-    centering: CenteringType,
-) -> np.ndarray:
-    """Return Faceswap-style crop matrix with coverage padding applied."""
-    padding = _padding_from_coverage(size=size, coverage_ratio=coverage_ratio, centering=centering)
+def _adjusted_matrix(matrix: np.ndarray, *, size: int, coverage_ratio: float) -> np.ndarray:
+    """Return Faceswap-style face-centered crop matrix with coverage padding."""
+    padding = _padding_from_coverage(size=size, coverage_ratio=coverage_ratio)
     adjusted = matrix.copy()
     adjusted *= size - 2 * padding
     adjusted[:, 2] += padding
@@ -229,36 +247,38 @@ def _decompose_similarity_matrix(matrix: np.ndarray) -> tuple[float, float, tupl
 
 def visible_subset_alignment_summary(
     landmarks: np.ndarray,
-    visibility: T.Sequence[bool] | None = None,
+    visibility: T.Sequence[bool] | None,
     *,
     size: int = DEFAULT_ALIGNED_SIZE,
     coverage_ratio: float = 1.0,
-    centering: CenteringType = "face",
     min_visible_points: int = _DEFAULT_MIN_VISIBLE_POINTS,
-) -> VisibleSubsetAlignmentSummary:
-    """Fit a Faceswap-style alignment summary from visible core landmarks.
+) -> VisibleAlignmentSummary:
+    """Fit a Faceswap-style alignment summary from visible landmarks.
 
-    The fit uses exactly the same visible landmark subset for the Umeyama source
-    and mean-face destination.  Full 68-point ``aligned_landmarks`` and
-    ``normalized_landmarks`` are still exposed for diagnostics, but the matrix
-    and average-distance fit are visibility-gated.
+    ``visible_indices`` follows the manifest visibility mask exactly, defaulting
+    to all 68 landmarks when no visibility is present.  The same visibility mask
+    must be passed for candidate and GT summaries so both transforms are fitted
+    from the same landmark subset.  For 68-point Faceswap alignment, only the
+    visible core subset 17..67 is usable for the Umeyama fit because the project
+    mean face for 68-point landmarks is ``MEAN_FACE[LM_2D_51]``.
     """
     points = _as_68_landmarks(landmarks, name="landmarks")
-    indices = visible_core_indices(visibility, min_visible_points=min_visible_points)
-    matrix = _fit_matrix_from_visible_core(points, indices)
-    adjusted = _adjusted_matrix(
-        matrix,
-        size=size,
-        coverage_ratio=coverage_ratio,
-        centering=centering,
+    visible_indices = visible_landmark_indices(visibility)
+    fit_indices = _fit_indices_from_visible_indices(
+        visible_indices,
+        min_visible_points=min_visible_points,
     )
+    matrix = _fit_matrix_from_visible_core(points, fit_indices)
+    adjusted = _adjusted_matrix(matrix, size=size, coverage_ratio=coverage_ratio)
     normalized = _affine_transform_points(points, matrix)
     aligned = _affine_transform_points(points, adjusted)
     roi = _roi_from_adjusted_matrix(adjusted, size=size)
     scale, rotation_degrees, translation = _decompose_similarity_matrix(matrix)
     mean_face = MEAN_FACE[LandmarkType.LM_2D_51]
-    core_offsets = np.asarray(indices, dtype=np.intp) - _CORE_START
-    average_distance = float(np.mean(np.abs(normalized[list(indices)] - mean_face[core_offsets])))
+    core_offsets = np.asarray(fit_indices, dtype=np.intp) - _CORE_START
+    average_distance = float(
+        np.mean(np.abs(normalized[list(fit_indices)] - mean_face[core_offsets]))
+    )
     summary = AlignmentSummary(
         matrix=matrix,
         roi=roi,
@@ -273,11 +293,11 @@ def visible_subset_alignment_summary(
         rotation_degrees=rotation_degrees,
         translation=translation,
     )
-    return VisibleSubsetAlignmentSummary(
+    return VisibleAlignmentSummary(
         summary=summary,
-        visible_indices=indices,
+        visible_indices=visible_indices,
+        fit_indices=fit_indices,
         coverage_ratio=coverage_ratio,
-        centering=centering,
     )
 
 
@@ -288,7 +308,6 @@ def transform_cost_v3(
     visibility: T.Sequence[bool] | None = None,
     size: int = DEFAULT_ALIGNED_SIZE,
     coverage_ratio: float = 1.0,
-    centering: CenteringType = "face",
     weights: TransformCostWeightsV3 = TransformCostWeightsV3(),
     soft_structural_penalty: float = 0.0,
     hard_invalid_reasons: T.Sequence[str] = (),
@@ -296,10 +315,9 @@ def transform_cost_v3(
 ) -> TransformCostV3:
     """Return direct v3 transform-impact cost for one prediction vs GT.
 
-    The function is pure and label-oriented: it may use GT and visibility.  It
-    does not mutate or replace ``alignment_geometry_v1``.  Hard-invalid reasons
-    are surfaced for the later group-construction step that removes invalid
-    candidates before LambdaRank training.
+    The function is pure and label-oriented: it may use GT and manifest
+    visibility.  It does not mutate or replace ``alignment_geometry_v1``.  The
+    same visibility mask gates both candidate and GT transform fits.
     """
     reasons = tuple(str(reason) for reason in hard_invalid_reasons if str(reason))
     try:
@@ -308,7 +326,6 @@ def transform_cost_v3(
             visibility,
             size=size,
             coverage_ratio=coverage_ratio,
-            centering=centering,
             min_visible_points=min_visible_points,
         ).summary
         truth_summary = visible_subset_alignment_summary(
@@ -316,7 +333,6 @@ def transform_cost_v3(
             visibility,
             size=size,
             coverage_ratio=coverage_ratio,
-            centering=centering,
             min_visible_points=min_visible_points,
         ).summary
         matrix_delta = alignment_matrix_delta(pred_summary, truth_summary, normalizer=float(size))
@@ -359,8 +375,10 @@ def transform_cost_v3(
 __all__ = [
     "TransformCostV3",
     "TransformCostWeightsV3",
+    "VisibleAlignmentSummary",
     "VisibleSubsetAlignmentSummary",
     "transform_cost_v3",
     "visible_core_indices",
+    "visible_landmark_indices",
     "visible_subset_alignment_summary",
 ]
