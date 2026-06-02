@@ -1697,3 +1697,114 @@ def test_transform_policy_summary_v3_keeps_zero_valid_separate_from_single_valid
     assert summary["zero_valid_group_count_v3"] == 1
     assert summary["single_valid_group_count_v3"] == 0
     assert summary["invalid_selection_count_v3"] == 1
+
+
+def _v3_gate_metrics(
+    *,
+    mean: float,
+    p95: float | None = None,
+    invalid_rate: float = 0.0,
+    eval_count: int = 8,
+) -> dict[str, float | int]:
+    return {
+        "mean_transform_regret_v3": mean,
+        "p95_transform_regret_v3": mean if p95 is None else p95,
+        "invalid_selection_rate_v3": invalid_rate,
+        "invalid_selection_count_v3": int(round(invalid_rate * eval_count)),
+        "transform_eval_count_v3": eval_count,
+    }
+
+
+def test_v3_learnability_gate_attributes_high_transform_regret() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.20, p95=0.25),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.20),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.21),
+        },
+        normal_policy_metrics={},
+        hard_bucket_failed_gates=(),
+    )
+
+    assert "transform_error_mean_not_learnable_vs_best_single" in result["failed_gates"]
+    failure = next(
+        item
+        for item in result["failures"]
+        if item["gate"] == "transform_error_mean_not_learnable_vs_best_single"
+    )
+    assert failure["attribution"] == "ranker_or_runtime_feature_predictability_problem"
+    assert failure["geometry_gate"] == "transform_error"
+    assert "crop_center_error" in failure["geometry_gate_vocabulary"]
+    assert "roll_error" in failure["geometry_gate_vocabulary"]
+    assert "hull_iou" in failure["geometry_gate_vocabulary"]
+
+
+def test_v3_learnability_gate_attributes_invalid_selection() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(
+                mean=0.05,
+                p95=0.07,
+                invalid_rate=0.10,
+            ),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.12),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.13),
+        },
+        normal_policy_metrics={},
+        hard_bucket_failed_gates=(),
+    )
+
+    assert "invalid_selection_rate_above_validity_detector_gate" in result["failed_gates"]
+    failure = next(
+        item
+        for item in result["failures"]
+        if item["gate"] == "invalid_selection_rate_above_validity_detector_gate"
+    )
+    assert failure["attribution"] == "validity_detector_or_runtime_feature_coverage_problem"
+
+
+def test_v3_learnability_gate_attributes_normal_bucket_regression() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.05, p95=0.07),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.12),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.13),
+        },
+        normal_policy_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.20, p95=0.25),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.20),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.21),
+        },
+        hard_bucket_failed_gates=(),
+    )
+
+    assert "normal_bucket_no_regression" in result["failed_gates"]
+    failure = next(
+        item for item in result["failures"] if item["gate"] == "normal_bucket_no_regression"
+    )
+    assert failure["attribution"] == "hard_case_query_weighting_or_contested_subset_overfit"
+
+
+def test_v3_learnability_gate_requires_hard_buckets_to_pass() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.05, p95=0.07),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.12),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.13),
+        },
+        normal_policy_metrics={},
+        hard_bucket_failed_gates=("profile_catastrophic_failures_above_hard_bucket_gate",),
+    )
+
+    assert "hard_bucket_catastrophic_failure_gate_failed" in result["failed_gates"]
+    failure = next(
+        item
+        for item in result["failures"]
+        if item["gate"] == "hard_bucket_catastrophic_failure_gate_failed"
+    )
+    assert failure["geometry_gate"] == "catastrophic_failure"
+    assert "catastrophic_failure" in failure["geometry_gate_vocabulary"]

@@ -101,6 +101,22 @@ HARD_BUCKET_PROMOTION_SPLITS: tuple[str, ...] = (
 )
 HARD_BUCKET_MAX_FAILURE_RATE = 0.0
 HARD_BUCKET_MAX_CATASTROPHIC_FAILURES = 0
+V3_LEARNABILITY_MEAN_MARGIN = 1e-4
+V3_LEARNABILITY_P95_TOLERANCE = 1e-4
+V3_INVALID_SELECTION_RATE_THRESHOLD = 0.0
+V3_NORMAL_BUCKET_REGRESSION_TOLERANCE = 1e-4
+V3_HARD_BUCKET_LEARNABILITY_SPLITS: tuple[str, ...] = (
+    "profile",
+    "occlusion",
+    "profile_occlusion",
+)
+V3_GEOMETRY_GATE_VOCABULARY: tuple[str, ...] = (
+    "transform_error",
+    "crop_center_error",
+    "roll_error",
+    "hull_iou",
+    "catastrophic_failure",
+)
 REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
     "mean_nme",
     "p90_nme",
@@ -113,9 +129,11 @@ REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
     "invalid_selection_rate_v3",
     "near_tie_excluded_count_v3",
     "zero_valid_group_count_v3",
+    "too_few_valid_group_count_v3",
     "single_valid_group_count_v3",
     "transform_group_count_v3",
     "transform_eval_count_v3",
+    "learnability_failed_gate_count_v3",
 )
 V3_RESERVED_ROW_FIELDS: tuple[str, ...] = (
     "transform_cost_v3",
@@ -932,6 +950,271 @@ def hard_bucket_promotion_gates(
         if catastrophic > HARD_BUCKET_MAX_CATASTROPHIC_FAILURES:
             failed.append(f"{split}_catastrophic_failures_above_hard_bucket_gate")
     return failed
+
+
+def _policy_metric_float(
+    metrics: T.Mapping[str, T.Any],
+    key: str,
+    default: float = 0.0,
+) -> float:
+    try:
+        return float(metrics.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _policy_metric_count(metrics: T.Mapping[str, T.Any], key: str) -> int:
+    try:
+        return int(metrics.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _v3_learnability_failure(
+    *,
+    gate: str,
+    attribution: str,
+    geometry_gate: str,
+    observed: float | int,
+    threshold: float | int,
+    baseline_policy: str = "",
+    detail: T.Mapping[str, T.Any] | None = None,
+) -> dict[str, T.Any]:
+    """Return one attributed Step 11 promotion-gate failure."""
+    return {
+        "gate": gate,
+        "attribution": attribution,
+        "geometry_gate": geometry_gate,
+        "geometry_gate_vocabulary": list(V3_GEOMETRY_GATE_VOCABULARY),
+        "observed": observed,
+        "threshold": threshold,
+        "baseline_policy": baseline_policy,
+        "detail": dict(detail or {}),
+    }
+
+
+def _v3_baseline_candidates(
+    comparison_metrics: T.Mapping[str, T.Mapping[str, T.Any]],
+) -> list[tuple[str, T.Mapping[str, T.Any]]]:
+    """Return simple v3 baselines that have transform-eval support."""
+    baselines: list[tuple[str, T.Mapping[str, T.Any]]] = []
+    for name in ("best_single", "static_weighted_downweight"):
+        metrics = comparison_metrics.get(name, {})
+        if _policy_metric_count(metrics, "transform_eval_count_v3") > 0:
+            baselines.append((name, metrics))
+    return baselines
+
+
+def v3_learnability_promotion_gates(
+    *,
+    scorer_policy_name: str,
+    comparison_metrics: T.Mapping[str, T.Mapping[str, T.Any]],
+    normal_policy_metrics: T.Mapping[str, T.Mapping[str, T.Any]] | None,
+    hard_bucket_failed_gates: T.Sequence[str],
+    mean_margin: float = V3_LEARNABILITY_MEAN_MARGIN,
+    p95_tolerance: float = V3_LEARNABILITY_P95_TOLERANCE,
+    invalid_selection_rate_threshold: float = V3_INVALID_SELECTION_RATE_THRESHOLD,
+    normal_bucket_tolerance: float = V3_NORMAL_BUCKET_REGRESSION_TOLERANCE,
+) -> dict[str, T.Any]:
+    """Return Step 11 v3 learnability promotion-gate results.
+
+    These gates answer: can runtime-visible features predict the direct
+    transform-regret oracle well enough to beat simple baselines?
+    """
+    scorer = comparison_metrics.get(scorer_policy_name, {})
+    scorer_count = _policy_metric_count(scorer, "transform_eval_count_v3")
+    failures: list[dict[str, T.Any]] = []
+    skipped_gates: list[str] = []
+
+    def fail(
+        gate: str,
+        *,
+        attribution: str,
+        geometry_gate: str,
+        observed: float | int,
+        threshold: float | int,
+        baseline_policy: str = "",
+        detail: T.Mapping[str, T.Any] | None = None,
+    ) -> None:
+        failures.append(
+            _v3_learnability_failure(
+                gate=gate,
+                attribution=attribution,
+                geometry_gate=geometry_gate,
+                observed=observed,
+                threshold=threshold,
+                baseline_policy=baseline_policy,
+                detail=detail,
+            )
+        )
+
+    if scorer_count <= 0:
+        fail(
+            "transform_error_missing_rankable_pair_eval",
+            attribution="ranker_or_runtime_feature_predictability_problem",
+            geometry_gate="transform_error",
+            observed=scorer_count,
+            threshold=1,
+            detail={"reason": "no rankable v3 pair groups reached promotion evaluation"},
+        )
+
+    scorer_mean = _policy_metric_float(scorer, "mean_transform_regret_v3")
+    scorer_p95 = _policy_metric_float(scorer, "p95_transform_regret_v3")
+    scorer_invalid = _policy_metric_float(scorer, "invalid_selection_rate_v3")
+
+    for baseline_name in ("best_single", "static_weighted_downweight"):
+        baseline = comparison_metrics.get(baseline_name, {})
+        baseline_count = _policy_metric_count(baseline, "transform_eval_count_v3")
+        if scorer_count <= 0 or baseline_count <= 0:
+            skipped_gates.append(f"transform_error_mean_vs_{baseline_name}_skipped_missing_eval")
+            continue
+        baseline_mean = _policy_metric_float(baseline, "mean_transform_regret_v3")
+        threshold = baseline_mean - mean_margin
+        if scorer_mean > threshold:
+            fail(
+                f"transform_error_mean_not_learnable_vs_{baseline_name}",
+                attribution="ranker_or_runtime_feature_predictability_problem",
+                geometry_gate="transform_error",
+                observed=scorer_mean,
+                threshold=threshold,
+                baseline_policy=baseline_name,
+                detail={
+                    "baseline_mean_transform_regret_v3": baseline_mean,
+                    "margin": mean_margin,
+                    "scorer_transform_eval_count_v3": scorer_count,
+                    "baseline_transform_eval_count_v3": baseline_count,
+                },
+            )
+
+    baselines = _v3_baseline_candidates(comparison_metrics)
+    if scorer_count > 0 and baselines:
+        baseline_name, baseline = min(
+            baselines,
+            key=lambda item: _policy_metric_float(item[1], "p95_transform_regret_v3"),
+        )
+        baseline_p95 = _policy_metric_float(baseline, "p95_transform_regret_v3")
+        threshold = baseline_p95 + p95_tolerance
+        if scorer_p95 > threshold:
+            fail(
+                "transform_error_p95_regresses_vs_best_available_baseline",
+                attribution="ranker_or_runtime_feature_predictability_problem",
+                geometry_gate="transform_error",
+                observed=scorer_p95,
+                threshold=threshold,
+                baseline_policy=baseline_name,
+                detail={
+                    "baseline_p95_transform_regret_v3": baseline_p95,
+                    "tolerance": p95_tolerance,
+                },
+            )
+    elif scorer_count > 0:
+        skipped_gates.append("transform_error_p95_skipped_missing_simple_baseline")
+
+    if scorer_count > 0 and scorer_invalid > invalid_selection_rate_threshold:
+        fail(
+            "invalid_selection_rate_above_validity_detector_gate",
+            attribution="validity_detector_or_runtime_feature_coverage_problem",
+            geometry_gate="transform_error",
+            observed=scorer_invalid,
+            threshold=invalid_selection_rate_threshold,
+            detail={
+                "invalid_selection_count_v3": _policy_metric_count(
+                    scorer, "invalid_selection_count_v3"
+                ),
+                "transform_eval_count_v3": scorer_count,
+            },
+        )
+
+    normal_metrics = normal_policy_metrics or {}
+    normal_scorer = normal_metrics.get(scorer_policy_name, {})
+    normal_baselines = _v3_baseline_candidates(normal_metrics)
+    normal_count = _policy_metric_count(normal_scorer, "transform_eval_count_v3")
+    if normal_count > 0 and normal_baselines:
+        normal_baseline_name, normal_baseline = min(
+            normal_baselines,
+            key=lambda item: _policy_metric_float(item[1], "mean_transform_regret_v3"),
+        )
+        normal_scorer_mean = _policy_metric_float(normal_scorer, "mean_transform_regret_v3")
+        normal_baseline_mean = _policy_metric_float(normal_baseline, "mean_transform_regret_v3")
+        normal_scorer_p95 = _policy_metric_float(normal_scorer, "p95_transform_regret_v3")
+        normal_baseline_p95 = _policy_metric_float(normal_baseline, "p95_transform_regret_v3")
+        normal_scorer_invalid = _policy_metric_float(normal_scorer, "invalid_selection_rate_v3")
+        normal_baseline_invalid = _policy_metric_float(
+            normal_baseline, "invalid_selection_rate_v3"
+        )
+        normal_reasons: list[str] = []
+        if normal_scorer_mean > normal_baseline_mean + normal_bucket_tolerance:
+            normal_reasons.append("mean_transform_regret_v3")
+        if normal_scorer_p95 > normal_baseline_p95 + normal_bucket_tolerance:
+            normal_reasons.append("p95_transform_regret_v3")
+        if normal_scorer_invalid > max(
+            invalid_selection_rate_threshold,
+            normal_baseline_invalid + invalid_selection_rate_threshold,
+        ):
+            normal_reasons.append("invalid_selection_rate_v3")
+        if normal_reasons:
+            fail(
+                "normal_bucket_no_regression",
+                attribution="hard_case_query_weighting_or_contested_subset_overfit",
+                geometry_gate="transform_error",
+                observed=normal_scorer_mean,
+                threshold=normal_baseline_mean + normal_bucket_tolerance,
+                baseline_policy=normal_baseline_name,
+                detail={
+                    "regressed_metrics": normal_reasons,
+                    "normal_scorer_metrics": dict(normal_scorer),
+                    "normal_baseline_metrics": dict(normal_baseline),
+                    "tolerance": normal_bucket_tolerance,
+                },
+            )
+    else:
+        skipped_gates.append("normal_bucket_no_regression_skipped_missing_eval")
+
+    relevant_hard_bucket_failures = [
+        gate
+        for gate in hard_bucket_failed_gates
+        if any(gate.startswith(f"{split}_") for split in V3_HARD_BUCKET_LEARNABILITY_SPLITS)
+    ]
+    if relevant_hard_bucket_failures:
+        fail(
+            "hard_bucket_catastrophic_failure_gate_failed",
+            attribution="ranker_or_runtime_feature_predictability_problem",
+            geometry_gate="catastrophic_failure",
+            observed=len(relevant_hard_bucket_failures),
+            threshold=0,
+            detail={
+                "failed_hard_bucket_gates": relevant_hard_bucket_failures,
+                "required_splits": list(V3_HARD_BUCKET_LEARNABILITY_SPLITS),
+            },
+        )
+
+    failed_gates = [str(item["gate"]) for item in failures]
+    return {
+        "status": "pass" if not failed_gates else "fail",
+        "failed_gates": failed_gates,
+        "skipped_gates": skipped_gates,
+        "failures": failures,
+        "thresholds": {
+            "mean_margin": mean_margin,
+            "p95_tolerance": p95_tolerance,
+            "invalid_selection_rate_threshold": invalid_selection_rate_threshold,
+            "normal_bucket_tolerance": normal_bucket_tolerance,
+        },
+        "scorer_policy": scorer_policy_name,
+        "scorer_metrics": dict(scorer),
+        "baseline_metrics": {
+            name: dict(metrics)
+            for name, metrics in comparison_metrics.items()
+            if name in {"best_single", "static_weighted_downweight"}
+        },
+        "normal_bucket_policy_metrics": {
+            name: dict(metrics)
+            for name, metrics in normal_metrics.items()
+            if isinstance(metrics, dict)
+        },
+        "hard_bucket_failed_gates": list(hard_bucket_failed_gates),
+        "geometry_gate_vocabulary": list(V3_GEOMETRY_GATE_VOCABULARY),
+    }
 
 
 def policy_metric_bundle(
@@ -1845,6 +2128,36 @@ def evaluate_runtime_resolver_scorer(
         extra_scorer_choices=report_extra_scorer_choices,
         source_by_sample_id=source_by_sample_id,
     )
+    v3_normal_policy_metrics: dict[str, T.Any] = {}
+    if use_v3_transform_metrics:
+        v3_normal_contexts = [
+            context
+            for context in gt_hard_all_contexts
+            if "normal"
+            in split_labels_for_context(
+                context,
+                choices=scorer_choices,
+                source_by_sample_id=source_by_sample_id,
+            )
+        ]
+        v3_normal_policy_metrics = policy_metric_bundle(
+            v3_normal_contexts,
+            candidates=candidates,
+            scorer_policy_name=primary_scorer_policy,
+            scorer_choices=scorer_choices,
+            current_choices=current_choices,
+            oracle_choices=oracle_choices,
+            extra_scorer_choices=report_extra_scorer_choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+
+    v3_learnability_result: dict[str, T.Any] = {
+        "status": "skipped_not_v3_transform_policy",
+        "failed_gates": [],
+        "skipped_gates": [],
+        "failures": [],
+    }
+
     combined_failed_gates: list[str] = []
     production_failed_gates: list[str] = []
     gt_hard_failed_gates: list[str] = []
@@ -1854,25 +2167,15 @@ def evaluate_runtime_resolver_scorer(
             if production_contexts
             else gt_hard_all_policy_metrics
         )
-        v3_scorer = comparison_metrics.get(primary_scorer_policy, {})
-        v3_static = comparison_metrics.get("static_weighted_downweight", {})
-        if (
-            static_name
-            and int(v3_scorer.get("transform_eval_count_v3", 0) or 0) > 0
-            and int(v3_static.get("transform_eval_count_v3", 0) or 0) > 0
-        ):
-            if float(v3_scorer["mean_transform_regret_v3"]) >= float(
-                v3_static["mean_transform_regret_v3"]
-            ):
-                combined_failed_gates.append(
-                    "scorer_transform_regret_v3_not_better_than_static_downweight"
-                )
-            if float(v3_scorer["p95_transform_regret_v3"]) > float(
-                v3_static["p95_transform_regret_v3"]
-            ):
-                combined_failed_gates.append(
-                    "scorer_p95_transform_regret_v3_regresses_vs_static_downweight"
-                )
+        v3_learnability_result = v3_learnability_promotion_gates(
+            scorer_policy_name=primary_scorer_policy,
+            comparison_metrics=comparison_metrics,
+            normal_policy_metrics=v3_normal_policy_metrics,
+            hard_bucket_failed_gates=hard_bucket_failed_gates,
+        )
+        combined_failed_gates.extend(
+            str(gate) for gate in v3_learnability_result.get("failed_gates", ())
+        )
     else:
         if static_name and scorer_summary["mean_nme"] >= static["mean_nme"]:
             combined_failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
@@ -2082,6 +2385,8 @@ def evaluate_runtime_resolver_scorer(
         "diagnostic_production_failed_gates": production_failed_gates,
         "diagnostic_gt_hard_failed_gates": gt_hard_failed_gates,
         "diagnostic_hard_bucket_failed_gates": hard_bucket_failed_gates,
+        "v3_learnability_promotion": v3_learnability_result,
+        "v3_normal_bucket_policy_metrics": v3_normal_policy_metrics,
         "universal_failed_gates": universal_failed_gates,
         "combined_failed_gates": combined_failed_gates,
         "production_failed_gates": production_failed_gates,
@@ -2186,6 +2491,7 @@ def evaluate_runtime_resolver_scorer(
         "gate_source": report["promotion_gate_source"],
         "failed_gates": list(report_failed_gates),
         "installed_baseline": installed_baseline_gates,
+        "learnability": v3_learnability_result,
     }
     report["diagnostics"] = {
         "failed_gates": list(failed_gates),
@@ -2204,6 +2510,7 @@ def evaluate_runtime_resolver_scorer(
         "gt_hard": gt_hard_all_policy_metrics,
         "gt_roll_hard": gt_roll_hard_policy_metrics,
         "production_bucket_reweighted_gt": production_reweighted_gt_policy_metrics,
+        "v3_normal_bucket": v3_normal_policy_metrics,
     }
     report["production_checks"] = production_diagnostics
     report["metrics_by_condition_split"] = metrics_by_split
@@ -2243,4 +2550,5 @@ __all__ = [
     "PROMOTION_SCOPES",
     "assert_lower_score_is_better",
     "evaluate_runtime_resolver_scorer",
+    "v3_learnability_promotion_gates",
 ]
