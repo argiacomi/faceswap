@@ -37,6 +37,10 @@ from lib.landmarks.ensemble.scorer_training import (
 
 V3_FIELDS = (
     "transform_cost_v3",
+    "center_delta_v3",
+    "scale_delta_v3",
+    "roll_delta_degrees_v3",
+    "fit_delta_v3",
     "transform_oracle_cost_v3",
     "transform_regret_v3",
     "transform_oracle_candidate_v3",
@@ -95,6 +99,10 @@ def _row(**overrides: object) -> CandidateQualityRow:
         "candidate_failure_or_high_gap": False,
         "selection_cost": 0.25,
         "transform_cost_v3": 0.40,
+        "center_delta_v3": 0.05,
+        "scale_delta_v3": 0.05,
+        "roll_delta_degrees_v3": 1.0,
+        "fit_delta_v3": 0.05,
         "transform_oracle_cost_v3": 0.10,
         "transform_regret_v3": 0.30,
         "transform_oracle_candidate_v3": "candidate_b",
