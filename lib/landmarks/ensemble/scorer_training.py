@@ -509,16 +509,17 @@ def _v3_sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, st
 def _rankable_v3_tagged_rows(
     rows: T.Sequence[TaggedRow],
 ) -> tuple[list[TaggedRow], dict[str, T.Any]]:
-    """Drop hard-invalid rows and skip all-invalid groups for v3 selector training."""
+    """Drop hard-invalid rows and skip groups with no v3 ranking signal."""
     groups: dict[tuple[str, str, str, str], list[TaggedRow]] = {}
     for tagged in rows:
         row, source = tagged
         groups.setdefault(_v3_sample_group_key(row, source), []).append(tagged)
 
     kept: list[TaggedRow] = []
-    skipped_groups = 0
-    skipped_rows = 0
-    singleton_groups = 0
+    fallback_abstain_groups = 0
+    fallback_abstain_rows = 0
+    single_valid_groups = 0
+    single_valid_rows = 0
     hard_invalid_rows = 0
 
     for key in sorted(groups):
@@ -528,24 +529,32 @@ def _rankable_v3_tagged_rows(
             for tagged in group
             if bool(tagged[0].rankable_v3) and not bool(tagged[0].hard_invalid_v3)
         ]
+
         hard_invalid_rows += sum(1 for row, _source in group if bool(row.hard_invalid_v3))
+
         if not rankable:
-            skipped_groups += 1
-            skipped_rows += len(group)
+            fallback_abstain_groups += 1
+            fallback_abstain_rows += len(group)
             continue
-        if len(rankable) == 1:
-            singleton_groups += 1
+
+        if len(rankable) < 2:
+            single_valid_groups += 1
+            single_valid_rows += len(group)
+            continue
+
         kept.extend(sorted(rankable, key=lambda tagged: tagged[0].candidate_name))
 
     stats = {
         "total_group_count": len(groups),
-        "rankable_group_count": len(groups) - skipped_groups,
-        "fallback_abstain_group_count": skipped_groups,
-        "fallback_abstain_row_count": skipped_rows,
+        "rankable_pair_group_count": (len(groups) - fallback_abstain_groups - single_valid_groups),
+        "fallback_abstain_group_count": fallback_abstain_groups,
+        "fallback_abstain_row_count": fallback_abstain_rows,
+        "single_valid_group_count": single_valid_groups,
+        "single_valid_row_count": single_valid_rows,
         "rankable_row_count": len(kept),
         "hard_invalid_row_count": hard_invalid_rows,
-        "singleton_rankable_group_count": singleton_groups,
     }
+
     return kept, stats
 
 
