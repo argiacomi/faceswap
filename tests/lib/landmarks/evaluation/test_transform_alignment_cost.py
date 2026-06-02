@@ -9,7 +9,9 @@ import numpy as np
 import pytest
 
 from lib.landmarks.evaluation.transform_alignment_cost import (
+    DEFAULT_SOFT_STRUCTURAL_PENALTY_V3,
     TransformCostWeightsV3,
+    structural_validity_v3,
     transform_cost_v3,
     visible_landmark_indices,
     visible_subset_alignment_summary,
@@ -135,16 +137,6 @@ def test_transform_cost_v3_fit_delta_uses_output_frame_rms_regret() -> None:
     assert cost_256.fit_delta == pytest.approx(cost_512.fit_delta, rel=1e-6)
 
 
-def test_transform_cost_v3_includes_soft_structural_penalty() -> None:
-    truth = _truth_face()
-    penalty = 0.25
-
-    cost = transform_cost_v3(truth, truth, soft_structural_penalty=penalty)
-
-    assert cost.total_cost == pytest.approx(penalty)
-    assert cost.soft_structural_penalty == pytest.approx(penalty)
-
-
 def test_transform_cost_v3_applies_weights() -> None:
     truth = _truth_face()
     predicted = truth + np.asarray([8.0, 0.0], dtype="float64")
@@ -160,6 +152,37 @@ def test_transform_cost_v3_applies_weights() -> None:
     )
     assert math.isfinite(cost.total_cost)
     assert cost.total_cost == pytest.approx(expected)
+
+
+def test_soft_suspect_is_finite_additive_penalty() -> None:
+    truth = _truth_face()
+
+    cost = transform_cost_v3(
+        truth,
+        truth,
+        soft_suspect_reasons=("low_plausibility", "mild_roi_warning"),
+    )
+
+    assert cost.hard_invalid is False
+    assert cost.soft_suspect_reasons == ("low_plausibility", "mild_roi_warning")
+    assert cost.soft_structural_penalty == pytest.approx(DEFAULT_SOFT_STRUCTURAL_PENALTY_V3)
+    assert cost.total_cost == pytest.approx(DEFAULT_SOFT_STRUCTURAL_PENALTY_V3)
+
+
+def test_explicit_soft_penalty_without_reason_becomes_soft_suspect() -> None:
+    truth = _truth_face()
+
+    cost = transform_cost_v3(truth, truth, soft_structural_penalty=0.25)
+
+    assert cost.hard_invalid is False
+    assert cost.soft_suspect_reasons == ("explicit_soft_structural_penalty",)
+    assert cost.soft_structural_penalty == pytest.approx(0.25)
+    assert cost.total_cost == pytest.approx(0.25)
+
+
+def test_structural_validity_rejects_negative_soft_penalty() -> None:
+    with pytest.raises(ValueError, match="soft_structural_penalty must be non-negative"):
+        structural_validity_v3(soft_structural_penalty=-0.01)
 
 
 def test_visibility_gates_transform_fit_for_candidate_and_gt() -> None:
@@ -191,7 +214,7 @@ def test_visibility_gates_transform_fit_for_candidate_and_gt() -> None:
     assert visible_cost.total_cost < full_cost.total_cost
 
 
-def test_transform_cost_v3_marks_invalid_fit_as_hard_invalid() -> None:
+def test_transform_fit_failure_marks_hard_invalid_without_inf_cost() -> None:
     truth = _truth_face()
     visibility = [False] * 68
     visibility[17:19] = [True, True]
@@ -199,11 +222,12 @@ def test_transform_cost_v3_marks_invalid_fit_as_hard_invalid() -> None:
     cost = transform_cost_v3(truth, truth, visibility=visibility)
 
     assert cost.hard_invalid is True
-    assert cost.total_cost == float("inf")
+    assert cost.total_cost == pytest.approx(0.0)
     assert cost.hard_invalid_reasons
+    assert cost.hard_invalid_reasons[0].startswith("unable_to_fit_visible_subset_transform")
 
 
-def test_transform_cost_v3_preserves_explicit_hard_invalid_reasons() -> None:
+def test_explicit_hard_invalid_reasons_mark_exclusion_not_giant_cost() -> None:
     truth = _truth_face()
 
     cost = transform_cost_v3(
@@ -213,5 +237,21 @@ def test_transform_cost_v3_preserves_explicit_hard_invalid_reasons() -> None:
     )
 
     assert cost.hard_invalid is True
-    assert cost.total_cost == float("inf")
+    assert cost.total_cost == pytest.approx(0.0)
     assert cost.hard_invalid_reasons == ("cloud_collapse", "eye_mouth_flip")
+
+
+def test_hard_invalid_can_still_report_soft_suspect_diagnostics() -> None:
+    truth = _truth_face()
+
+    cost = transform_cost_v3(
+        truth,
+        truth,
+        hard_invalid_reasons=("self_intersection",),
+        soft_suspect_reasons=("borderline_hull_warning",),
+    )
+
+    assert cost.hard_invalid is True
+    assert cost.total_cost == pytest.approx(0.0)
+    assert cost.soft_structural_penalty == pytest.approx(DEFAULT_SOFT_STRUCTURAL_PENALTY_V3)
+    assert cost.soft_suspect_reasons == ("borderline_hull_warning",)
