@@ -34,6 +34,7 @@ _CORE_START = 17
 _CORE_END = 68
 _DEFAULT_MIN_VISIBLE_POINTS = 8
 _DEFAULT_CENTERING = "face"
+DEFAULT_SOFT_STRUCTURAL_PENALTY_V3 = 0.05
 
 
 @dataclass(frozen=True)
@@ -53,13 +54,39 @@ class TransformCostWeightsV3:
 
 
 @dataclass(frozen=True)
+class StructuralValidityV3:
+    """Two-tier structural validity signal for v3 scorer-label construction.
+
+    Hard-invalid candidates are removed from LambdaRank groups before oracle
+    selection.  They must not be represented as giant numeric costs.  Soft
+    suspects stay rankable and contribute a finite additive penalty.
+    """
+
+    hard_invalid: bool
+    hard_invalid_reasons: tuple[str, ...]
+    soft_suspect: bool
+    soft_suspect_reasons: tuple[str, ...]
+    soft_structural_penalty: float
+
+    def to_payload(self) -> dict[str, T.Any]:
+        """Return a JSON-serializable diagnostic payload."""
+        return {
+            "hard_invalid": bool(self.hard_invalid),
+            "hard_invalid_reasons": list(self.hard_invalid_reasons),
+            "soft_suspect": bool(self.soft_suspect),
+            "soft_suspect_reasons": list(self.soft_suspect_reasons),
+            "soft_structural_penalty": float(self.soft_structural_penalty),
+        }
+
+
+@dataclass(frozen=True)
 class TransformCostV3:
     """Direct transform-impact alignment cost for one candidate.
 
     ``hard_invalid`` marks candidates that should be removed from rankable v3
     groups by the scorer-dataset construction step.  The cost object still
-    carries the flag/reasons for diagnostics, but LambdaRank should not consume
-    hard-invalid rows as ordinary finite-cost items.
+    carries diagnostics, but LambdaRank should not consume hard-invalid rows as
+    ordinary finite-cost items and they are never assigned an ``inf`` label.
     """
 
     center_delta: float
@@ -70,6 +97,7 @@ class TransformCostV3:
     total_cost: float
     hard_invalid: bool
     hard_invalid_reasons: tuple[str, ...]
+    soft_suspect_reasons: tuple[str, ...]
 
     def to_payload(self) -> dict[str, T.Any]:
         """Return a JSON-serializable diagnostic payload."""
@@ -82,6 +110,7 @@ class TransformCostV3:
             "total_cost": float(self.total_cost),
             "hard_invalid": bool(self.hard_invalid),
             "hard_invalid_reasons": list(self.hard_invalid_reasons),
+            "soft_suspect_reasons": list(self.soft_suspect_reasons),
         }
 
 
@@ -103,6 +132,64 @@ class VisibleAlignmentSummary:
     fit_indices: tuple[int, ...]
     coverage_ratio: float
     fit_rms_pixels: float
+
+
+def _clean_reasons(reasons: T.Sequence[str]) -> tuple[str, ...]:
+    """Return non-empty structural reason strings in stable order."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for reason in reasons:
+        text = str(reason).strip()
+        if not text or text in seen:
+            continue
+        cleaned.append(text)
+        seen.add(text)
+    return tuple(cleaned)
+
+
+def structural_validity_v3(
+    *,
+    hard_invalid_reasons: T.Sequence[str] = (),
+    soft_suspect_reasons: T.Sequence[str] = (),
+    soft_structural_penalty: float | None = None,
+) -> StructuralValidityV3:
+    """Return the v3 hard-invalid / soft-suspect structural split.
+
+    Hard-invalid examples: cloud collapse, eye/mouth flip, impossible topology,
+    self-intersection, fatal pose/transform failure, or inability to fit the
+    visible-subset transform.  Soft suspects stay rankable and carry a finite
+    additive penalty.
+    """
+    hard = _clean_reasons(hard_invalid_reasons)
+    soft = _clean_reasons(soft_suspect_reasons)
+    if soft_structural_penalty is not None and soft_structural_penalty < 0:
+        raise ValueError("soft_structural_penalty must be non-negative")
+    if soft_structural_penalty is not None and soft_structural_penalty > 0 and not soft:
+        soft = ("explicit_soft_structural_penalty",)
+    penalty = (
+        float(soft_structural_penalty)
+        if soft_structural_penalty is not None
+        else (DEFAULT_SOFT_STRUCTURAL_PENALTY_V3 if soft else 0.0)
+    )
+    return StructuralValidityV3(
+        hard_invalid=bool(hard),
+        hard_invalid_reasons=hard,
+        soft_suspect=bool(soft),
+        soft_suspect_reasons=soft,
+        soft_structural_penalty=penalty,
+    )
+
+
+def _with_hard_invalid_reason(
+    validity: StructuralValidityV3,
+    reason: str,
+) -> StructuralValidityV3:
+    """Return ``validity`` with one additional hard-invalid reason."""
+    return structural_validity_v3(
+        hard_invalid_reasons=(*validity.hard_invalid_reasons, reason),
+        soft_suspect_reasons=validity.soft_suspect_reasons,
+        soft_structural_penalty=validity.soft_structural_penalty,
+    )
 
 
 def _as_68_landmarks(landmarks: np.ndarray, *, name: str) -> np.ndarray:
@@ -261,10 +348,7 @@ def _visible_fit_rms_pixels(
     return float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
 
 
-def _crop_center_in_output_frame(
-    source_roi: np.ndarray,
-    output_matrix: np.ndarray,
-) -> np.ndarray:
+def _crop_center_in_output_frame(source_roi: np.ndarray, output_matrix: np.ndarray) -> np.ndarray:
     """Return a source-frame ROI center transformed into an aligned output frame."""
     center = np.asarray(source_roi, dtype="float64").mean(axis=0, keepdims=True)
     return T.cast(np.ndarray, _affine_transform_points(center, output_matrix)[0])
@@ -329,6 +413,25 @@ def visible_subset_alignment_summary(
     )
 
 
+def _finite_transform_cost(
+    *,
+    center_delta: float,
+    scale_delta: float,
+    roll_delta_degrees: float,
+    fit_delta: float,
+    soft_structural_penalty: float,
+    weights: TransformCostWeightsV3,
+) -> float:
+    """Return finite weighted transform cost for rankable candidates."""
+    return float(
+        weights.center * center_delta
+        + weights.scale * scale_delta
+        + weights.roll * roll_delta_degrees
+        + weights.fit * fit_delta
+        + soft_structural_penalty
+    )
+
+
 def transform_cost_v3(
     predicted: np.ndarray,
     truth: np.ndarray,
@@ -337,22 +440,23 @@ def transform_cost_v3(
     size: int = DEFAULT_ALIGNED_SIZE,
     coverage_ratio: float = 1.0,
     weights: TransformCostWeightsV3 = TransformCostWeightsV3(),
-    soft_structural_penalty: float = 0.0,
     hard_invalid_reasons: T.Sequence[str] = (),
+    soft_suspect_reasons: T.Sequence[str] = (),
+    soft_structural_penalty: float | None = None,
     min_visible_points: int = _DEFAULT_MIN_VISIBLE_POINTS,
 ) -> TransformCostV3:
     """Return direct v3 transform-impact cost for one prediction vs GT.
 
-    Deterministic v3 deltas are expressed in GT-aligned output-frame units:
-
-    * ``center_delta`` is crop-center distance after transforming both centers
-      into the GT aligned output frame, divided by aligned crop size.
-    * ``scale_delta`` is ``abs(log(candidate_scale / gt_scale))``.
-    * ``roll_delta_degrees`` is the absolute wrapped roll delta.
-    * ``fit_delta`` is ``max(candidate_visible_fit_rms - gt_visible_fit_rms, 0)``
-      divided by aligned crop size.
+    Deterministic v3 deltas are expressed in GT-aligned output-frame units.
+    Hard-invalid candidates are flagged for group exclusion and receive no giant
+    numeric label; their returned ``total_cost`` is zero because it must not be
+    consumed by ranking/oracle selection.
     """
-    reasons = tuple(str(reason) for reason in hard_invalid_reasons if str(reason))
+    validity = structural_validity_v3(
+        hard_invalid_reasons=hard_invalid_reasons,
+        soft_suspect_reasons=soft_suspect_reasons,
+        soft_structural_penalty=soft_structural_penalty,
+    )
     try:
         pred = visible_subset_alignment_summary(
             predicted,
@@ -378,41 +482,48 @@ def transform_cost_v3(
             _wrap_angle_degrees(pred.summary.rotation_degrees - truth_fit.summary.rotation_degrees)
         )
         fit_delta = max(pred.fit_rms_pixels - truth_fit.fit_rms_pixels, 0.0) / float(size)
-        hard_invalid = bool(reasons)
     except ValueError as err:
-        center_delta = float("inf")
-        scale_delta = float("inf")
-        roll_delta_degrees = float("inf")
-        fit_delta = float("inf")
-        reasons = (*reasons, str(err))
-        hard_invalid = True
-
-    if hard_invalid:
-        total_cost = float("inf")
-    else:
-        total_cost = float(
-            weights.center * center_delta
-            + weights.scale * scale_delta
-            + weights.roll * roll_delta_degrees
-            + weights.fit * fit_delta
-            + soft_structural_penalty
+        center_delta = 0.0
+        scale_delta = 0.0
+        roll_delta_degrees = 0.0
+        fit_delta = 0.0
+        validity = _with_hard_invalid_reason(
+            validity,
+            f"unable_to_fit_visible_subset_transform: {err}",
         )
+
+    total_cost = (
+        0.0
+        if validity.hard_invalid
+        else _finite_transform_cost(
+            center_delta=center_delta,
+            scale_delta=scale_delta,
+            roll_delta_degrees=roll_delta_degrees,
+            fit_delta=fit_delta,
+            soft_structural_penalty=validity.soft_structural_penalty,
+            weights=weights,
+        )
+    )
     return TransformCostV3(
         center_delta=center_delta,
         scale_delta=scale_delta,
         roll_delta_degrees=roll_delta_degrees,
         fit_delta=fit_delta,
-        soft_structural_penalty=float(soft_structural_penalty),
+        soft_structural_penalty=validity.soft_structural_penalty,
         total_cost=total_cost,
-        hard_invalid=hard_invalid,
-        hard_invalid_reasons=reasons,
+        hard_invalid=validity.hard_invalid,
+        hard_invalid_reasons=validity.hard_invalid_reasons,
+        soft_suspect_reasons=validity.soft_suspect_reasons,
     )
 
 
 __all__ = [
+    "DEFAULT_SOFT_STRUCTURAL_PENALTY_V3",
+    "StructuralValidityV3",
     "TransformCostV3",
     "TransformCostWeightsV3",
     "VisibleAlignmentSummary",
+    "structural_validity_v3",
     "transform_cost_v3",
     "visible_landmark_indices",
     "visible_subset_alignment_summary",
