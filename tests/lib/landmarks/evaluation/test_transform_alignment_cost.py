@@ -11,7 +11,7 @@ import pytest
 from lib.landmarks.evaluation.transform_alignment_cost import (
     TransformCostWeightsV3,
     transform_cost_v3,
-    visible_core_indices,
+    visible_landmark_indices,
     visible_subset_alignment_summary,
 )
 
@@ -38,21 +38,29 @@ def _truth_face() -> np.ndarray:
     return points
 
 
-def test_visible_core_indices_respects_visibility() -> None:
+def test_visible_landmark_indices_default_to_all_68() -> None:
+    assert visible_landmark_indices(None) == tuple(range(68))
+
+
+def test_visible_landmark_indices_respect_manifest_visibility() -> None:
     visibility = [False] * 68
+    visibility[0] = True
     visibility[17:25] = [True] * 8
 
-    indices = visible_core_indices(visibility, min_visible_points=8)
+    indices = visible_landmark_indices(visibility)
+    summary = visible_subset_alignment_summary(_truth_face(), visibility, min_visible_points=8)
 
-    assert indices == tuple(range(17, 25))
+    assert indices == (0, *range(17, 25))
+    assert summary.visible_indices == indices
+    assert summary.fit_indices == tuple(range(17, 25))
 
 
-def test_visible_core_indices_requires_enough_core_points() -> None:
+def test_visible_subset_alignment_summary_requires_enough_usable_core_points() -> None:
     visibility = [True] * 68
     visibility[17:68] = [False] * 51
 
     with pytest.raises(ValueError, match="visible-subset transform fit needs"):
-        visible_core_indices(visibility)
+        visible_subset_alignment_summary(_truth_face(), visibility)
 
 
 def test_transform_cost_v3_zero_for_identical_landmarks() -> None:
@@ -72,7 +80,7 @@ def test_transform_cost_v3_detects_crop_center_shift() -> None:
     truth = _truth_face()
     predicted = truth + np.asarray([8.0, 0.0], dtype="float64")
 
-    cost = transform_cost_v3(truth, predicted)
+    cost = transform_cost_v3(predicted, truth)
 
     assert cost.hard_invalid is False
     assert cost.center_delta > 0.0
@@ -106,7 +114,7 @@ def test_transform_cost_v3_applies_weights() -> None:
     assert cost.total_cost == pytest.approx(expected)
 
 
-def test_visibility_gates_transform_fit() -> None:
+def test_visibility_gates_transform_fit_for_candidate_and_gt() -> None:
     truth = _truth_face()
     predicted = truth.copy()
     predicted[17] += np.asarray([500.0, 500.0], dtype="float64")
@@ -121,7 +129,9 @@ def test_visibility_gates_transform_fit() -> None:
     visible_cost = transform_cost_v3(predicted, truth, visibility=visible)
     full_cost = transform_cost_v3(predicted, truth)
 
-    assert 17 not in visible_summary.visible_indices
+    assert 17 not in visible_summary.fit_indices
+    assert visible_summary.visible_indices == truth_visible_summary.visible_indices
+    assert visible_summary.fit_indices == truth_visible_summary.fit_indices
     assert visible_summary.summary.translation == pytest.approx(
         truth_visible_summary.summary.translation,
         abs=1e-6,
