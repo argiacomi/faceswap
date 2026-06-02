@@ -3,13 +3,11 @@
 
 from __future__ import annotations
 
-import typing as T
 from types import SimpleNamespace
 
 import pytest
 
 from lib.landmarks.ensemble import scorer_eval as scorer_eval_impl
-from lib.landmarks.ensemble.runtime_resolver_scorer_data import SampleCandidateContext
 
 
 def _v3_row(
@@ -37,13 +35,13 @@ def _v3_row(
     )
 
 
-def _v3_context() -> SampleCandidateContext:
+def _v3_context() -> SimpleNamespace:
     rows = (
         _v3_row("candidate_a", transform_cost_v3=0.10),
         _v3_row("candidate_b", transform_cost_v3=0.40),
         _v3_row("static_weighted_downweight", transform_cost_v3=0.25),
     )
-    context = SimpleNamespace(
+    return SimpleNamespace(
         sample_id="sample_a",
         source="gt_hard",
         dataset="gt_hard",
@@ -64,7 +62,6 @@ def _v3_context() -> SampleCandidateContext:
         oracle="candidate_a",
         scorer_rows=rows,
     )
-    return T.cast(SampleCandidateContext, context)
 
 
 def test_baseline_transform_regret_uses_same_v3_row_cost_as_scorer_policy() -> None:
