@@ -25,6 +25,7 @@ from lib.landmarks.ensemble.hard_condition_taxonomy import (
     NEW_HARD_CONDITION_LABELS,
     derive_hard_condition_taxonomy,
 )
+from lib.landmarks.ensemble.runtime_features import candidate_feature_map, runtime_feature_order
 from lib.landmarks.ensemble.runtime_resolver import (
     CandidateMetrics,
     CandidateRecord,
@@ -41,7 +42,6 @@ from lib.landmarks.ensemble.runtime_resolver import (
     infer_runtime_bucket,
     resolve_runtime,
 )
-from lib.landmarks.ensemble.runtime_resolver_scorer import candidate_feature_map
 from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_COLLAPSE_COST_PENALTY,
     DEFAULT_FAILURE_COST_PENALTY,
@@ -52,6 +52,10 @@ from lib.landmarks.ensemble.scorer_target_config import (
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
+from lib.landmarks.evaluation.transform_alignment_cost import (
+    TransformCostV3,
+    transform_cost_v3,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +210,15 @@ class CandidateQualityRow:
     oracle: str
     runtime_bucket_source: str
     geometry_veto_reasons: tuple[str, ...]
+    transform_cost_v3: float
+    transform_oracle_cost_v3: float
+    transform_regret_v3: float
+    transform_oracle_candidate_v3: str
+    transform_oracle_gap_v3: float
+    rankable_v3: bool
+    hard_invalid_v3: bool
+    hard_invalid_reasons_v3: tuple[str, ...]
+    soft_structural_penalty_v3: float
     face_index: int = 0
 
     def to_csv_row(self) -> dict[str, T.Any]:
@@ -232,6 +245,15 @@ class CandidateQualityRow:
             "runtime_bucket_source": self.runtime_bucket_source,
             "risk_route": self.risk_route,
             "geometry_veto_reasons": "|".join(self.geometry_veto_reasons),
+            "transform_cost_v3": self.transform_cost_v3,
+            "transform_oracle_cost_v3": self.transform_oracle_cost_v3,
+            "transform_regret_v3": self.transform_regret_v3,
+            "transform_oracle_candidate_v3": self.transform_oracle_candidate_v3,
+            "transform_oracle_gap_v3": self.transform_oracle_gap_v3,
+            "rankable_v3": int(self.rankable_v3),
+            "hard_invalid_v3": int(self.hard_invalid_v3),
+            "hard_invalid_reasons_v3": "|".join(self.hard_invalid_reasons_v3),
+            "soft_structural_penalty_v3": self.soft_structural_penalty_v3,
             "selected_by_current_policy": self.selected_by_current_policy,
             "selected_candidate_missing_from_eval": int(self.selected_candidate_missing_from_eval),
             "oracle": self.oracle,
@@ -265,6 +287,91 @@ def _catastrophic_or_visual_collapse(reasons: T.Iterable[str]) -> bool:
         "visual_collapse",
     )
     return any(any(marker in str(reason) for marker in collapse_markers) for reason in reasons)
+
+
+_V3_HARD_INVALID_TOKENS: tuple[str, ...] = (
+    "collapse",
+    "cloud_area_too_small",
+    "hull_area_too_small",
+    "eye_mouth",
+    "flip",
+    "self_intersection",
+    "self-intersection",
+    "topology",
+    "impossible",
+    "fatal",
+)
+
+
+_V3_SOFT_SUSPECT_TOKENS: tuple[str, ...] = (
+    "low_plausibility",
+    "plausibility",
+    "roi",
+    "hull",
+    "outside",
+    "borderline",
+    "warning",
+)
+
+# Keep this aligned with runtime_resolver.DEFAULT_MAX_SHAPE_PLAUSIBILITY_SCORE
+# without importing runtime_resolver here and expanding scorer-data dependencies.
+DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 1.10
+
+
+def _dedupe_reasons(reasons: T.Iterable[str]) -> tuple[str, ...]:
+    """Return non-empty reason strings in stable order."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for reason in reasons:
+        text = str(reason or "").strip()
+        if not text or text in seen:
+            continue
+        ordered.append(text)
+        seen.add(text)
+    return tuple(ordered)
+
+
+def _v3_hard_invalid_reasons(metric: CandidateMetrics) -> tuple[str, ...]:
+    """Return fatal geometry reasons that exclude a candidate from v3 ranking."""
+    reasons: list[str] = []
+    for reason in (*metric.geometry_veto_reasons, *metric.shape_veto_reasons):
+        lowered = str(reason).lower()
+        if any(token in lowered for token in _V3_HARD_INVALID_TOKENS):
+            reasons.append(str(reason))
+    if metric.eye_mouth_order_valid_after_deroll is False:
+        reasons.append("eye_mouth_flip")
+    if int(metric.topology_violation_count or 0) > 0:
+        reasons.append("topology_violation")
+    return _dedupe_reasons(reasons)
+
+
+def _v3_soft_suspect_reasons(
+    metric: CandidateMetrics,
+    *,
+    hard_invalid_reasons: T.Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Return soft geometry warnings that remain finite v3 cost penalties.
+
+    Hard-invalid reasons win the split.  A diagnostic that excludes a candidate
+    from v3 ranking must not also appear as a soft-suspect penalty reason.
+    """
+    hard_reason_set = {
+        str(reason or "").strip() for reason in hard_invalid_reasons if str(reason or "").strip()
+    }
+    reasons: list[str] = []
+    for reason in (*metric.geometry_veto_reasons, *metric.shape_veto_reasons):
+        text = str(reason or "").strip()
+        if not text or text in hard_reason_set:
+            continue
+        lowered = text.lower()
+        if any(token in lowered for token in _V3_SOFT_SUSPECT_TOKENS):
+            reasons.append(text)
+    if (
+        metric.shape_plausibility_score is not None
+        and metric.shape_plausibility_score > DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE
+    ):
+        reasons.append("low_plausibility")
+    return _dedupe_reasons(reasons)
 
 
 @dataclass(frozen=True)
@@ -934,9 +1041,52 @@ def rows_for_context(
     *,
     high_gap_threshold: float = DEFAULT_HIGH_GAP_THRESHOLD,
 ) -> list[CandidateQualityRow]:
-    """Expand a sample context into one row per candidate."""
+    """Expand a sample context into one row per candidate.
+
+    NME/proxy fields remain diagnostic.  v3 ranking should use
+    transform_regret_v3 over rows where rankable_v3 is true.
+    """
     rows: list[CandidateQualityRow] = []
     oracle_nme = _required_nme(context, context.oracle)
+
+    v3_by_candidate: dict[str, TransformCostV3] = {}
+    truth_landmarks = context.truth_landmarks
+    for candidate in context.candidates:
+        metric = context.metrics[candidate.name]
+        hard_invalid_reasons = _v3_hard_invalid_reasons(metric)
+        truth_for_v3 = truth_landmarks
+        if truth_for_v3 is None:
+            truth_for_v3 = candidate.landmarks
+            hard_invalid_reasons = ("missing_truth_landmarks", *hard_invalid_reasons)
+        v3_by_candidate[candidate.name] = transform_cost_v3(
+            candidate.landmarks,
+            truth_for_v3,
+            visibility=context.visibility,
+            hard_invalid_reasons=hard_invalid_reasons,
+            soft_suspect_reasons=_v3_soft_suspect_reasons(
+                metric,
+                hard_invalid_reasons=hard_invalid_reasons,
+            ),
+        )
+
+    rankable_v3 = {
+        name: cost for name, cost in v3_by_candidate.items() if not bool(cost.hard_invalid)
+    }
+    if rankable_v3:
+        transform_oracle_candidate_v3 = min(
+            rankable_v3,
+            key=lambda name: float(rankable_v3[name].total_cost),
+        )
+        transform_oracle_cost_v3 = float(rankable_v3[transform_oracle_candidate_v3].total_cost)
+        sorted_v3_costs = sorted(float(cost.total_cost) for cost in rankable_v3.values())
+        transform_oracle_gap_v3 = (
+            sorted_v3_costs[1] - sorted_v3_costs[0] if len(sorted_v3_costs) > 1 else 0.0
+        )
+    else:
+        transform_oracle_candidate_v3 = ""
+        transform_oracle_cost_v3 = 0.0
+        transform_oracle_gap_v3 = 0.0
+
     for candidate in context.candidates:
         metric = context.metrics[candidate.name]
         candidate_nme = _required_nme(context, candidate.name)
@@ -952,6 +1102,10 @@ def rows_for_context(
             oracle_nme=oracle_nme,
             candidate_failure=candidate_failure,
         )
+        v3_cost = v3_by_candidate[candidate.name]
+        rankable = bool(rankable_v3) and not bool(v3_cost.hard_invalid)
+        transform_cost = float(v3_cost.total_cost) if rankable else 0.0
+        transform_regret = max(transform_cost - transform_oracle_cost_v3, 0.0) if rankable else 0.0
         rows.append(
             CandidateQualityRow(
                 sample_id=context.sample_id,
@@ -994,6 +1148,15 @@ def rows_for_context(
                 oracle=context.oracle,
                 runtime_bucket_source=context.runtime_bucket_source,
                 geometry_veto_reasons=tuple(metric.geometry_veto_reasons),
+                transform_cost_v3=transform_cost,
+                transform_oracle_cost_v3=transform_oracle_cost_v3,
+                transform_regret_v3=transform_regret,
+                transform_oracle_candidate_v3=transform_oracle_candidate_v3,
+                transform_oracle_gap_v3=transform_oracle_gap_v3,
+                rankable_v3=rankable,
+                hard_invalid_v3=bool(v3_cost.hard_invalid),
+                hard_invalid_reasons_v3=tuple(v3_cost.hard_invalid_reasons),
+                soft_structural_penalty_v3=float(v3_cost.soft_structural_penalty),
             )
         )
     return rows
@@ -1173,9 +1336,10 @@ def export_candidate_table(
 def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
     """Write scorer training rows to CSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    feature_names = sorted({name for row in rows for name in row.feature_values})
+    feature_names = list(runtime_feature_order(row.feature_values for row in rows))
     fieldnames = [
         "sample_id",
+        "face_index",
         "dataset",
         "condition",
         "candidate_name",
@@ -1187,6 +1351,15 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         "large_regret_label",
         "candidate_failure_or_high_gap",
         "selection_cost",
+        "transform_cost_v3",
+        "transform_oracle_cost_v3",
+        "transform_regret_v3",
+        "transform_oracle_candidate_v3",
+        "transform_oracle_gap_v3",
+        "rankable_v3",
+        "hard_invalid_v3",
+        "hard_invalid_reasons_v3",
+        "soft_structural_penalty_v3",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",

@@ -13,16 +13,24 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import lib.landmarks.ensemble.runtime_features as runtime_features
+import lib.landmarks.ensemble.runtime_resolver_scorer as runtime_resolver_scorer_impl
 import lib.landmarks.ensemble.runtime_resolver_scorer_data as scorer_data
 import lib.landmarks.ensemble.scorer_eval as scorer_eval_impl
 import lib.landmarks.ensemble.scorer_training as scorer_training
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
+from lib.landmarks.ensemble.runtime_features import (
+    RUNTIME_FEATURE_CONTRACT_VERSION,
+    RUNTIME_PREFERRED_FEATURE_ORDER,
+    candidate_feature_map,
+    runtime_candidate_feature_maps,
+    runtime_feature_order,
+)
 from lib.landmarks.ensemble.runtime_resolver import CandidateMetrics, CandidateRecord
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
-    candidate_feature_map,
     load_runtime_resolver_scorer,
     write_runtime_resolver_scorer,
 )
@@ -34,6 +42,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     SCORE_SEMANTICS_PREDICTED_COST,
     TARGET_ORACLE_REGRET,
     TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.weights import save_weights
 from tools.landmarks.backfill_runtime_resolver_metadata import (
@@ -77,6 +86,97 @@ def _face(offset: float = 0.0) -> np.ndarray:
     points[48:68, 1] = 82
     points[:, 0] += offset
     return points
+
+
+def _runtime_feature_metric(**overrides: object) -> SimpleNamespace:
+    payload: dict[str, object] = {
+        "cloud_area_ratio": 0.9,
+        "hull_area_ratio": 0.8,
+        "points_outside_expanded_bbox_fraction": 0.05,
+        "eye_mouth_order_valid_after_deroll": True,
+        "roi_center_consensus_distance": 0.12,
+        "landmark_consensus_distance": 0.10,
+        "shape_plausibility_score": 0.3,
+        "max_edge_length_ratio": 0.4,
+        "mean_shape_fit_error": 0.02,
+        "topology_violation_count": 0,
+        "roll_degrees": 12.0,
+        "yaw_degrees": -30.0,
+        "geometry_veto_reasons": ("jaw_crop_warning",),
+        "shape_veto_reasons": ("borderline_hull",),
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
+
+
+def test_runtime_feature_extractor_is_single_source_of_truth_for_train_and_runtime() -> None:
+    assert scorer_data.candidate_feature_map is runtime_features.candidate_feature_map
+    assert (
+        runtime_resolver_scorer_impl.candidate_feature_map
+        is runtime_features.candidate_feature_map
+    )
+
+    candidate = SimpleNamespace(name="hrnet", is_fusion=False)
+    metric = _runtime_feature_metric()
+    context: dict[str, T.Any] = {
+        "runtime_bucket": "profile_left",
+        "risk_route": "high_risk",
+        "model_predictions_available": {"hrnet": True, "spiga": True},
+        "roll_estimate": 4.0,
+        "yaw_estimate": -20.0,
+        "candidate_yaw_disagreement": 15.0,
+        "max_disagreement_px": 42.0,
+        "runtime_bucket_source": "runtime_image_evidence",
+        "hard_case_tags": ("profile",),
+        "candidate_extra_features": {
+            "hrnet": {
+                "candidate_is_consensus_like": 0.0,
+                "single_model_disagreement_px": 18.0,
+                "candidate_distance_to_hrnet": 0.0,
+            }
+        },
+    }
+
+    direct = candidate_feature_map(candidate, metric, **context)
+    batched = runtime_candidate_feature_maps([candidate], {"hrnet": metric}, **context)[0]
+
+    assert batched == direct
+    assert "candidate_name=hrnet" in direct
+    assert "runtime_bucket=profile_left" in direct
+    assert "geometry_veto_reason=jaw_crop_warning" in direct
+    assert "shape_veto_reason=borderline_hull" in direct
+    assert "candidate_is_consensus_like" in direct
+    assert {
+        "candidate_nme",
+        "oracle_nme",
+        "selection_cost",
+        "transform_cost_v3",
+        "transform_regret_v3",
+        "transform_oracle_candidate_v3",
+    }.isdisjoint(direct)
+
+    ordered = runtime_feature_order([direct])
+    assert ordered[:2] == ("candidate_is_single_model", "candidate_is_fusion")
+    assert [name for name in RUNTIME_PREFERRED_FEATURE_ORDER if name in direct] == list(
+        ordered[: len([name for name in RUNTIME_PREFERRED_FEATURE_ORDER if name in direct])]
+    )
+
+
+def test_training_feature_order_uses_runtime_feature_order() -> None:
+    row = SimpleNamespace(
+        feature_values={
+            "candidate_name=hrnet": 1.0,
+            "yaw_degrees": -30.0,
+            "candidate_is_fusion": 0.0,
+            "candidate_is_single_model": 1.0,
+            "has_geometry_veto": 1.0,
+        }
+    )
+
+    typed_row = T.cast(scorer_data.CandidateQualityRow, row)
+    assert scorer_training.feature_order([typed_row]) == runtime_feature_order(
+        [row.feature_values]
+    )
 
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -491,6 +591,105 @@ def test_rows_and_candidate_table_include_hard_case_tags() -> None:
     assert row.feature_values["hard_case_tag=profile_occlusion"] == pytest.approx(1.0)
 
 
+def test_scorer_suite_trains_only_active_v3_target_and_persists_feature_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_lightgbm(monkeypatch)
+    weights_path = tmp_path / "weights.json"
+    save_weights(weights_path, {"hrnet": [1.0] * 68, "spiga": [0.0] * 68})
+
+    def v3_row(
+        *,
+        sample_id: str,
+        candidate_name: str,
+        transform_regret_v3: float,
+    ) -> scorer_data.CandidateQualityRow:
+        return scorer_data.CandidateQualityRow(
+            sample_id=sample_id,
+            face_index=0,
+            dataset="test",
+            condition="profile",
+            candidate_name=candidate_name,
+            candidate_nme=0.0,
+            oracle_nme=0.0,
+            regret_vs_oracle=0.0,
+            normalized_regret=0.0,
+            failure_label=False,
+            large_regret_label=False,
+            candidate_failure_or_high_gap=False,
+            selection_cost=0.0,
+            is_oracle=candidate_name == "hrnet",
+            was_selected_by_current_policy=candidate_name == "hrnet",
+            gap_vs_oracle=0.0,
+            runtime_bucket="profile_left",
+            hard_case_tags=("profile",),
+            risk_route="high_risk",
+            feature_values={
+                f"candidate_name={candidate_name}": 1.0,
+                "candidate_is_single_model": 1.0,
+                "candidate_is_fusion": 0.0,
+            },
+            selected_by_current_policy="hrnet",
+            selected_candidate_missing_from_eval=False,
+            oracle="hrnet",
+            runtime_bucket_source="test",
+            geometry_veto_reasons=(),
+            transform_cost_v3=transform_regret_v3,
+            transform_oracle_cost_v3=0.0,
+            transform_regret_v3=transform_regret_v3,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=True,
+            hard_invalid_v3=False,
+            hard_invalid_reasons_v3=(),
+            soft_structural_penalty_v3=0.0,
+        )
+
+    fake_rows = [
+        (v3_row(sample_id="s1", candidate_name="hrnet", transform_regret_v3=0.0), "gt_hard"),
+        (v3_row(sample_id="s1", candidate_name="spiga", transform_regret_v3=0.25), "gt_hard"),
+        (v3_row(sample_id="s2", candidate_name="hrnet", transform_regret_v3=0.0), "gt_hard"),
+        (v3_row(sample_id="s2", candidate_name="spiga", transform_regret_v3=0.30), "gt_hard"),
+    ]
+
+    monkeypatch.setattr(scorer_training, "load_scorer_contexts", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        scorer_training, "tagged_quality_rows", lambda *_args, **_kwargs: fake_rows
+    )
+    monkeypatch.setattr(
+        scorer_training, "scorer_candidate_table_rows", lambda *_args, **_kwargs: []
+    )
+
+    output_dir = tmp_path / "train_suite_v3_only"
+    metrics = scorer_training.train_runtime_resolver_scorer_suite(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=None,
+        production_cache_dir=None,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga"),
+        output_dir=output_dir,
+        iterations=4,
+        eval_fraction=0.0,
+    )
+
+    canonical_v3 = output_dir / "scorers" / "learned_quality_v3.json"
+    canonical_v2 = output_dir / "scorers" / "learned_quality_v2.json"
+    artifact = json.loads(canonical_v3.read_text(encoding="utf-8"))
+
+    assert set(metrics["scorers"]) == {"learned_quality_v3"}
+    assert metrics["active_target"] == TARGET_TRANSFORM_REGRET_V3
+    assert metrics["artifact"] == str(canonical_v3)
+    assert canonical_v3.is_file()
+    assert not canonical_v2.exists()
+    assert artifact["target"] == TARGET_TRANSFORM_REGRET_V3
+    assert artifact["runtime_feature_contract_version"] == RUNTIME_FEATURE_CONTRACT_VERSION
+    assert metrics["scorers"]["learned_quality_v3"]["runtime_feature_contract_version"] == (
+        RUNTIME_FEATURE_CONTRACT_VERSION
+    )
+
+
 def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -526,6 +725,7 @@ def test_train_runtime_resolver_scorer_wrapper_writes_v2_artifact_and_rows(
     assert artifact["version"] == "learned_quality_v2"
     assert artifact["scorer_version"] == "learned_quality_v2"
     assert artifact["runtime_policy"] == "learned_quality_v2"
+    assert artifact["runtime_feature_contract_version"] == RUNTIME_FEATURE_CONTRACT_VERSION
     assert artifact["target"] == TARGET_SELECTION_COST
     assert artifact["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
     assert artifact["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
@@ -1285,6 +1485,15 @@ def _write_canonical_scorer_rows(path: Path) -> Path:
         "selected_by_current_policy",
         "selected_candidate_missing_from_eval",
         "oracle",
+        "transform_cost_v3",
+        "transform_oracle_cost_v3",
+        "transform_regret_v3",
+        "transform_oracle_candidate_v3",
+        "transform_oracle_gap_v3",
+        "rankable_v3",
+        "hard_invalid_v3",
+        "hard_invalid_reasons_v3",
+        "soft_structural_penalty_v3",
         "features_json",
     ]
 
@@ -1317,6 +1526,15 @@ def _write_canonical_scorer_rows(path: Path) -> Path:
             "selected_by_current_policy": "hrnet",
             "selected_candidate_missing_from_eval": 0,
             "oracle": "hrnet",
+            "transform_cost_v3": max(gap, 0.0),
+            "transform_oracle_cost_v3": 0.0,
+            "transform_regret_v3": max(gap, 0.0),
+            "transform_oracle_candidate_v3": "hrnet",
+            "transform_oracle_gap_v3": 0.01,
+            "rankable_v3": 1,
+            "hard_invalid_v3": 0,
+            "hard_invalid_reasons_v3": "",
+            "soft_structural_penalty_v3": 0.0,
             "features_json": json.dumps({f"candidate_name={candidate}": 1.0}, sort_keys=True),
         }
 
@@ -1361,6 +1579,95 @@ def test_row_contexts_from_scorer_rows_uses_only_eval_split(tmp_path: Path) -> N
     assert by_candidate["spiga"].is_fusion is False
     assert by_candidate["static_weighted_downweight"].is_fusion is True
     assert len(context.scorer_rows) == 3
+    hrnet_row = next(row for row in context.scorer_rows if row.candidate_name == "hrnet")
+    assert hrnet_row.transform_regret_v3 == pytest.approx(0.0)
+    assert "transform_regret_v3" not in hrnet_row.feature_values
+
+
+def test_policy_summary_reports_v3_transform_metrics_and_skips_production() -> None:
+    scorer_rows = (
+        SimpleNamespace(
+            candidate_name="hrnet",
+            feature_values={},
+            transform_regret_v3=0.0,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=True,
+            hard_invalid_v3=False,
+        ),
+        SimpleNamespace(
+            candidate_name="spiga",
+            feature_values={},
+            transform_regret_v3=0.25,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=True,
+            hard_invalid_v3=False,
+        ),
+        SimpleNamespace(
+            candidate_name="bad",
+            feature_values={},
+            transform_regret_v3=3.0,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=False,
+            hard_invalid_v3=True,
+        ),
+    )
+    context = SimpleNamespace(
+        sample_id="gt_sample",
+        dataset="gt_hard",
+        source="gt_hard",
+        condition="profile",
+        runtime_bucket="profile",
+        runtime_bucket_source="",
+        nme_by_candidate={"hrnet": 0.01, "spiga": 0.04, "bad": 0.20},
+        failure_by_candidate={"hrnet": False, "spiga": False, "bad": True},
+        oracle="hrnet",
+        scorer_rows=scorer_rows,
+    )
+    contexts = T.cast("list[scorer_data.SampleCandidateContext]", [context])
+    summary = scorer_eval_impl.policy_summary(
+        contexts,
+        {"gt_sample": "spiga"},
+        source_by_sample_id={},
+    )
+    assert summary["mean_transform_regret_v3"] == pytest.approx(0.25)
+    assert summary["p95_transform_regret_v3"] == pytest.approx(0.25)
+    assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
+    assert summary["invalid_selection_count_v3"] == 0
+    assert summary["transform_eval_count_v3"] == 1
+
+    invalid_summary = scorer_eval_impl.policy_summary(
+        contexts,
+        {"gt_sample": "bad"},
+        source_by_sample_id={},
+    )
+    assert invalid_summary["invalid_selection_count_v3"] == 1
+    assert invalid_summary["mean_transform_regret_v3"] == pytest.approx(0.0)
+
+    production_context = SimpleNamespace(**{**context.__dict__, "source": "production_validated"})
+    production_contexts = T.cast("list[scorer_data.SampleCandidateContext]", [production_context])
+    production_summary = scorer_eval_impl.policy_summary(
+        production_contexts,
+        {"gt_sample": "spiga"},
+        source_by_sample_id={},
+    )
+    assert production_summary["transform_eval_count_v3"] == 0
+    assert production_summary["mean_transform_regret_v3"] == pytest.approx(0.0)
+
+
+def test_scorer_policy_key_detects_v3_transform_artifact() -> None:
+    scorer = RuntimeResolverScorer(
+        features=("candidate_name=hrnet",),
+        coefficients=(1.0,),
+        intercept=0.0,
+        target=TARGET_TRANSFORM_REGRET_V3,
+        version="learned_quality_v3",
+        runtime_policy="learned_quality_v3",
+    )
+
+    assert scorer_eval_impl.scorer_policy_key(scorer) == "learned_quality_v3"
 
 
 def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebuild(
@@ -1445,3 +1752,258 @@ def test_row_backed_eval_high_risk_safe_fallback_handles_fusion_flags(
     assert report["row_backed_eval"] is True
     assert report["sample_count"] == 1
     assert report["learned_quality_v2"]["pick_counts"]
+
+
+def _v3_eval_row_for_summary(
+    *,
+    candidate_name: str,
+    transform_regret_v3: float = 0.0,
+    oracle: str = "",
+    oracle_gap: float = 0.2,
+    rankable: bool = True,
+    hard_invalid: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        candidate_name=candidate_name,
+        feature_values={},
+        transform_cost_v3=transform_regret_v3,
+        transform_oracle_cost_v3=0.0,
+        transform_regret_v3=transform_regret_v3,
+        transform_oracle_candidate_v3=oracle,
+        transform_oracle_gap_v3=oracle_gap,
+        rankable_v3=rankable,
+        hard_invalid_v3=hard_invalid,
+        hard_invalid_reasons_v3=("hard_invalid",) if hard_invalid else (),
+        soft_structural_penalty_v3=0.0,
+    )
+
+
+def _v3_eval_context_for_summary(
+    sample_id: str,
+    rows: tuple[SimpleNamespace, ...],
+    *,
+    source: str = "gt_hard",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        sample_id=sample_id,
+        source=source,
+        dataset="gt_hard",
+        runtime_bucket_source="",
+        scorer_rows=rows,
+    )
+
+
+def test_transform_policy_summary_v3_excludes_single_valid_no_choice_group() -> None:
+    context = _v3_eval_context_for_summary(
+        "single_valid",
+        (
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_a",
+                transform_regret_v3=0.0,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=True,
+                hard_invalid=False,
+            ),
+        ),
+    )
+
+    summary = scorer_eval_impl.transform_policy_summary_v3(
+        [context],
+        {"single_valid": "candidate_a"},
+        source_by_sample_id={},
+    )
+
+    assert summary["transform_group_count_v3"] == 1
+    assert summary["transform_eval_count_v3"] == 0
+    assert summary["single_valid_group_count_v3"] == 1
+    assert summary["zero_valid_group_count_v3"] == 0
+    assert summary["near_tie_excluded_count_v3"] == 0
+    assert summary["mean_transform_regret_v3"] == pytest.approx(0.0)
+    assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
+
+
+def test_transform_policy_summary_v3_counts_only_rankable_pair_groups_as_eval() -> None:
+    context = _v3_eval_context_for_summary(
+        "rankable_pair",
+        (
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_a",
+                transform_regret_v3=0.0,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=True,
+                hard_invalid=False,
+            ),
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_b",
+                transform_regret_v3=0.25,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=True,
+                hard_invalid=False,
+            ),
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_c",
+                transform_regret_v3=0.0,
+                oracle="candidate_a",
+                oracle_gap=0.2,
+                rankable=False,
+                hard_invalid=True,
+            ),
+        ),
+    )
+
+    summary = scorer_eval_impl.transform_policy_summary_v3(
+        [context],
+        {"rankable_pair": "candidate_b"},
+        source_by_sample_id={},
+    )
+
+    assert summary["transform_group_count_v3"] == 1
+    assert summary["transform_eval_count_v3"] == 1
+    assert summary["single_valid_group_count_v3"] == 0
+    assert summary["invalid_selection_count_v3"] == 0
+    assert summary["mean_transform_regret_v3"] == pytest.approx(0.25)
+    assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
+
+
+def test_transform_policy_summary_v3_keeps_zero_valid_separate_from_single_valid() -> None:
+    context = _v3_eval_context_for_summary(
+        "zero_valid",
+        (
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_a",
+                rankable=False,
+                hard_invalid=True,
+            ),
+            _v3_eval_row_for_summary(
+                candidate_name="candidate_b",
+                rankable=False,
+                hard_invalid=True,
+            ),
+        ),
+    )
+
+    summary = scorer_eval_impl.transform_policy_summary_v3(
+        [context],
+        {"zero_valid": "candidate_a"},
+        source_by_sample_id={},
+    )
+
+    assert summary["transform_group_count_v3"] == 1
+    assert summary["transform_eval_count_v3"] == 0
+    assert summary["zero_valid_group_count_v3"] == 1
+    assert summary["single_valid_group_count_v3"] == 0
+    assert summary["invalid_selection_count_v3"] == 1
+
+
+def _v3_gate_metrics(
+    *,
+    mean: float,
+    p95: float | None = None,
+    invalid_rate: float = 0.0,
+    eval_count: int = 8,
+) -> dict[str, float | int]:
+    return {
+        "mean_transform_regret_v3": mean,
+        "p95_transform_regret_v3": mean if p95 is None else p95,
+        "invalid_selection_rate_v3": invalid_rate,
+        "invalid_selection_count_v3": int(round(invalid_rate * eval_count)),
+        "transform_eval_count_v3": eval_count,
+    }
+
+
+def test_v3_learnability_gate_attributes_high_transform_regret() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.20, p95=0.25),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.20),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.21),
+        },
+        normal_policy_metrics={},
+        hard_bucket_failed_gates=(),
+    )
+
+    assert "transform_error_mean_not_learnable_vs_best_single" in result["failed_gates"]
+    failure = next(
+        item
+        for item in result["failures"]
+        if item["gate"] == "transform_error_mean_not_learnable_vs_best_single"
+    )
+    assert failure["attribution"] == "ranker_or_runtime_feature_predictability_problem"
+    assert failure["geometry_gate"] == "transform_error"
+    assert "crop_center_error" in failure["geometry_gate_vocabulary"]
+    assert "roll_error" in failure["geometry_gate_vocabulary"]
+    assert "hull_iou" in failure["geometry_gate_vocabulary"]
+
+
+def test_v3_learnability_gate_attributes_invalid_selection() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(
+                mean=0.05,
+                p95=0.07,
+                invalid_rate=0.10,
+            ),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.12),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.13),
+        },
+        normal_policy_metrics={},
+        hard_bucket_failed_gates=(),
+    )
+
+    assert "invalid_selection_rate_above_validity_detector_gate" in result["failed_gates"]
+    failure = next(
+        item
+        for item in result["failures"]
+        if item["gate"] == "invalid_selection_rate_above_validity_detector_gate"
+    )
+    assert failure["attribution"] == "validity_detector_or_runtime_feature_coverage_problem"
+
+
+def test_v3_learnability_gate_attributes_normal_bucket_regression() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.05, p95=0.07),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.12),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.13),
+        },
+        normal_policy_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.20, p95=0.25),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.20),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.21),
+        },
+        hard_bucket_failed_gates=(),
+    )
+
+    assert "normal_bucket_no_regression" in result["failed_gates"]
+    failure = next(
+        item for item in result["failures"] if item["gate"] == "normal_bucket_no_regression"
+    )
+    assert failure["attribution"] == "hard_case_query_weighting_or_contested_subset_overfit"
+
+
+def test_v3_learnability_gate_requires_hard_buckets_to_pass() -> None:
+    result = scorer_eval_impl.v3_learnability_promotion_gates(
+        scorer_policy_name="learned_quality_v3",
+        comparison_metrics={
+            "learned_quality_v3": _v3_gate_metrics(mean=0.05, p95=0.07),
+            "best_single": _v3_gate_metrics(mean=0.10, p95=0.12),
+            "static_weighted_downweight": _v3_gate_metrics(mean=0.11, p95=0.13),
+        },
+        normal_policy_metrics={},
+        hard_bucket_failed_gates=("profile_catastrophic_failures_above_hard_bucket_gate",),
+    )
+
+    assert "hard_bucket_catastrophic_failure_gate_failed" in result["failed_gates"]
+    failure = next(
+        item
+        for item in result["failures"]
+        if item["gate"] == "hard_bucket_catastrophic_failure_gate_failed"
+    )
+    assert failure["geometry_gate"] == "catastrophic_failure"
+    assert "catastrophic_failure" in failure["geometry_gate_vocabulary"]

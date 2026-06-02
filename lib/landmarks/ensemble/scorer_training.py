@@ -12,6 +12,10 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.ensemble.runtime_features import (
+    RUNTIME_FEATURE_CONTRACT_VERSION,
+    runtime_feature_order,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     feature_matrix,
@@ -38,6 +42,8 @@ from lib.landmarks.ensemble.scorer_target_config import (
     TARGET_NORMALIZED_REGRET,
     TARGET_ORACLE_REGRET,
     TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_COST_V3,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_targets import (
     TaggedRow,
@@ -52,6 +58,10 @@ from lib.landmarks.pipeline_conventions import (
 
 SCORER_ARTIFACT = "runtime_resolver_scorer.json"
 SCORER_V2_ARTIFACT = "runtime_resolver_scorer_v2.json"
+SCORER_V3_ARTIFACT = "runtime_resolver_scorer_v3.json"
+SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
+ACTIVE_SCORER_VERSION = SCORER_VERSION_LEARNED_QUALITY_V3
+ACTIVE_SCORER_TARGET = TARGET_TRANSFORM_REGRET_V3
 SCORERS_DIR = "scorers"
 SCORER_SUITE_METRICS_JSON = "metrics.json"
 SCORER_SUITE_SENTINEL_JSON = ".scorer_training_complete.json"
@@ -60,8 +70,13 @@ EVAL_ROWS_CSV = "runtime_resolver_scorer_eval_rows.csv"
 TRAINING_CANDIDATE_TABLE_CSV = "candidate_table.csv"
 TRAINING_METRICS_JSON = "runtime_resolver_scorer_training_metrics.json"
 TRAINING_V2_METRICS_JSON = "runtime_resolver_scorer_v2_training_metrics.json"
+TRAINING_V3_METRICS_JSON = "runtime_resolver_scorer_v3_training_metrics.json"
 SCORER_CONDITION_REPORT_CSV = "scorer_report_by_condition.csv"
 SCORER_REGION_REPORT_CSV = "scorer_report_by_region.csv"
+MIN_V3_ORACLE_GAP = 1e-4
+"""Minimum cost gap required to use a v3 group for ranking supervision."""
+V3_REGRET_LABEL_CLAMP = 1.0
+"""Maximum v3 transform regret mapped into LambdaRank relevance labels."""
 
 HARD_CASE_SAMPLE_WEIGHTS: dict[str, float] = {
     "normal": 1.0,
@@ -126,7 +141,7 @@ def split_tagged_rows(
 def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
     """Write scorer rows with an explicit source column for held-out split reuse."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    feature_names = sorted({name for row, _source in rows for name in row.feature_values})
+    feature_names = list(runtime_feature_order(row.feature_values for row, _source in rows))
     base_fieldnames = [
         "sample_id",
         "face_index",
@@ -141,6 +156,15 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
         "large_regret_label",
         "candidate_failure_or_high_gap",
         "selection_cost",
+        "transform_cost_v3",
+        "transform_oracle_cost_v3",
+        "transform_regret_v3",
+        "transform_oracle_candidate_v3",
+        "transform_oracle_gap_v3",
+        "rankable_v3",
+        "hard_invalid_v3",
+        "hard_invalid_reasons_v3",
+        "soft_structural_penalty_v3",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",
@@ -170,30 +194,8 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
 
 
 def feature_order(rows: T.Sequence[CandidateQualityRow]) -> tuple[str, ...]:
-    """Return stable feature order for scorer training."""
-    names: set[str] = set()
-    for row in rows:
-        names.update(row.feature_values)
-    preferred = [
-        "candidate_is_single_model",
-        "candidate_is_fusion",
-        "cloud_area_ratio",
-        "hull_area_ratio",
-        "points_outside_expanded_bbox_fraction",
-        "eye_mouth_order_valid_after_deroll",
-        "roi_center_consensus_distance",
-        "landmark_consensus_distance",
-        "roll_degrees",
-        "yaw_degrees",
-        "roll_delta_to_consensus",
-        "yaw_delta_to_consensus",
-        "candidate_yaw_disagreement",
-        "max_disagreement_px",
-        "has_geometry_veto",
-    ]
-    ordered = [name for name in preferred if name in names]
-    ordered.extend(sorted(names - set(ordered)))
-    return tuple(ordered)
+    """Return stable runtime feature order for scorer training."""
+    return runtime_feature_order(row.feature_values for row in rows)
 
 
 def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
@@ -206,6 +208,10 @@ def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
         return max(float(row.candidate_nme - row.oracle_nme), 0.0)
     if target == TARGET_SELECTION_COST:
         return float(row.selection_cost)
+    if target == TARGET_TRANSFORM_COST_V3:
+        return float(row.transform_cost_v3)
+    if target == TARGET_TRANSFORM_REGRET_V3:
+        return float(row.transform_regret_v3)
     raise ValueError(f"unsupported scorer target {target!r}")
 
 
@@ -458,6 +464,273 @@ def scorer_row_metrics(
     }
 
 
+def _v3_query_condition_label(row: CandidateQualityRow, source: str = "") -> str:
+    """Return the face-level condition label for v3 query weighting."""
+    del source
+    tags = {
+        str(row.condition or "").strip().lower(),
+        str(row.runtime_bucket or "").strip().lower(),
+    }
+    tags.update(str(tag).strip().lower() for tag in row.hard_case_tags or ())
+    tags = {tag for tag in tags if tag}
+    is_profile = any("profile" in tag or "large_yaw" in tag or "yaw_" in tag for tag in tags)
+    is_occlusion = any("occlusion" in tag or "occluded" in tag for tag in tags)
+    if is_profile and is_occlusion:
+        return "profile_occlusion"
+    if is_profile:
+        return "profile"
+    if is_occlusion:
+        return "occlusion"
+    return "normal"
+
+
+def v3_lambdarank_query_weight(row: CandidateQualityRow, source: str = "") -> float:
+    """Return face-level v3 query weight without candidate-specific signals."""
+    label = _v3_query_condition_label(row, source)
+    return float(HARD_CASE_SAMPLE_WEIGHTS[label])
+
+
+def _v3_sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, str, str, str]:
+    return source, row.dataset, row.condition, row.sample_id
+
+
+def grouped_rankable_rows_v3(
+    rows: T.Sequence[TaggedRow],
+) -> tuple[list[list[TaggedRow]], list[float], dict[str, T.Any]]:
+    """Return valid v3 LambdaRank groups and one query weight per group."""
+    groups: dict[tuple[str, str, str, str], list[TaggedRow]] = {}
+    for tagged in rows:
+        row, source = tagged
+        groups.setdefault(_v3_sample_group_key(row, source), []).append(tagged)
+
+    valid_groups: list[list[TaggedRow]] = []
+    query_weights: list[float] = []
+    fallback_abstain_groups = 0
+    fallback_abstain_rows = 0
+    single_valid_groups = 0
+    single_valid_rows = 0
+    hard_invalid_rows = 0
+    near_tie_groups = 0
+    near_tie_rows = 0
+
+    for key in sorted(groups):
+        group = groups[key]
+        valid = [
+            tagged
+            for tagged in group
+            if bool(tagged[0].rankable_v3) and not bool(tagged[0].hard_invalid_v3)
+        ]
+
+        hard_invalid_rows += sum(1 for row, _source in group if bool(row.hard_invalid_v3))
+
+        if not valid:
+            fallback_abstain_groups += 1
+            fallback_abstain_rows += len(group)
+            continue
+
+        if len(valid) < 2:
+            single_valid_groups += 1
+            single_valid_rows += len(group)
+            continue
+
+        oracle_gap = min(float(row.transform_oracle_gap_v3) for row, _source in valid)
+        if oracle_gap < MIN_V3_ORACLE_GAP:
+            near_tie_groups += 1
+            near_tie_rows += len(group)
+            continue
+
+        ordered = sorted(valid, key=lambda tagged: tagged[0].candidate_name)
+        row, source = ordered[0]
+        valid_groups.append(ordered)
+        query_weights.append(v3_lambdarank_query_weight(row, source))
+
+    stats = {
+        "total_group_count": len(groups),
+        "rankable_pair_group_count": (
+            len(groups) - fallback_abstain_groups - single_valid_groups - near_tie_groups
+        ),
+        "fallback_abstain_group_count": fallback_abstain_groups,
+        "fallback_abstain_row_count": fallback_abstain_rows,
+        "single_valid_group_count": single_valid_groups,
+        "single_valid_row_count": single_valid_rows,
+        "near_tie_group_count": near_tie_groups,
+        "near_tie_row_count": near_tie_rows,
+        "min_v3_oracle_gap": MIN_V3_ORACLE_GAP,
+        "rankable_row_count": sum(len(group) for group in valid_groups),
+        "hard_invalid_row_count": hard_invalid_rows,
+    }
+
+    return valid_groups, query_weights, stats
+
+
+def _flatten_grouped_rows(groups: T.Sequence[T.Sequence[TaggedRow]]) -> list[TaggedRow]:
+    """Return grouped rows flattened in group order."""
+    return [tagged for group in groups for tagged in group]
+
+
+def _v3_lambdarank_item_weights(
+    query_weights: T.Sequence[float],
+    group_sizes: T.Sequence[int],
+) -> np.ndarray:
+    """Return per-row LightGBM weights from one query weight per group."""
+    weights: list[float] = []
+    for weight, size in zip(query_weights, group_sizes, strict=True):
+        weights.extend([float(weight)] * size)
+    return T.cast(np.ndarray, np.asarray(weights, dtype="float64"))
+
+
+def _lambdarank_label_v3(row: CandidateQualityRow) -> int:
+    """Return v3 relevance where higher means lower transform regret.
+
+    This intentionally ignores candidate_nme, oracle_nme, and selection_cost.
+    """
+    if V3_REGRET_LABEL_CLAMP <= 0.0:
+        return 0
+    clipped = min(max(float(row.transform_regret_v3), 0.0), V3_REGRET_LABEL_CLAMP)
+    return round((1.0 - clipped / V3_REGRET_LABEL_CLAMP) * 30.0)
+
+
+def _train_v3_lambdarank_from_tagged_rows(
+    *,
+    train_tagged_rows: T.Sequence[TaggedRow],
+    eval_tagged_rows: T.Sequence[TaggedRow],
+    candidates: T.Sequence[str],
+    output_dir: Path,
+    failure_threshold: float,
+    eval_fraction: float,
+    split_seed: int,
+    learning_rate: float,
+    iterations: int,
+    num_leaves: int,
+) -> dict[str, T.Any]:
+    """Train learned_quality_v3 from rankable transform-regret rows only."""
+
+    try:
+        import lightgbm as lgb
+    except ModuleNotFoundError as err:  # pragma: no cover - depends on install env
+        raise RuntimeError(
+            "learned_quality_v3 training requires lightgbm; install project requirements first"
+        ) from err
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    train_groups, train_query_weights, train_filter_stats = grouped_rankable_rows_v3(
+        train_tagged_rows
+    )
+    eval_groups, _eval_query_weights, eval_filter_stats = grouped_rankable_rows_v3(
+        eval_tagged_rows
+    )
+
+    if not train_groups:
+        raise ValueError(
+            "learned_quality_v3 has no rankable training rows after hard-invalid filtering"
+        )
+
+    train_group_sizes = [len(group) for group in train_groups]
+    grouped_train = _flatten_grouped_rows(train_groups)
+    rankable_eval = _flatten_grouped_rows(eval_groups)
+    train_rows = untag_quality_rows(grouped_train)
+    features = feature_order(train_rows)
+    x = feature_matrix([row.feature_values for row in train_rows], features)
+    y = np.asarray([_lambdarank_label_v3(row) for row in train_rows], dtype="int32")
+    item_weights = _v3_lambdarank_item_weights(train_query_weights, train_group_sizes)
+
+    ranker = lgb.LGBMRanker(
+        objective="lambdarank",
+        n_estimators=iterations,
+        learning_rate=learning_rate,
+        num_leaves=num_leaves,
+        random_state=split_seed,
+        deterministic=True,
+        verbosity=-1,
+    )
+    ranker.fit(x, y, group=train_group_sizes, sample_weight=item_weights)
+    booster = ranker.booster_
+    importances = _feature_importance_map(
+        features,
+        booster.feature_importance(importance_type="gain"),
+    )
+    artifact = {
+        "artifact_schema_version": 3,
+        "version": SCORER_VERSION_LEARNED_QUALITY_V3,
+        "scorer_version": SCORER_VERSION_LEARNED_QUALITY_V3,
+        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
+        "target": TARGET_TRANSFORM_REGRET_V3,
+        "objective": "lambdarank_visible_transform_regret",
+        "training_mode": "grouped_lambdarank_rankable_v3_only",
+        "selection_target": "inverse_transform_regret_v3_rank",
+        "runtime_policy": SCORER_VERSION_LEARNED_QUALITY_V3,
+        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
+        "higher_is_better": False,
+        "failure_threshold": failure_threshold,
+        "features": list(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
+        "model_data": booster.model_to_string(),
+        "training_data_counts": {
+            "row_count": len(train_rows),
+            "sample_group_count": len(train_group_sizes),
+            "eval_row_count": len(rankable_eval),
+            "candidate_count": len(candidates),
+        },
+        "split_ids": {
+            "seed": split_seed,
+            "eval_fraction": eval_fraction,
+            "train_group_count": len(train_group_sizes),
+        },
+        "v3_filtering": {
+            "train": train_filter_stats,
+            "eval": eval_filter_stats,
+        },
+        "feature_importances": importances,
+        "calibration": {"type": "none", "params": {}},
+        "sample_weighting": {
+            "strategy": "v3_condition_query_weighting",
+            "row_count": len(train_rows),
+            "query_count": len(train_group_sizes),
+            "mean_weight": float(np.mean(item_weights)) if item_weights.size else 0.0,
+            "max_weight": float(np.max(item_weights)) if item_weights.size else 0.0,
+        },
+        "lightgbm_params": {
+            "objective": "lambdarank",
+            "n_estimators": iterations,
+            "learning_rate": learning_rate,
+            "num_leaves": num_leaves,
+            "random_state": split_seed,
+            "deterministic": True,
+        },
+    }
+    artifact_path = write_json(output_dir / SCORER_V3_ARTIFACT, artifact)
+    rows_path = write_tagged_rows_csv(grouped_train, output_dir / TRAINING_ROWS_CSV)
+    eval_rows_path = write_tagged_rows_csv(rankable_eval, output_dir / EVAL_ROWS_CSV)
+    importances_path = _write_feature_importance_csv(
+        output_dir / "runtime_resolver_scorer_v3_feature_importances.csv",
+        importances,
+    )
+    metrics: dict[str, T.Any] = {
+        "artifact": str(artifact_path),
+        "training_rows": str(rows_path),
+        "eval_rows": str(eval_rows_path),
+        "feature_importances": str(importances_path),
+        "candidate_count": len(candidates),
+        "candidates": list(candidates),
+        "feature_count": len(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
+        "target": TARGET_TRANSFORM_REGRET_V3,
+        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
+        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
+        "higher_is_better": False,
+        "split_seed": split_seed,
+        "eval_fraction": eval_fraction,
+        "training_data_counts": artifact["training_data_counts"],
+        "split_ids": artifact["split_ids"],
+        "v3_filtering": artifact["v3_filtering"],
+        "sample_weighting": artifact["sample_weighting"],
+        "lightgbm_params": artifact["lightgbm_params"],
+    }
+    metrics_path = write_json(output_dir / TRAINING_V3_METRICS_JSON, metrics)
+    metrics["metrics_path"] = str(metrics_path)
+    return metrics
+
+
 def _sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, str, str, str]:
     return source, row.dataset, row.condition, row.sample_id
 
@@ -578,6 +851,7 @@ def _train_lambdarank_from_tagged_rows(
         "higher_is_better": False,
         "failure_threshold": failure_threshold,
         "features": list(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "model_data": booster.model_to_string(),
         "training_data_counts": {
             "row_count": len(train_rows),
@@ -617,6 +891,7 @@ def _train_lambdarank_from_tagged_rows(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "feature_count": len(features),
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "target": TARGET_SELECTION_COST,
         "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
         "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
@@ -646,17 +921,19 @@ def train_runtime_resolver_scorer_suite(
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     high_gap_threshold: float = DEFAULT_HIGH_GAP_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
-    l2: float = 0.001,
-    learning_rate: float = 0.1,
-    iterations: int = 1500,
+    learning_rate: float = 0.05,
+    iterations: int = 150,
+    num_leaves: int = 31,
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
-    v2_learning_rate: float = 0.05,
-    v2_iterations: int = 150,
-    v2_num_leaves: int = 31,
 ) -> dict[str, T.Any]:
-    """Train all learned runtime resolver scorers from one canonical row split."""
+    """Train the active v3 scorer from one canonical row split.
+
+    The active scorer-suite target is ``transform_alignment_regret_v3``. Legacy
+    v2/``selection_cost`` training is intentionally available only through
+    ``train_runtime_resolver_scorer_v2``.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     contexts = load_scorer_contexts(
@@ -694,10 +971,15 @@ def train_runtime_resolver_scorer_suite(
             ),
         },
         config={
+            "active_scorer_version": ACTIVE_SCORER_VERSION,
+            "active_target": ACTIVE_SCORER_TARGET,
             "candidates": list(candidates),
             "failure_threshold": failure_threshold,
             "high_gap_threshold": high_gap_threshold,
             "outlier_threshold": outlier_threshold,
+            "learning_rate": learning_rate,
+            "iterations": iterations,
+            "num_leaves": num_leaves,
             "eval_fraction": eval_fraction,
             "split_seed": split_seed,
             "allow_image_backfill": allow_image_backfill,
@@ -708,47 +990,53 @@ def train_runtime_resolver_scorer_suite(
         scorer_candidate_table_rows(contexts),
         output_dir / TRAINING_CANDIDATE_TABLE_CSV,
     )
-    v2_dir = output_dir / "v2_lambdarank"
+    v3_dir = output_dir / "v3_lambdarank"
     scorers_dir = output_dir / SCORERS_DIR
     scorers_dir.mkdir(parents=True, exist_ok=True)
 
-    v2_metrics = _train_lambdarank_from_tagged_rows(
+    v3_metrics = _train_v3_lambdarank_from_tagged_rows(
         train_tagged_rows=train_tagged_rows,
         eval_tagged_rows=eval_tagged_rows,
         candidates=candidates,
-        output_dir=v2_dir,
+        output_dir=v3_dir,
         failure_threshold=failure_threshold,
         eval_fraction=eval_fraction,
         split_seed=split_seed,
-        learning_rate=v2_learning_rate,
-        iterations=v2_iterations,
-        num_leaves=v2_num_leaves,
+        learning_rate=learning_rate,
+        iterations=iterations,
+        num_leaves=num_leaves,
     )
 
-    canonical_v2 = scorers_dir / "learned_quality_v2.json"
-    shutil.copy2(v2_dir / SCORER_V2_ARTIFACT, canonical_v2)
+    canonical_v3 = scorers_dir / "learned_quality_v3.json"
+    shutil.copy2(v3_dir / SCORER_V3_ARTIFACT, canonical_v3)
 
     metrics = {
         "artifact_schema_version": 1,
         "scorer_dataset": dataset_manifest,
+        "active_scorer_version": ACTIVE_SCORER_VERSION,
+        "active_target": ACTIVE_SCORER_TARGET,
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "scorers": {
-            "learned_quality_v2": {
-                **v2_metrics,
-                "canonical_artifact": str(canonical_v2),
+            "learned_quality_v3": {
+                **v3_metrics,
+                "canonical_artifact": str(canonical_v3),
             },
         },
         "candidate_table": str(candidate_table_path),
         "compatibility_artifacts": {
             "legacy_per_scorer_training_rows": [
-                str(v2_dir / TRAINING_ROWS_CSV),
+                str(v3_dir / TRAINING_ROWS_CSV),
             ],
             "legacy_per_scorer_eval_rows": [
-                str(v2_dir / EVAL_ROWS_CSV),
+                str(v3_dir / EVAL_ROWS_CSV),
             ],
             "candidate_table": str(candidate_table_path),
             "note": (
-                "Legacy linear/logistic scorer training has been removed. New consumers should use "
-                "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and learned_quality_v2."
+                "The active scorer_suite target is transform_alignment_regret_v3 only. "
+                "Legacy learned_quality_v2/selection_cost training is explicit-only. "
+                "New consumers should use "
+                "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and the canonical "
+                "learned_quality_v3 artifact."
             ),
         },
         "candidate_table_status": "compatibility_derived_from_scorer_contexts",
@@ -758,7 +1046,7 @@ def train_runtime_resolver_scorer_suite(
     }
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
-    metrics["artifact"] = str(canonical_v2)
+    metrics["artifact"] = str(canonical_v3)
     return metrics
 
 
@@ -782,15 +1070,7 @@ def train_runtime_resolver_scorer_v2(
     iterations: int = 150,
     num_leaves: int = 31,
 ) -> dict[str, T.Any]:
-    """Train learned_quality_v2 with LightGBM LambdaRank grouped by sample."""
-    try:
-        import lightgbm as lgb
-    except ModuleNotFoundError as err:  # pragma: no cover - depends on install env
-        raise RuntimeError(
-            "learned_quality_v2 training requires lightgbm; install project requirements first"
-        ) from err
-
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Train the explicit legacy learned_quality_v2 scorer on selection_cost."""
     contexts = load_scorer_contexts(
         gt_manifest=gt_manifest,
         gt_cache_dir=gt_cache_dir,
@@ -812,97 +1092,18 @@ def train_runtime_resolver_scorer_v2(
         eval_fraction=eval_fraction,
         seed=split_seed,
     )
-    grouped_train, train_group_sizes = _grouped_rows(train_tagged_rows)
-    train_rows = untag_quality_rows(grouped_train)
-    features = feature_order(train_rows)
-    x = feature_matrix([row.feature_values for row in train_rows], features)
-    y = np.asarray([_lambdarank_label(row) for row in train_rows], dtype="int32")
-    item_weights = np.asarray(
-        [_lambdarank_weight(row, source) for row, source in grouped_train],
-        dtype="float64",
-    )
-    ranker = lgb.LGBMRanker(
-        objective="lambdarank",
-        n_estimators=iterations,
+    return _train_lambdarank_from_tagged_rows(
+        train_tagged_rows=train_tagged_rows,
+        eval_tagged_rows=eval_tagged_rows,
+        candidates=candidates,
+        output_dir=output_dir,
+        failure_threshold=failure_threshold,
+        eval_fraction=eval_fraction,
+        split_seed=split_seed,
         learning_rate=learning_rate,
+        iterations=iterations,
         num_leaves=num_leaves,
-        random_state=split_seed,
-        deterministic=True,
-        verbosity=-1,
     )
-    ranker.fit(x, y, group=train_group_sizes, sample_weight=item_weights)
-    booster = ranker.booster_
-    importances = _feature_importance_map(
-        features,
-        booster.feature_importance(importance_type="gain"),
-    )
-    artifact = {
-        "artifact_schema_version": 2,
-        "version": "learned_quality_v2",
-        "scorer_version": "learned_quality_v2",
-        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
-        "target": TARGET_SELECTION_COST,
-        "objective": "lambdarank_inverse_regret",
-        "training_mode": "grouped_lambdarank",
-        "selection_target": "inverse_selection_cost_rank",
-        "runtime_policy": "learned_quality_v2",
-        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
-        "higher_is_better": False,
-        "failure_threshold": failure_threshold,
-        "features": list(features),
-        "model_data": booster.model_to_string(),
-        "training_data_counts": {
-            "row_count": len(train_rows),
-            "sample_group_count": len(train_group_sizes),
-            "eval_row_count": len(eval_tagged_rows),
-            "candidate_count": len(candidates),
-        },
-        "split_ids": {
-            "seed": split_seed,
-            "eval_fraction": eval_fraction,
-            "train_group_count": len(train_group_sizes),
-        },
-        "feature_importances": importances,
-        "calibration": {"type": "none", "params": {}},
-        "sample_weighting": scorer_sample_weighting_stats(grouped_train),
-        "lightgbm_params": {
-            "objective": "lambdarank",
-            "n_estimators": iterations,
-            "learning_rate": learning_rate,
-            "num_leaves": num_leaves,
-            "random_state": split_seed,
-            "deterministic": True,
-        },
-    }
-    artifact_path = write_json(output_dir / SCORER_V2_ARTIFACT, artifact)
-    rows_path = write_tagged_rows_csv(grouped_train, output_dir / TRAINING_ROWS_CSV)
-    eval_rows_path = write_tagged_rows_csv(eval_tagged_rows, output_dir / EVAL_ROWS_CSV)
-    importances_path = _write_feature_importance_csv(
-        output_dir / "runtime_resolver_scorer_v2_feature_importances.csv",
-        importances,
-    )
-    metrics: dict[str, T.Any] = {
-        "artifact": str(artifact_path),
-        "training_rows": str(rows_path),
-        "eval_rows": str(eval_rows_path),
-        "feature_importances": str(importances_path),
-        "candidate_count": len(candidates),
-        "candidates": list(candidates),
-        "feature_count": len(features),
-        "target": TARGET_SELECTION_COST,
-        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
-        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
-        "higher_is_better": False,
-        "split_seed": split_seed,
-        "eval_fraction": eval_fraction,
-        "training_data_counts": artifact["training_data_counts"],
-        "split_ids": artifact["split_ids"],
-        "sample_weighting": artifact["sample_weighting"],
-        "lightgbm_params": artifact["lightgbm_params"],
-    }
-    metrics_path = write_json(output_dir / TRAINING_V2_METRICS_JSON, metrics)
-    metrics["metrics_path"] = str(metrics_path)
-    return metrics
 
 
 def train_runtime_resolver_scorer(
@@ -921,23 +1122,23 @@ def train_runtime_resolver_scorer(
     l2: float = 0.001,
     learning_rate: float = 0.1,
     iterations: int = 1500,
+    num_leaves: int = 31,
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
     target: str = TARGET_SELECTION_COST,
 ) -> dict[str, T.Any]:
-    """Compatibility wrapper that trains the only supported learned scorer.
+    """Compatibility wrapper for explicit legacy learned_quality_v2 training.
 
-    Legacy linear/logistic scorer artifacts have been removed. Keep this
-    public function name for callers that have not migrated yet, but route all
-    work to learned_quality_v2 so no legacy artifact can be emitted.
+    The active scorer-suite path is v3-only. Keep this public function name for
+    older callers that still request the selection_cost/v2 artifact explicitly.
     """
     del l2
     if target != TARGET_SELECTION_COST:
         raise ValueError(
-            "train_runtime_resolver_scorer only trains learned_quality_v2 on "
-            f"{TARGET_SELECTION_COST!r}; unsupported target {target!r}. Legacy v1/v1.1 "
-            "scorer targets have been removed."
+            "train_runtime_resolver_scorer is legacy-v2-only and trains on "
+            f"{TARGET_SELECTION_COST!r}; unsupported target {target!r}. Use "
+            "train_runtime_resolver_scorer_suite for active v3 training."
         )
     return train_runtime_resolver_scorer_v2(
         gt_manifest=gt_manifest,
@@ -956,13 +1157,17 @@ def train_runtime_resolver_scorer(
         allow_image_backfill=allow_image_backfill,
         learning_rate=learning_rate,
         iterations=iterations,
-        num_leaves=31,
+        num_leaves=num_leaves,
     )
 
 
 __all__ = [
     "SCORER_ARTIFACT",
     "SCORER_V2_ARTIFACT",
+    "SCORER_V3_ARTIFACT",
+    "SCORER_VERSION_LEARNED_QUALITY_V3",
+    "ACTIVE_SCORER_VERSION",
+    "ACTIVE_SCORER_TARGET",
     "SCORERS_DIR",
     "SCORER_SUITE_METRICS_JSON",
     "SCORER_SUITE_SENTINEL_JSON",
@@ -972,6 +1177,7 @@ __all__ = [
     "TRAINING_ROWS_CSV",
     "EVAL_ROWS_CSV",
     "feature_order",
+    "grouped_rankable_rows_v3",
     "scorer_target_value",
     "scorer_row_metrics",
     "split_tagged_rows",

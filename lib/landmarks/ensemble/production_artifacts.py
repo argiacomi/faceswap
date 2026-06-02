@@ -93,7 +93,7 @@ SETUP_FILENAME = "best_setup.json"
 WEIGHTS_FILENAME = "best_weights.json"
 SCORERS_SUBDIR = "scorers"
 
-LEARNED_POLICIES: tuple[str, ...] = ("learned_quality_v2",)
+LEARNED_POLICIES: tuple[str, ...] = ("learned_quality_v2", "learned_quality_v3")
 """Resolver policies that consume a scorer artifact.
 
 ``roll_aware_veto`` is intentionally absent — its runtime path runs
