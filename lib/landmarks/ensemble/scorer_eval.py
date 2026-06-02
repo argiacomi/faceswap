@@ -124,7 +124,12 @@ REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
     "mean_transform_regret_v3",
     "p95_transform_regret_v3",
     "oracle_match_rate_v3",
+    "invalid_selection_count_v3",
     "invalid_selection_rate_v3",
+    "avoidable_invalid_selection_count_v3",
+    "avoidable_invalid_selection_rate_v3",
+    "all_invalid_selected_count_v3",
+    "all_invalid_selected_rate_v3",
     "near_tie_excluded_count_v3",
     "zero_valid_group_count_v3",
     "too_few_valid_group_count_v3",
@@ -320,6 +325,16 @@ def choose_scorer(
     rejected_candidate = ""
     replacement_candidate = ""
     selectable = survivors if survivors else available
+    v3_rows = _v3_rows_by_candidate(context)
+    v3_valid_selectable = {
+        name
+        for name in selectable
+        if name in v3_rows
+        and _row_bool(_v3_row_value(v3_rows[name], "rankable_v3", False))
+        and not _row_bool(_v3_row_value(v3_rows[name], "hard_invalid_v3", False))
+    }
+    if v3_valid_selectable:
+        selectable = v3_valid_selectable
     chosen = min(selectable, key=lambda name: (scores.get(name, float("inf")), name))
     candidates_by_name = {candidate.name: candidate for candidate in context.candidates}
     hard_slice_fallback = _hard_slice_safe_single_candidate(
@@ -406,8 +421,13 @@ def _transform_summary_empty() -> dict[str, T.Any]:
         "oracle_match_rate_v3": 0.0,
         "invalid_selection_count_v3": 0,
         "invalid_selection_rate_v3": 0.0,
+        "avoidable_invalid_selection_count_v3": 0,
+        "avoidable_invalid_selection_rate_v3": 0.0,
+        "all_invalid_selected_count_v3": 0,
+        "all_invalid_selected_rate_v3": 0.0,
         "near_tie_excluded_count_v3": 0,
         "zero_valid_group_count_v3": 0,
+        "too_few_valid_group_count_v3": 0,
         "single_valid_group_count_v3": 0,
         "transform_group_count_v3": 0,
         "transform_eval_count_v3": 0,
@@ -424,6 +444,8 @@ def transform_policy_summary_v3(
     regrets: list[float] = []
     oracle_matches = 0
     invalid_selection_count = 0
+    avoidable_invalid_selection_count = 0
+    all_invalid_selected_count = 0
     near_tie_count = 0
     zero_valid_count = 0
     single_valid_count = 0
@@ -450,6 +472,11 @@ def transform_policy_summary_v3(
             or _row_bool(_v3_row_value(selected_row, "hard_invalid_v3", False))
         )
         invalid_selection_count += int(selected_invalid)
+        if selected_invalid:
+            if zero_valid:
+                all_invalid_selected_count += 1
+            else:
+                avoidable_invalid_selection_count += 1
         if selected_invalid or zero_valid or single_valid or near_tie:
             continue
         valid_eval_count += 1
@@ -465,8 +492,13 @@ def transform_policy_summary_v3(
         "oracle_match_rate_v3": oracle_matches / valid_eval_count if valid_eval_count else 0.0,
         "invalid_selection_count_v3": invalid_selection_count,
         "invalid_selection_rate_v3": invalid_selection_count / eval_count,
+        "avoidable_invalid_selection_count_v3": avoidable_invalid_selection_count,
+        "avoidable_invalid_selection_rate_v3": avoidable_invalid_selection_count / eval_count,
+        "all_invalid_selected_count_v3": all_invalid_selected_count,
+        "all_invalid_selected_rate_v3": all_invalid_selected_count / eval_count,
         "near_tie_excluded_count_v3": near_tie_count,
         "zero_valid_group_count_v3": zero_valid_count,
+        "too_few_valid_group_count_v3": zero_valid_count + single_valid_count,
         "single_valid_group_count_v3": single_valid_count,
         "transform_group_count_v3": eval_count,
         "transform_eval_count_v3": valid_eval_count,
@@ -1058,7 +1090,11 @@ def v3_learnability_promotion_gates(
 
     scorer_mean = _policy_metric_float(scorer, "mean_transform_regret_v3")
     scorer_p95 = _policy_metric_float(scorer, "p95_transform_regret_v3")
-    scorer_invalid = _policy_metric_float(scorer, "invalid_selection_rate_v3")
+    scorer_invalid = _policy_metric_float(
+        scorer,
+        "avoidable_invalid_selection_rate_v3",
+        _policy_metric_float(scorer, "invalid_selection_rate_v3"),
+    )
 
     best_single = comparison_metrics.get("best_single", {})
     best_single_count = _policy_metric_count(best_single, "transform_eval_count_v3")
@@ -1130,7 +1166,7 @@ def v3_learnability_promotion_gates(
 
     if scorer_count > 0 and scorer_invalid > invalid_selection_rate_threshold:
         fail(
-            "invalid_selection_rate_above_validity_detector_gate",
+            "avoidable_invalid_selection_rate_above_validity_detector_gate",
             attribution="validity_detector_or_runtime_feature_coverage_problem",
             geometry_gate="transform_error",
             observed=scorer_invalid,
@@ -1138,6 +1174,22 @@ def v3_learnability_promotion_gates(
             detail={
                 "invalid_selection_count_v3": _policy_metric_count(
                     scorer, "invalid_selection_count_v3"
+                ),
+                "invalid_selection_rate_v3": _policy_metric_float(
+                    scorer, "invalid_selection_rate_v3"
+                ),
+                "avoidable_invalid_selection_count_v3": _policy_metric_count(
+                    scorer, "avoidable_invalid_selection_count_v3"
+                ),
+                "avoidable_invalid_selection_rate_v3": scorer_invalid,
+                "all_invalid_selected_count_v3": _policy_metric_count(
+                    scorer, "all_invalid_selected_count_v3"
+                ),
+                "all_invalid_selected_rate_v3": _policy_metric_float(
+                    scorer, "all_invalid_selected_rate_v3"
+                ),
+                "zero_valid_group_count_v3": _policy_metric_count(
+                    scorer, "zero_valid_group_count_v3"
                 ),
                 "transform_eval_count_v3": scorer_count,
             },
@@ -1156,9 +1208,15 @@ def v3_learnability_promotion_gates(
         normal_baseline_mean = _policy_metric_float(normal_baseline, "mean_transform_regret_v3")
         normal_scorer_p95 = _policy_metric_float(normal_scorer, "p95_transform_regret_v3")
         normal_baseline_p95 = _policy_metric_float(normal_baseline, "p95_transform_regret_v3")
-        normal_scorer_invalid = _policy_metric_float(normal_scorer, "invalid_selection_rate_v3")
+        normal_scorer_invalid = _policy_metric_float(
+            normal_scorer,
+            "avoidable_invalid_selection_rate_v3",
+            _policy_metric_float(normal_scorer, "invalid_selection_rate_v3"),
+        )
         normal_baseline_invalid = _policy_metric_float(
-            normal_baseline, "invalid_selection_rate_v3"
+            normal_baseline,
+            "avoidable_invalid_selection_rate_v3",
+            _policy_metric_float(normal_baseline, "invalid_selection_rate_v3"),
         )
         normal_reasons: list[str] = []
         if normal_scorer_mean > normal_baseline_mean + normal_bucket_tolerance:
@@ -1169,7 +1227,7 @@ def v3_learnability_promotion_gates(
             invalid_selection_rate_threshold,
             normal_baseline_invalid + invalid_selection_rate_threshold,
         ):
-            normal_reasons.append("invalid_selection_rate_v3")
+            normal_reasons.append("avoidable_invalid_selection_rate_v3")
         if normal_reasons:
             fail(
                 "normal_bucket_no_regression",

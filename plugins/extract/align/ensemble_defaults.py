@@ -12,7 +12,7 @@ HELPTEXT = (
 
 batch_size = ConfigItem(
     datatype=int,
-    default=8,
+    default=16,
     group="settings",
     info="The batch size to use for the ensemble wrapper.",
     rounding=1,
