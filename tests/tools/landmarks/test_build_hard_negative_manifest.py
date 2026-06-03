@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -56,7 +57,7 @@ def manifests(tmp_path: Path) -> dict[str, Path]:
 
 
 def _load(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[Any, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def test_merges_and_classifies_all_datasets(manifests, tmp_path: Path) -> None:

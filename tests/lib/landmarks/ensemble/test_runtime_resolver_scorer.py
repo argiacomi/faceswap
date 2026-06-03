@@ -2061,7 +2061,7 @@ def test_v3_learnability_gate_attributes_high_transform_regret() -> None:
     assert "hull_iou" in failure["geometry_gate_vocabulary"]
 
 
-def test_v3_learnability_gate_attributes_invalid_selection() -> None:
+def test_v3_learnability_gate_attributes_avoidable_invalid_selection() -> None:
     result = scorer_eval_impl.v3_learnability_promotion_gates(
         scorer_policy_name="learned_quality_v3",
         comparison_metrics={
@@ -2077,11 +2077,14 @@ def test_v3_learnability_gate_attributes_invalid_selection() -> None:
         hard_bucket_failed_gates=(),
     )
 
-    assert "invalid_selection_rate_above_validity_detector_gate" in result["failed_gates"]
+    assert (
+        "avoidable_invalid_selection_rate_above_validity_detector_gate"
+        in result["failed_gates"]
+    )
     failure = next(
         item
         for item in result["failures"]
-        if item["gate"] == "invalid_selection_rate_above_validity_detector_gate"
+        if item["gate"] == "avoidable_invalid_selection_rate_above_validity_detector_gate"
     )
     assert failure["attribution"] == "validity_detector_or_runtime_feature_coverage_problem"
 

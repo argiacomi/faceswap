@@ -29,6 +29,12 @@ from lib.landmarks.ensemble.hard_condition_taxonomy import (
     NEW_HARD_CONDITION_LABELS,
     derive_hard_condition_taxonomy,
 )
+from lib.landmarks.ensemble.profile_repair import (
+    PROFILE_REPAIR_CANDIDATE_NAME,
+    build_profile_repair_landmarks,
+    is_profile_repair_context,
+    profile_repair_features,
+)
 from lib.landmarks.ensemble.runtime_features import candidate_feature_map, runtime_feature_order
 from lib.landmarks.ensemble.runtime_resolver import (
     CandidateMetrics,
@@ -941,6 +947,15 @@ def build_sample_context(
         yaw_estimate=yaw_estimate,
         roll_estimate=roll_estimate,
     )
+    candidates = _append_profile_repair_candidate(
+        candidates,
+        metrics,
+        candidate_extra_features,
+        runtime_bucket=bucket_result.bucket,
+        condition=condition,
+        yaw_estimate=yaw_estimate,
+        reference_bbox=reference_bbox,
+    )
 
     nme_by_candidate: dict[str, float] = {}
     failure_by_candidate: dict[str, bool] = {}
@@ -1010,6 +1025,68 @@ def build_sample_context(
         candidate_extra_features=candidate_extra_features,
         hard_negative_weight=_hard_negative_weight_from_sample(sample),
     )
+
+
+def _append_profile_repair_candidate(
+    candidates: tuple[CandidateRecord, ...],
+    metrics: dict[str, CandidateMetrics],
+    candidate_extra_features: dict[str, dict[str, float]],
+    *,
+    runtime_bucket: str,
+    condition: str,
+    yaw_estimate: float | None,
+    reference_bbox: tuple[float, float, float, float] | None,
+) -> tuple[CandidateRecord, ...]:
+    """Append a ``profile_visible_side_repaired`` candidate for all-invalid groups.
+
+    Only fires on profile/occlusion contexts where every existing candidate is
+    geometry-vetoed (an all-invalid proxy computable before v3 cost), so normal
+    and partially-valid groups are unchanged. The repaired candidate is built
+    with real landmarks and run through the normal metric/shape/v3 pipeline; it
+    is appended only when it passes the repair sanity gates.
+    """
+    if not is_profile_repair_context((runtime_bucket, condition)):
+        return candidates
+    if not candidates or PROFILE_REPAIR_CANDIDATE_NAME in {c.name for c in candidates}:
+        return candidates
+    all_vetoed = all(
+        metrics.get(candidate.name) is not None
+        and bool(metrics[candidate.name].geometry_veto_reasons)
+        for candidate in candidates
+    )
+    if not all_vetoed:
+        return candidates
+    built = build_profile_repair_landmarks(
+        candidates,
+        metrics,
+        runtime_bucket=runtime_bucket,
+        condition=condition,
+        yaw_estimate=yaw_estimate,
+        candidate_extra_features=candidate_extra_features,
+    )
+    if built is None:
+        return candidates
+    repaired_landmarks, source_name, visible_side = built
+    record = CandidateRecord(
+        name=PROFILE_REPAIR_CANDIDATE_NAME,
+        landmarks=repaired_landmarks,
+        is_fusion=True,
+        contributing_models=(source_name,),
+    )
+    metric = _metric_for_candidate(record, reference_bbox=reference_bbox)
+    metric.geometry_veto_reasons = _shape_reasons(runtime_bucket, record.name, metric)
+    metrics[record.name] = metric
+    source_rank = next(
+        (index for index, candidate in enumerate(candidates) if candidate.name == source_name),
+        0,
+    )
+    shape_score = float(getattr(metric, "shape_plausibility_score", 0.0) or 0.0)
+    candidate_extra_features[record.name] = profile_repair_features(
+        visible_side=visible_side,
+        source_rank=source_rank,
+        shape_score=shape_score,
+    )
+    return (*candidates, record)
 
 
 def _hard_negative_weight_from_sample(sample: LandmarkSample) -> float:
