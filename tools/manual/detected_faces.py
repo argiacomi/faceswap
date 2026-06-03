@@ -23,6 +23,11 @@ from lib.gui.utils import FileHandler
 from lib.image import ImagesLoader, ImagesSaver, encode_image, generate_thumbnail
 from lib.multithreading import MultiThread
 from lib.utils import get_folder, get_module_objects
+from tools.manual.frame_filter import (
+    filtered_frame_indices,
+    frame_landmarks_outside_thumbnail,
+    frame_neighbor_landmark_outlier_from_provider,
+)
 
 if T.TYPE_CHECKING:
     from lib.align.objects import FileAlignments
@@ -555,67 +560,74 @@ class Filter:
     @property
     def frame_meets_criteria(self) -> bool:
         """``True`` if the current frame meets the selected filter criteria otherwise ``False``."""
-        filter_mode = self._globals.var_filter_mode.get()
-        frame_faces = self._detected_faces.current_faces[self._globals.frame_index]
-        distance = self._filter_distance
-
-        retval = (
-            filter_mode == "All Frames"
-            or (filter_mode == "No Faces" and not frame_faces)
-            or (filter_mode == "Has Face(s)" and len(frame_faces) > 0)
-            or (filter_mode == "Single Face" and len(frame_faces) == 1)
-            or (filter_mode == "Multiple Faces" and len(frame_faces) > 1)
-            or (
-                filter_mode == "Misaligned Faces"
-                and any(face.aligned.average_distance > distance for face in frame_faces)
-            )
+        frame_index = self._globals.frame_index
+        frame_faces = self._faces_for_frame(frame_index)
+        retval = self._frame_meets_mode(
+            frame_index,
+            self._globals.var_filter_mode.get(),
+            frame_faces,
         )
-        assert isinstance(retval, bool)
         logger.trace(  # type: ignore[attr-defined]
             "filter_mode: %s, frame meets criteria: %s",
-            filter_mode,
-            retval,
-        )
-        return retval
-
-    @property
-    def _filter_distance(self) -> float:
-        """The currently selected distance when Misaligned Faces filter is selected."""
-        try:
-            retval = self._globals.var_filter_distance.get()
-        except tk.TclError:
-            # Suppress error when distance box is empty
-            retval = 0
-        return float(retval) / 100.0
-
-    @property
-    def count(self) -> int:
-        """The number of frames that meet the filter criteria returned by
-        :attr:`~tools.manual.manual.TkGlobals.var_filter_mode.get()`."""
-        face_count_per_index = self._detected_faces.face_count_per_index
-        if self._globals.var_filter_mode.get() == "No Faces":
-            retval = sum(1 for f_count in face_count_per_index if f_count == 0)
-        elif self._globals.var_filter_mode.get() == "Has Face(s)":
-            retval = sum(1 for f_count in face_count_per_index if f_count != 0)
-        elif self._globals.var_filter_mode.get() == "Single Face":
-            retval = sum(1 for f_count in face_count_per_index if f_count == 1)
-        elif self._globals.var_filter_mode.get() == "Multiple Faces":
-            retval = sum(1 for f_count in face_count_per_index if f_count > 1)
-        elif self._globals.var_filter_mode.get() == "Misaligned Faces":
-            distance = self._filter_distance
-            retval = sum(
-                1
-                for frame in self._detected_faces.current_faces
-                if any(face.aligned.average_distance > distance for face in frame)
-            )
-        else:
-            retval = len(face_count_per_index)
-        logger.trace(  # type: ignore[attr-defined]
-            "filter mode: %s, frame count: %s",
             self._globals.var_filter_mode.get(),
             retval,
         )
         return retval
+
+    def _faces_for_frame(self, frame_index: int) -> T.Sequence[DetectedFace]:
+        """Return faces for ``frame_index`` without raising on out-of-range lookups."""
+        if 0 <= frame_index < len(self._detected_faces.current_faces):
+            return self._detected_faces.current_faces[frame_index]
+        return ()
+
+    def _frame_meets_mode(
+        self,
+        frame_index: int,
+        filter_mode: str,
+        frame_faces: T.Sequence[DetectedFace],
+    ) -> bool:
+        """Return whether a frame matches ``filter_mode``."""
+        if filter_mode == "No Faces":
+            return not frame_faces
+        if filter_mode == "Has Face(s)":
+            return len(frame_faces) > 0
+        if filter_mode == "Single Face":
+            return len(frame_faces) == 1
+        if filter_mode == "Two Faces":
+            return len(frame_faces) == 2
+        if filter_mode == "Multiple Faces":
+            return len(frame_faces) > 2
+        if filter_mode == "Misaligned Faces":
+            distance = self._filter_distance
+            return any(face.aligned.average_distance > distance for face in frame_faces)
+        if filter_mode == "Neighbor Outliers":
+            return frame_neighbor_landmark_outlier_from_provider(
+                self._faces_for_frame,
+                frame_index,
+                self._filter_distance_raw,
+            )
+        if filter_mode == "Landmarks Outside Thumbnail":
+            return frame_landmarks_outside_thumbnail(frame_faces)
+        return True
+
+    @property
+    def _filter_distance_raw(self) -> int:
+        """The raw integer distance selected by the threshold slider."""
+        try:
+            retval = self._globals.var_filter_distance.get()
+        except tk.TclError:
+            retval = 0
+        return int(retval)
+
+    @property
+    def _filter_distance(self) -> float:
+        """The currently selected distance when Misaligned Faces filter is selected."""
+        return float(self._filter_distance_raw) / 100.0
+
+    @property
+    def count(self) -> int:
+        """The number of frames that meet the current filter criteria."""
+        return len(self.frames_list)
 
     @property
     def raw_indices(self) -> dict[T.Literal["frame", "face"], list[int]]:
@@ -659,29 +671,38 @@ class Filter:
 
     @property
     def frames_list(self) -> list[int]:
-        """The list of frame indices that meet the filter criteria returned by
-        :attr:`~tools.manual.manual.TkGlobals.var_filter_mode.get()`."""
+        """The list of frame indices that meet the current filter criteria."""
+        filter_mode = self._globals.var_filter_mode.get()
+
         face_count_per_index = self._detected_faces.face_count_per_index
-        if self._globals.var_filter_mode.get() == "No Faces":
-            retval = [idx for idx, count in enumerate(face_count_per_index) if count == 0]
-        elif self._globals.var_filter_mode.get() == "Single Face":
-            retval = [idx for idx, count in enumerate(face_count_per_index) if count == 1]
-        elif self._globals.var_filter_mode.get() == "Multiple Faces":
-            retval = [idx for idx, count in enumerate(face_count_per_index) if count > 1]
-        elif self._globals.var_filter_mode.get() == "Has Face(s)":
-            retval = [idx for idx, count in enumerate(face_count_per_index) if count != 0]
-        elif self._globals.var_filter_mode.get() == "Misaligned Faces":
-            distance = self._filter_distance
-            retval = [
-                idx
-                for idx, frame in enumerate(self._detected_faces.current_faces)
-                if any(face.aligned.average_distance > distance for face in frame)
-            ]
-        else:
-            retval = list(range(len(face_count_per_index)))
+        frame_indices = tuple(range(len(face_count_per_index)))
+
+        retval = list(
+            filtered_frame_indices(
+                frame_indices,
+                lambda idx: face_count_per_index[idx],
+                filter_mode,
+                misaligned_predicate=lambda idx: self._frame_meets_mode(
+                    idx,
+                    "Misaligned Faces",
+                    self._faces_for_frame(idx),
+                ),
+                neighbor_outlier_predicate=lambda idx: (
+                    frame_neighbor_landmark_outlier_from_provider(
+                        self._faces_for_frame,
+                        idx,
+                        self._filter_distance_raw,
+                    )
+                ),
+                thumbnail_outlier_predicate=lambda idx: frame_landmarks_outside_thumbnail(
+                    self._faces_for_frame(idx)
+                ),
+            )
+        )
+
         logger.trace(  # type: ignore[attr-defined]
             "filter mode: %s, number_frames: %s",
-            self._globals.var_filter_mode.get(),
+            filter_mode,
             len(retval),
         )
         return retval

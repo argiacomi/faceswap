@@ -29,8 +29,11 @@ def test_filter_modes_match_legacy_cycle_order() -> None:
         "Has Face(s)",
         "No Faces",
         "Single Face",
+        "Two Faces",
         "Multiple Faces",
         "Misaligned Faces",
+        "Neighbor Outliers",
+        "Landmarks Outside Thumbnail",
     )
 
 
@@ -98,10 +101,16 @@ def test_single_face_includes_only_one_count() -> None:
     assert filtered_frame_indices(indices, _count_callable(counts), "Single Face") == (1, 4)
 
 
-def test_multiple_faces_excludes_zero_and_one() -> None:
+def test_two_faces_matches_exactly_two() -> None:
     counts = _counts(0, 1, 2, 3, 1)
     indices = tuple(range(5))
-    assert filtered_frame_indices(indices, _count_callable(counts), "Multiple Faces") == (2, 3)
+    assert filtered_frame_indices(indices, _count_callable(counts), "Two Faces") == (2,)
+
+
+def test_multiple_faces_excludes_zero_one_and_two() -> None:
+    counts = _counts(0, 1, 2, 3, 1)
+    indices = tuple(range(5))
+    assert filtered_frame_indices(indices, _count_callable(counts), "Multiple Faces") == (3,)
 
 
 def test_unknown_filter_mode_falls_back_to_all_frames() -> None:
@@ -180,3 +189,96 @@ def test_misaligned_predicate_for_model_uses_editable_faces() -> None:
     # is asked about, including frames with no faces.
     assert isinstance(predicate(0), bool)
     assert predicate(99) is False  # frame with no faces
+
+
+# ---------------------------------------------------------------------------
+# Neighbor-outlier and thumbnail-outside predicates
+# ---------------------------------------------------------------------------
+
+
+def _dummy_landmarks() -> tuple[tuple[float, float], ...]:
+    return tuple((0.0, 0.0) for _ in range(68))
+
+
+def test_neighbor_outlier_flags_current_face_vs_previous_and_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A frame is flagged when a face differs from the average of adjacent faces."""
+    import numpy as np
+
+    from tools.manual import frame_filter as _frame_filter
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
+    model.add_face(1, (0.3, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
+    model.add_face(2, (0.0, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
+
+    def _fake_normalized(face, *, size=100):
+        return np.full((68, 2), float(face.bbox[0]), dtype=np.float32)
+
+    monkeypatch.setattr(_frame_filter, "_normalized_landmarks_for_face", _fake_normalized)
+
+    assert _frame_filter.frame_neighbor_landmark_outlier_from_provider(model.faces, 1, 10) is True
+    assert _frame_filter.neighbor_outlier_predicate_for_model(model, 10)(1) is True
+
+
+def test_neighbor_outlier_requires_adjacent_faces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Edge frames without both neighbors are not treated as outliers."""
+    import numpy as np
+
+    from tools.manual import frame_filter as _frame_filter
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.3, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
+    model.add_face(1, (0.0, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
+
+    monkeypatch.setattr(
+        _frame_filter,
+        "_normalized_landmarks_for_face",
+        lambda face, *, size=100: np.full((68, 2), float(face.bbox[0]), dtype=np.float32),
+    )
+
+    assert _frame_filter.frame_neighbor_landmark_outlier_from_provider(model.faces, 0, 10) is False
+
+
+def test_landmarks_outside_thumbnail_predicate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A face is flagged when transformed thumbnail landmarks leave the 96px crop."""
+    import numpy as np
+
+    from tools.manual import frame_filter as _frame_filter
+
+    face = EditableFace(
+        face_index=0,
+        bbox=(0.0, 0.0, 10.0, 10.0),
+        landmarks=_dummy_landmarks(),
+    )
+    monkeypatch.setattr(
+        _frame_filter,
+        "_thumbnail_landmarks_for_face",
+        lambda face, *, size=96, centering="head": np.asarray(
+            [(-1.0, 10.0), (50.0, 50.0)],
+            dtype=np.float32,
+        ),
+    )
+
+    assert _frame_filter.face_landmarks_outside_thumbnail(face) is True
+    assert _frame_filter.frame_landmarks_outside_thumbnail((face,)) is True
+
+
+def test_new_filter_modes_use_supplied_predicates() -> None:
+    """The neutral filter dispatcher routes the new modes through their predicates."""
+    counts = _counts(1, 1, 1)
+    indices = (0, 1, 2)
+
+    assert filtered_frame_indices(
+        indices,
+        _count_callable(counts),
+        "Neighbor Outliers",
+        neighbor_outlier_predicate=lambda idx: idx == 1,
+    ) == (1,)
+    assert filtered_frame_indices(
+        indices,
+        _count_callable(counts),
+        "Landmarks Outside Thumbnail",
+        thumbnail_outlier_predicate=lambda idx: idx == 2,
+    ) == (2,)

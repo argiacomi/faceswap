@@ -100,9 +100,10 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             "save": _("Save the Alignments file (Ctrl+S)"),
             "mode": _("Filter Frames to only those Containing the Selected Item (F)"),
             "distance": _(
-                "Set the distance from an 'average face' to be considered misaligned. "
+                "Set the distance threshold for the active landmark-distance filter. "
                 "Higher distances are more restrictive"
             ),
+            "fps": _("Set the playback speed in frames per second."),
         }
 
     @property
@@ -160,8 +161,11 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             "Has Face(s)",
             "No Faces",
             "Single Face",
+            "Two Faces",
             "Multiple Faces",
             "Misaligned Faces",
+            "Neighbor Outliers",
+            "Landmarks Outside Thumbnail",
         ]
 
     def _add_nav(self):
@@ -245,8 +249,48 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             if action != "mode":
                 Tooltip(wgt, text=self._helptext[action])
             buttons[action] = wgt
+        fps = self._add_playback_fps_input(frame)
+        fps.pack(side=tk.LEFT, padx=(6, 0))
         logger.debug("Transport buttons: %s", buttons)
         return buttons
+
+    def _add_playback_fps_input(self, frame):
+        """Add a compact FPS input for playback speed."""
+        fps_frame = ttk.Frame(frame)
+        lbl = ttk.Label(fps_frame, text="FPS:")
+        lbl.pack(side=tk.LEFT, padx=(0, 2))
+        spinbox_cls = getattr(ttk, "Spinbox", tk.Spinbox)
+        spin = spinbox_cls(
+            fps_frame,
+            from_=1,
+            to=60,
+            width=4,
+            textvariable=self._globals.var_playback_fps,
+            command=self._clamp_playback_fps,
+        )
+        spin.pack(side=tk.LEFT)
+        spin.bind("<FocusOut>", lambda _event: self._clamp_playback_fps())
+        spin.bind("<Return>", lambda _event: self._clamp_playback_fps())
+        Tooltip(fps_frame, text=self._helptext["fps"])
+        return fps_frame
+
+    def _playback_delay_ms(self, started_at):
+        """Return playback delay in milliseconds after accounting for render duration."""
+        try:
+            fps = int(self._globals.var_playback_fps.get())
+        except TclError:
+            fps = 24
+        fps = max(1, min(60, fps))
+        duration = int((time() - started_at) * 1000)
+        return max(1, int(round(1000 / fps)) - duration)
+
+    def _clamp_playback_fps(self):
+        """Clamp the playback FPS variable to the supported 1..60 range."""
+        try:
+            fps = int(self._globals.var_playback_fps.get())
+        except TclError:
+            fps = 24
+        self._globals.var_playback_fps.set(max(1, min(60, fps)))
 
     def _add_transport_tk_trace(self):
         """Add the tkinter variable traces to buttons"""
@@ -334,7 +378,7 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
     def pack_threshold_slider(self):
         """Display or hide the threshold slider depending on the current filter mode. For
         misaligned faces filter, display the slider. Hide for all other filters."""
-        if self._globals.var_filter_mode.get() == "Misaligned Faces":
+        if self._globals.var_filter_mode.get() in ("Misaligned Faces", "Neighbor Outliers"):
             self._optional_widgets["distance_slider"].pack(side=tk.LEFT)
         else:
             self._optional_widgets["distance_slider"].pack_forget()
@@ -379,9 +423,7 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         # Populate the filtered frames count on first frame
         frame_count = self._det_faces.filter.count if frame_count is None else frame_count
         self._navigation.increment_frame(frame_count=frame_count, is_playing=True)
-        delay = 16  # Cap speed at approx 60fps max. Unlikely to hit, but just in case
-        duration = int((time() - start) * 1000)
-        delay = max(1, delay - duration)
+        delay = self._playback_delay_ms(start)
         self.after(delay, lambda f=frame_count: self._play(f))
 
     def _toggle_save_state(self, *args):  # pylint:disable=unused-argument

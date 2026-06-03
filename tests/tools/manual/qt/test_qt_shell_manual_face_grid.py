@@ -80,8 +80,11 @@ def test_face_grid_respects_active_filter(qtbot, tmp_path: Path) -> None:
     window.editor_state.set("filter_mode", "Single Face")
     assert window.face_grid_panel.entry_keys() == ((1, 0),)
 
-    window.editor_state.set("filter_mode", "Multiple Faces")
+    window.editor_state.set("filter_mode", "Two Faces")
     assert window.face_grid_panel.entry_keys() == ((3, 0), (3, 1))
+
+    window.editor_state.set("filter_mode", "Multiple Faces")
+    assert window.face_grid_panel.entry_keys() == ()
 
     window.editor_state.set("filter_mode", "No Faces")
     assert window.face_grid_panel.entry_keys() == ()

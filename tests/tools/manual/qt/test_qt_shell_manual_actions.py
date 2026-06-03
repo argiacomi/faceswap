@@ -9,6 +9,7 @@ import pytest
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QPixmap
 
+from tools.manual.frame_filter import FILTER_MODES
 from tools.manual.qt import MANUAL_ACTIONS, ManualFrameView, ManualToolWindow
 from tools.manual.session import FaceThumbnail, ManualSession
 
@@ -235,13 +236,13 @@ def test_cycle_filter_advances_state(qtbot, tmp_path: Path) -> None:
     seen: list[str] = []
     window.editor_state.subscribe("filter_mode", seen.append)
 
-    for _ in range(7):
+    for _ in range(len(FILTER_MODES) + 1):
         window.cycle_filter_mode()
 
-    assert len(seen) == 7
+    assert len(seen) == len(FILTER_MODES) + 1
     # First call leaves the rotation at "Has Face(s)" (next after "All Frames").
     assert seen[0] == "Has Face(s)"
-    # After a full rotation through 5 modes, we land back at "Has Face(s)".
+    # After a full rotation through all modes, we land back at "Has Face(s)".
     assert seen[-1] == "Has Face(s)"
 
 

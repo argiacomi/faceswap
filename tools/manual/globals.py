@@ -64,6 +64,8 @@ class TKVars:
     """:class:`tkinter.IntVar`: The face index of the currently selected face"""
     filter_distance: tk.IntVar
     """:class:`tkinter.IntVar`: The amount to filter by distance"""
+    playback_fps: tk.IntVar
+    """:class:`tkinter.IntVar`: Playback speed for transport auto-advance."""
 
     update: tk.BooleanVar
     """:class:`tkinter.BooleanVar`: Whether an update has been performed """
@@ -134,6 +136,7 @@ class TkGlobals:
             transport_index=tk.IntVar(value=0),
             face_index=tk.IntVar(value=0),
             filter_distance=tk.IntVar(value=10),
+            playback_fps=tk.IntVar(value=24),
             update=tk.BooleanVar(value=False),
             update_active_viewport=tk.BooleanVar(value=False),
             is_zoomed=tk.BooleanVar(value=False),
@@ -186,6 +189,11 @@ class TkGlobals:
         """:class:`tkinter.IntVar`: The variable holding the currently selected threshold
         distance for misaligned filter mode."""
         return self._tk_vars.filter_distance
+
+    @property
+    def var_playback_fps(self) -> tk.IntVar:
+        """:class:`tkinter.IntVar`: Playback FPS for auto-advance."""
+        return self._tk_vars.playback_fps
 
     @property
     def var_filter_mode(self) -> tk.StringVar:
