@@ -157,10 +157,11 @@ class PipelineProgress:
 
         * Lazily constructed on first render so import-time tqdm
           isn't required when no progress is actually emitted.
-        * Updated in absolute terms (``bar.n = completed``) so it tracks
-          the externally-supplied stage index, not delta increments.
-        * Closed on the final or failed event so the bar doesn't leak
-          across pipeline runs.
+        * Updated in absolute completed-stage terms: a ``running`` stage
+          counts as ``index - 1`` complete, while finished/failed stages
+          count as ``index`` complete.
+        * Closed on the final finished event or failed event so the bar
+          doesn't leak across pipeline runs.
 
         ``set_postfix_str`` carries the current stage + status text in
         the same tqdm description payload the GUI ``ProgressParser``
@@ -168,7 +169,8 @@ class PipelineProgress:
         """
         if self.total <= 0:
             return
-        completed = min(max(index, 0), self.total)
+        raw_completed = index - 1 if status == "running" else index
+        completed = min(max(raw_completed, 0), self.total)
         if self._BAR is None:
             from tqdm import tqdm  # pylint:disable=import-outside-toplevel
 
@@ -180,7 +182,7 @@ class PipelineProgress:
             )
         self._BAR.n = completed
         self._BAR.set_postfix_str(f"{stage} {status}", refresh=True)
-        if completed >= self.total or status == "failed":
+        if status == "failed" or (status != "running" and completed >= self.total):
             self._BAR.close()
             self._BAR = None  # type: ignore[misc]
 
