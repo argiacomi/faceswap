@@ -164,6 +164,13 @@ V3_RESERVED_ROW_FIELDS: tuple[str, ...] = (
     "soft_structural_penalty_v3",
 )
 
+ROUTED_GENERAL_PROFILE_POLICY = "routed_general_profile"
+PROFILE_SCORER_METRICS_JSON = "profile_scorer_metrics.json"
+PROFILE_SCORER_POLICY_REPORT_JSON = "profile_scorer_policy_report.json"
+PROFILE_SCORER_POLICY_REPORT_CSV = "profile_scorer_policy_report.csv"
+PROFILE_REGION_REPORT_JSON = "profile_region_report.json"
+PROFILE_REGION_REPORT_DIR = "profile_region"
+
 
 def eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str]]:
     """Return held-out `(source, dataset, sample_id)` keys and per-sample source."""
@@ -998,6 +1005,7 @@ def write_region_reports(
     failure_threshold: float,
     worst_sample_count: int,
 ) -> dict[str, T.Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
     """Write region-level NME/geometry reports and return a summary payload."""
     detail_rows: list[dict[str, T.Any]] = []
     for context in contexts:
@@ -1745,6 +1753,286 @@ def score_policy_choices_routed(
     return choices
 
 
+def load_eval_policy_scorers(
+    scorer_path: Path,
+    primary_scorer: RuntimeResolverLearnedScorerLike,
+) -> dict[str, RuntimeResolverLearnedScorerLike]:
+    """Load sibling general/profile scorers for routed evaluation.
+
+    The main evaluator receives one --scorer path. For deployment parity we also
+    look next to that artifact for canonical learned_quality_v3.json and
+    learned_quality_v3_profile.json, then evaluate a routed policy that uses the
+    general scorer for normal faces and the profile scorer for profile/occlusion
+    faces.
+    """
+    loaded: dict[str, RuntimeResolverLearnedScorerLike] = {}
+    primary_policy = scorer_policy_key(primary_scorer)
+    if primary_policy in LEARNED_POLICIES:
+        loaded[primary_policy] = primary_scorer
+
+    roots = [
+        scorer_path.parent,
+        scorer_path.parent / "scorers",
+        scorer_path.parent.parent / "scorers",
+    ]
+    for policy in (SCORER_POLICY_GENERAL, SCORER_POLICY_PROFILE):
+        if policy in loaded:
+            continue
+        candidates = []
+        for root in roots:
+            candidates.append(root / f"{policy}.json")
+        for candidate in dict.fromkeys(candidates):
+            if not candidate.is_file():
+                continue
+            try:
+                scorer = load_runtime_resolver_scorer(candidate)
+                assert_lower_score_is_better(scorer)
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if scorer_policy_key(scorer) == policy:
+                loaded[policy] = scorer
+                break
+    return loaded
+
+
+def score_profile_policy_matrix(
+    contexts: T.Sequence[SampleCandidateContext],
+    *,
+    scorers_by_policy: T.Mapping[str, RuntimeResolverLearnedScorerLike],
+    primary_policy: str,
+    primary_choices: T.Mapping[str, str],
+    risk_floor_for_safe_fallback: float,
+    safe_fallback_min_delta: float,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Return choices for general, profile, routed, oracle, and best_single."""
+    choices: dict[str, dict[str, str]] = {}
+
+    for policy in (SCORER_POLICY_GENERAL, SCORER_POLICY_PROFILE):
+        scorer = scorers_by_policy.get(policy)
+        if scorer is None:
+            continue
+        if policy == primary_policy:
+            choices[policy] = dict(primary_choices)
+            continue
+
+        policy_progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None
+        if progress is not None:
+
+            def policy_progress(
+                values: T.Sequence[T.Any],
+                desc: str,
+                *,
+                _policy: str = policy,
+            ) -> T.Iterable[T.Any]:
+                return progress(values, f"{desc} [{_policy}]")
+
+        choices[policy] = score_policy_choices(
+            contexts,
+            scorer,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+            progress=policy_progress,
+        )
+
+    if SCORER_POLICY_GENERAL in scorers_by_policy and SCORER_POLICY_PROFILE in scorers_by_policy:
+        routed_progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None
+        if progress is not None:
+
+            def routed_progress(
+                values: T.Sequence[T.Any],
+                desc: str,
+            ) -> T.Iterable[T.Any]:
+                return progress(values, f"{desc} [{ROUTED_GENERAL_PROFILE_POLICY}]")
+
+        choices[ROUTED_GENERAL_PROFILE_POLICY] = score_policy_choices_routed(
+            contexts,
+            scorers_by_policy,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+            progress=routed_progress,
+        )
+    elif primary_policy in choices:
+        choices[ROUTED_GENERAL_PROFILE_POLICY] = dict(choices[primary_policy])
+    else:
+        choices[ROUTED_GENERAL_PROFILE_POLICY] = dict(primary_choices)
+
+    oracle_choices = {
+        context.sample_id: context.oracle
+        for context in contexts
+        if context.oracle in context.nme_by_candidate
+    }
+    choices["oracle"] = oracle_choices
+
+    best_name, _best_summary = best_single(
+        contexts, sorted({name for context in contexts for name in context.nme_by_candidate})
+    )
+    choices["best_single"] = fixed_candidate_choices(contexts, best_name)
+    return choices
+
+
+def _choice_metric_payload(
+    context: SampleCandidateContext,
+    choices: T.Mapping[str, T.Mapping[str, str]],
+) -> dict[str, T.Any]:
+    payload: dict[str, T.Any] = {}
+    oracle = context.oracle
+    oracle_nme = float(context.nme_by_candidate.get(oracle, 0.0))
+    for policy_name, policy_choices in choices.items():
+        chosen = policy_choices.get(context.sample_id, "")
+        payload[f"{policy_name}_choice"] = chosen
+        payload[f"{policy_name}_nme"] = context.nme_by_candidate.get(chosen) if chosen else None
+        payload[f"{policy_name}_failure"] = (
+            int(context.failure_by_candidate.get(chosen, False)) if chosen else None
+        )
+        payload[f"{policy_name}_gap_vs_oracle"] = (
+            None
+            if not chosen or chosen not in context.nme_by_candidate
+            else float(context.nme_by_candidate[chosen]) - oracle_nme
+        )
+    return payload
+
+
+def write_profile_scorer_outputs(
+    *,
+    contexts: T.Sequence[SampleCandidateContext],
+    policy_choices: T.Mapping[str, T.Mapping[str, str]],
+    source_by_sample_id: T.Mapping[str, str],
+    output_dir: Path,
+    failure_threshold: float,
+    worst_sample_count: int,
+) -> dict[str, T.Any]:
+    """Write profile-specific general/profile/routed/oracle/best_single reports."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    profile_contexts = [
+        context for context in contexts if is_profile_or_occlusion_context(context)
+    ]
+
+    metrics_by_policy: dict[str, T.Any] = {}
+    for policy_name, choices in policy_choices.items():
+        metrics_by_policy[policy_name] = {
+            "overall": policy_summary(
+                contexts,
+                choices,
+                source_by_sample_id=source_by_sample_id,
+            ),
+            "profile_report": profile_scorer_report(
+                contexts,
+                choices,
+                source_by_sample_id=source_by_sample_id,
+            ),
+        }
+
+    metrics_payload = {
+        "policy_order": list(policy_choices),
+        "routed_policy": ROUTED_GENERAL_PROFILE_POLICY,
+        "profile_route_context_count": len(profile_contexts),
+        "policies": metrics_by_policy,
+    }
+
+    metrics_path = output_dir / PROFILE_SCORER_METRICS_JSON
+    metrics_path.write_text(
+        json.dumps(metrics_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    policy_report_path = output_dir / PROFILE_SCORER_POLICY_REPORT_JSON
+    policy_report_path.write_text(
+        json.dumps(
+            {
+                "routed_policy": ROUTED_GENERAL_PROFILE_POLICY,
+                "general_policy": SCORER_POLICY_GENERAL,
+                "profile_policy": SCORER_POLICY_PROFILE,
+                "profile_route_context_count": len(profile_contexts),
+                "policy_metrics": metrics_by_policy,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    csv_path = output_dir / PROFILE_SCORER_POLICY_REPORT_CSV
+    fieldnames = [
+        "source",
+        "sample_id",
+        "dataset",
+        "condition",
+        "runtime_bucket",
+        "runtime_bucket_source",
+        "route",
+        "oracle",
+        "oracle_nme",
+        *[
+            field
+            for policy_name in policy_choices
+            for field in (
+                f"{policy_name}_choice",
+                f"{policy_name}_nme",
+                f"{policy_name}_failure",
+                f"{policy_name}_gap_vs_oracle",
+            )
+        ],
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for context in profile_contexts:
+            row = {
+                "source": context_source(context, source_by_sample_id),
+                "sample_id": context.sample_id,
+                "dataset": context.dataset,
+                "condition": context.condition,
+                "runtime_bucket": context.runtime_bucket,
+                "runtime_bucket_source": context.runtime_bucket_source,
+                "route": scorer_route_for_context(context),
+                "oracle": context.oracle,
+                "oracle_nme": context.nme_by_candidate.get(context.oracle),
+            }
+            row.update(_choice_metric_payload(context, policy_choices))
+            writer.writerow(row)
+
+    routed_choices = policy_choices.get(ROUTED_GENERAL_PROFILE_POLICY, {})
+    routed_profile_choices = {
+        context.sample_id: routed_choices[context.sample_id]
+        for context in profile_contexts
+        if context.sample_id in routed_choices
+    }
+    region_dir = output_dir / PROFILE_REGION_REPORT_DIR
+    region_dir.mkdir(parents=True, exist_ok=True)
+    region_summary = write_region_reports(
+        contexts=profile_contexts,
+        choices=routed_profile_choices,
+        source_by_sample_id=source_by_sample_id,
+        output_dir=region_dir,
+        failure_threshold=failure_threshold,
+        worst_sample_count=worst_sample_count,
+    )
+    region_payload = {
+        "policy": ROUTED_GENERAL_PROFILE_POLICY,
+        "profile_route_context_count": len(profile_contexts),
+        "region_output_dir": str(region_dir),
+        **region_summary,
+    }
+    region_path = output_dir / PROFILE_REGION_REPORT_JSON
+    region_path.write_text(
+        json.dumps(region_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    return {
+        "metrics_json": str(metrics_path),
+        "policy_report_json": str(policy_report_path),
+        "policy_report_csv": str(csv_path),
+        "region_report_json": str(region_path),
+        "region_output_dir": str(region_dir),
+        "profile_route_context_count": len(profile_contexts),
+        "routed_policy": ROUTED_GENERAL_PROFILE_POLICY,
+        "available_policies": list(policy_choices),
+        "metrics": metrics_payload,
+        "region_report": region_payload,
+    }
+
+
 def load_installed_policy_scorers(
     scorer_dir: Path | None,
 ) -> tuple[str, dict[str, RuntimeResolverLearnedScorerLike], str]:
@@ -2314,6 +2602,31 @@ def evaluate_runtime_resolver_scorer(
 
     report_extra_scorer_choices = dict(extra_scorer_choices)
 
+    profile_policy_scorers = load_eval_policy_scorers(scorer_path, scorer)
+    profile_policy_choices = score_profile_policy_matrix(
+        contexts,
+        scorers_by_policy=profile_policy_scorers,
+        primary_policy=primary_scorer_policy,
+        primary_choices=scorer_choices,
+        risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+        safe_fallback_min_delta=safe_fallback_min_delta,
+        progress=progress,
+    )
+    for policy_name, choices in profile_policy_choices.items():
+        if policy_name not in report_extra_scorer_choices and policy_name not in {
+            "oracle",
+            "best_single",
+        }:
+            report_extra_scorer_choices[policy_name] = choices
+    profile_scorer_outputs = write_profile_scorer_outputs(
+        contexts=contexts,
+        policy_choices=profile_policy_choices,
+        source_by_sample_id=source_by_sample_id,
+        output_dir=output_dir,
+        failure_threshold=failure_threshold,
+        worst_sample_count=worst_sample_count,
+    )
+
     installed_policy, installed_scorers, installed_status = load_installed_policy_scorers(
         installed_scorer_dir
     )
@@ -2670,6 +2983,8 @@ def evaluate_runtime_resolver_scorer(
             "batched_policy_scoring": True,
         },
         "primary_scorer_policy": primary_scorer_policy,
+        "profile_scorer_outputs": profile_scorer_outputs,
+        "profile_scorer_policy_report": profile_scorer_outputs.get("metrics", {}),
         "scorer_model_type": scorer.model_type,
         "scorer_target": scorer.target,
         "promoted_scorer_version": scorer.version,
@@ -2748,6 +3063,10 @@ def evaluate_runtime_resolver_scorer(
     }
     report["artifacts"] = {
         "scorer_path": str(scorer_path),
+        "profile_scorer_metrics_json": profile_scorer_outputs.get("metrics_json", ""),
+        "profile_scorer_policy_report_json": profile_scorer_outputs.get("policy_report_json", ""),
+        "profile_scorer_policy_report_csv": profile_scorer_outputs.get("policy_report_csv", ""),
+        "profile_region_report_json": profile_scorer_outputs.get("region_report_json", ""),
     }
     report["primary_scorer"] = {
         "label": primary_scorer_policy,
