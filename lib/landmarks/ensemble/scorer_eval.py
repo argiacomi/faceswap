@@ -17,6 +17,12 @@ from lib.landmarks.ensemble.production_artifacts import (
     ProductionBundleError,
     load_production_bundle,
 )
+from lib.landmarks.ensemble.profile_routing import (
+    SCORER_POLICY_GENERAL,
+    SCORER_POLICY_PROFILE,
+    is_profile_or_occlusion_context,
+    scorer_route_for_context,
+)
 from lib.landmarks.ensemble.runtime_resolver import (
     _hard_slice_safe_single_candidate,
     _high_risk_safe_fallback_candidate,
@@ -334,7 +340,21 @@ def choose_scorer(
         and not _row_bool(_v3_row_value(v3_rows[name], "hard_invalid_v3", False))
     }
     if v3_valid_selectable:
+        # Stage 1: a v3 valid/rankable candidate exists -> only those are
+        # selectable, so a hard-invalid candidate is never chosen.
         selectable = v3_valid_selectable
+    elif is_profile_or_occlusion_context(context):
+        # Stage 1 (profile route): no valid/rankable candidate. Prefer
+        # profile-soft-valid candidates when available, else mark the group as
+        # a degraded fallback instead of treating it as an ordinary choice.
+        soft_valid = _profile_soft_valid_selectable(context, selectable, v3_rows)
+        if soft_valid:
+            selectable = soft_valid
+            fallback_used = True
+            fallback_reason = "profile_soft_validity_fallback"
+        else:
+            fallback_used = True
+            fallback_reason = "profile_all_invalid_degraded_fallback"
     chosen = min(selectable, key=lambda name: (scores.get(name, float("inf")), name))
     candidates_by_name = {candidate.name: candidate for candidate in context.candidates}
     hard_slice_fallback = _hard_slice_safe_single_candidate(
@@ -377,6 +397,29 @@ def choose_scorer(
         fallback_used = True
         fallback_reason = "scorer_high_risk_safe_fallback"
     return chosen, fallback_used, fallback_reason, rejected_candidate, replacement_candidate
+
+
+def _profile_soft_valid_selectable(
+    context: T.Any,
+    selectable: T.Collection[str],
+    v3_rows: T.Mapping[str, T.Any],
+) -> set[str]:
+    """Return profile-soft-valid selectable candidates for a profile route.
+
+    Reached only when no candidate is both rankable and non-hard-invalid. On a
+    profile/occlusion route a candidate that is merely not ``hard_invalid_v3``
+    (topology-soft, even if not strictly rankable) is preferable to a
+    hard-invalid one. Returns an empty set when every candidate is hard-invalid,
+    in which case the caller marks the group as a degraded fallback rather than
+    selecting a hard-invalid candidate.
+    """
+    del context  # reserved for future profile-aware soft-validity signals
+    return {
+        name
+        for name in selectable
+        if name in v3_rows
+        and not _row_bool(_v3_row_value(v3_rows[name], "hard_invalid_v3", False))
+    }
 
 
 def _v3_row_value(row: T.Any, name: str, default: T.Any = None) -> T.Any:
@@ -431,6 +474,10 @@ def _transform_summary_empty() -> dict[str, T.Any]:
         "single_valid_group_count_v3": 0,
         "transform_group_count_v3": 0,
         "transform_eval_count_v3": 0,
+        "validity_stage_valid_rankable_count_v3": 0,
+        "validity_stage_profile_soft_valid_count_v3": 0,
+        "validity_stage_all_invalid_count_v3": 0,
+        "profile_all_invalid_degraded_fallback_count": 0,
     }
 
 
@@ -451,6 +498,10 @@ def transform_policy_summary_v3(
     single_valid_count = 0
     eval_count = 0
     valid_eval_count = 0
+    validity_stage_valid_rankable_count = 0
+    validity_stage_profile_soft_valid_count = 0
+    validity_stage_all_invalid_count = 0
+    profile_all_invalid_degraded_fallback_count = 0
     for context in contexts:
         if context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED:
             continue
@@ -460,6 +511,21 @@ def transform_policy_summary_v3(
         eval_count += 1
         selected = choices.get(context.sample_id, "")
         selected_row = rows.get(selected)
+        # Validity-stage accounting (Stage 1): valid/rankable vs profile-soft
+        # vs all-invalid, kept separate so all-invalid candidate-coverage gaps
+        # are not conflated with avoidable scorer mistakes.
+        has_soft_valid = any(
+            not _row_bool(_v3_row_value(row, "hard_invalid_v3", False)) for row in rows.values()
+        )
+        is_profile_route = is_profile_or_occlusion_context(context)
+        if not zero_valid:
+            validity_stage_valid_rankable_count += 1
+        elif has_soft_valid and is_profile_route:
+            validity_stage_profile_soft_valid_count += 1
+        else:
+            validity_stage_all_invalid_count += 1
+            if is_profile_route:
+                profile_all_invalid_degraded_fallback_count += 1
         if zero_valid:
             zero_valid_count += 1
         if single_valid:
@@ -502,7 +568,67 @@ def transform_policy_summary_v3(
         "single_valid_group_count_v3": single_valid_count,
         "transform_group_count_v3": eval_count,
         "transform_eval_count_v3": valid_eval_count,
+        "validity_stage_valid_rankable_count_v3": validity_stage_valid_rankable_count,
+        "validity_stage_profile_soft_valid_count_v3": validity_stage_profile_soft_valid_count,
+        "validity_stage_all_invalid_count_v3": validity_stage_all_invalid_count,
+        "profile_all_invalid_degraded_fallback_count": (
+            profile_all_invalid_degraded_fallback_count
+        ),
     }
+
+
+def _profile_report_bucket(context: T.Any) -> str:
+    """Return the profile report bucket for one context."""
+    tags = _condition_tags(context)
+    is_profile = any(
+        "profile" in tag or "large_yaw" in tag or "yaw_" in tag or "rolled" in tag for tag in tags
+    )
+    is_occlusion = any("occlusion" in tag or "occluded" in tag for tag in tags)
+    if is_profile and is_occlusion:
+        return "profile_occlusion"
+    if is_profile:
+        return "profile"
+    if is_occlusion:
+        return "occlusion"
+    return "anchor"
+
+
+PROFILE_REPORT_BUCKETS: tuple[str, ...] = ("profile_occlusion", "profile", "occlusion", "anchor")
+
+
+def profile_scorer_report(
+    contexts: T.Sequence[T.Any],
+    choices: T.Mapping[str, str],
+    *,
+    source_by_sample_id: T.Mapping[str, str],
+) -> dict[str, T.Any]:
+    """Return profile-specific scorer metrics split by profile/occlusion bucket.
+
+    Separates ``profile_occlusion``, ``profile``, ``occlusion``, and ``anchor``
+    so profile/occlusion quality is evaluated directly rather than hidden in a
+    global average. Reuses :func:`transform_policy_summary_v3` per bucket so the
+    validity-stage and transform-regret accounting matches the headline policy
+    report.
+    """
+    grouped: dict[str, list[T.Any]] = defaultdict(list)
+    for context in contexts:
+        grouped[_profile_report_bucket(context)].append(context)
+
+    report: dict[str, T.Any] = {"buckets": {}}
+    for bucket in PROFILE_REPORT_BUCKETS:
+        report["buckets"][bucket] = transform_policy_summary_v3(
+            grouped.get(bucket, []),
+            choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+    profile_route_contexts = [c for c in contexts if is_profile_or_occlusion_context(c)]
+    report["profile_route"] = transform_policy_summary_v3(
+        profile_route_contexts,
+        choices,
+        source_by_sample_id=source_by_sample_id,
+    )
+    report["profile_route_context_count"] = len(profile_route_contexts)
+    return report
 
 
 def policy_summary(
@@ -1517,6 +1643,46 @@ def score_policy_choices(
     choices: dict[str, str] = {}
     iterator = progress(contexts, "Score scorer policy") if progress is not None else contexts
     for context in iterator:
+        context_rows = _context_rows_for_eval(context)
+        scores = _score_context_rows(scorer, context_rows)
+        choices[context.sample_id] = choose_scorer(
+            context,
+            scores,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+        )[0]
+    return choices
+
+
+def score_policy_choices_routed(
+    contexts: T.Sequence[SampleCandidateContext],
+    scorers_by_policy: T.Mapping[str, RuntimeResolverLearnedScorerLike],
+    *,
+    risk_floor_for_safe_fallback: float,
+    safe_fallback_min_delta: float,
+    progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
+) -> dict[str, str]:
+    """Choose one candidate per sample, routing each context to its scorer.
+
+    Profile/occlusion contexts are scored by ``learned_quality_v3_profile`` when
+    it is installed; all other contexts (and profile contexts when no profile
+    specialist is present) fall back to the general ``learned_quality_v3``
+    scorer, so behaviour is identical to :func:`score_policy_choices` when only
+    one policy is installed.
+    """
+    general = scorers_by_policy.get(SCORER_POLICY_GENERAL)
+    profile = scorers_by_policy.get(SCORER_POLICY_PROFILE)
+    if general is None and profile is None:
+        raise ValueError("at least one runtime scorer policy is required for routed scoring")
+    choices: dict[str, str] = {}
+    iterator = (
+        progress(contexts, "Score routed scorer policy") if progress is not None else contexts
+    )
+    for context in iterator:
+        route = scorer_route_for_context(context)
+        scorer = profile if route == SCORER_POLICY_PROFILE and profile is not None else general
+        if scorer is None:
+            scorer = profile
         context_rows = _context_rows_for_eval(context)
         scores = _score_context_rows(scorer, context_rows)
         choices[context.sample_id] = choose_scorer(

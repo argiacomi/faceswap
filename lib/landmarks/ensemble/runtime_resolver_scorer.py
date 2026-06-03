@@ -49,6 +49,13 @@ def sigmoid(value: float) -> float:
     return z / (1.0 + z)
 
 
+#: Scorer policies the runtime loader accepts. The profile specialist (#218)
+#: shares the v3 LambdaRank target/semantics and differs only by routed scope.
+ACCEPTED_RUNTIME_POLICIES: frozenset[str] = frozenset(
+    {"learned_quality_v3", "learned_quality_v3_profile"}
+)
+
+
 @dataclass(frozen=True)
 class RuntimeResolverLearnedScorer:
     """Loaded learned-quality v3 LambdaRank scorer artifact."""
@@ -76,8 +83,14 @@ class RuntimeResolverLearnedScorer:
     def __post_init__(self) -> None:
         if self.model_type != MODEL_TYPE_LIGHTGBM_LAMBDARANK:
             raise ValueError(f"unsupported runtime scorer model_type {self.model_type!r}")
-        if self.version != "learned_quality_v3" or self.runtime_policy != "learned_quality_v3":
-            raise ValueError("runtime scorer loader only accepts learned_quality_v3 artifacts")
+        if (
+            self.version not in ACCEPTED_RUNTIME_POLICIES
+            or self.runtime_policy not in ACCEPTED_RUNTIME_POLICIES
+        ):
+            raise ValueError(
+                "runtime scorer loader only accepts learned_quality_v3 / "
+                "learned_quality_v3_profile artifacts"
+            )
         if self.target != TARGET_TRANSFORM_REGRET_V3:
             raise ValueError(
                 "runtime scorer loader only accepts transform_alignment_regret_v3 artifacts"

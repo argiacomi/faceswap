@@ -23,6 +23,10 @@ from lib.landmarks.core.rejection import weighted_median
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.hard_condition_taxonomy import applicable_weight_buckets
 from lib.landmarks.ensemble.production_artifacts import LEARNED_POLICIES
+from lib.landmarks.ensemble.profile_features import (
+    profile_candidate_features,
+    profile_side_from_context,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     candidate_scores as score_runtime_candidates,
 )
@@ -636,6 +640,8 @@ def _candidate_extra_features(
     condition: str = "",
     runtime_bucket: str = "",
     runtime_bucket_source: str = "",
+    yaw_estimate: float | None = None,
+    roll_estimate: float | None = None,
 ) -> dict[str, dict[str, float]]:
     """Return full-candidate-set features used by learned quality scoring."""
     diag = _bbox_diag(reference_bbox)
@@ -710,7 +716,50 @@ def _candidate_extra_features(
                 source_is_derived_no_image
             ),
         }
+
+    _merge_profile_features(
+        payload,
+        candidates,
+        metrics,
+        diag=diag,
+        condition=condition,
+        runtime_bucket=runtime_bucket,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
+    )
     return payload
+
+
+def _merge_profile_features(
+    payload: dict[str, dict[str, float]],
+    candidates: T.Sequence[CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+    *,
+    diag: float | None,
+    condition: str,
+    runtime_bucket: str,
+    yaw_estimate: float | None,
+    roll_estimate: float | None,
+) -> None:
+    """Merge profile/occlusion visible-side features into the feature payload."""
+    blob = f"{condition} {runtime_bucket}".lower()
+    side = profile_side_from_context(
+        runtime_bucket=runtime_bucket, condition=condition, yaw_estimate=yaw_estimate
+    )
+    has_occlusion = "occlusion" in blob or "occluded" in blob
+    profile_features = profile_candidate_features(
+        candidates,
+        metrics,
+        diag=diag,
+        side=side,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
+        has_occlusion=has_occlusion,
+        has_single_eye_visible="single_eye" in blob,
+        has_mouth_or_jaw_occluded="mouth_or_jaw" in blob or "mouth_jaw" in blob,
+    )
+    for name, features in profile_features.items():
+        payload.setdefault(name, {}).update(features)
 
 
 def _shape_reasons(bucket: str, name: str, metric: CandidateMetrics) -> tuple[str, ...]:
@@ -797,7 +846,10 @@ def _fuse_strategy(
     method = strategy_outlier_method(canonical)
     threshold = config.outlier_threshold if strategy_uses_threshold(canonical) else 3.5
     if not strategy_requires_weights(canonical):
-        return plain_average(items, outlier_method=method, outlier_threshold=threshold).points
+        return T.cast(  # type: ignore[redundant-cast]
+            "np.ndarray",
+            plain_average(items, outlier_method=method, outlier_threshold=threshold).points,
+        )
     if canonical == "region_weighted":
         return _fuse_region_weighted(singles, config)
     models = tuple(candidate.name for candidate in singles)
@@ -815,13 +867,18 @@ def _fuse_strategy(
             model_count=stack.shape[0],
             landmark_count=stack.shape[1],
         )
-        return weighted_median(stack, normalized).astype("float32", copy=False)
-    return static_weighted(
-        items,
-        matrix,
-        outlier_method=method,
-        outlier_threshold=threshold,
-    ).points
+        return T.cast(  # type: ignore[redundant-cast]
+            "np.ndarray", weighted_median(stack, normalized).astype("float32", copy=False)
+        )
+    return T.cast(  # type: ignore[redundant-cast]
+        "np.ndarray",
+        static_weighted(
+            items,
+            matrix,
+            outlier_method=method,
+            outlier_threshold=threshold,
+        ).points,
+    )
 
 
 def build_candidates(
@@ -852,7 +909,7 @@ def build_candidates(
         candidates.append(
             CandidateRecord(
                 name=strategy,
-                landmarks=landmarks.astype("float32", copy=False),
+                landmarks=landmarks,
                 is_fusion=True,
                 contributing_models=tuple(candidate.name for candidate in singles),
             )
@@ -934,7 +991,7 @@ def append_bucket_weight_candidates(
             continue
         record = CandidateRecord(
             name=name,
-            landmarks=landmarks.astype("float32", copy=False),
+            landmarks=landmarks,
             is_fusion=True,
             contributing_models=contributing,
         )
@@ -1009,7 +1066,7 @@ def append_region_weight_candidate(
         return
     record = CandidateRecord(
         name=name,
-        landmarks=landmarks.astype("float32", copy=False),
+        landmarks=landmarks,
         is_fusion=True,
         contributing_models=tuple(candidate.name for candidate in singles),
     )
@@ -1968,6 +2025,8 @@ def resolve_runtime(
         condition=bucket,
         runtime_bucket=bucket,
         runtime_bucket_source=runtime_bucket_source,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
     )
 
     available = {candidate.name for candidate in candidates}
@@ -2295,7 +2354,7 @@ def resolve_runtime(
     )
     return RuntimeResolverResult(
         selected_candidate=selected,
-        landmarks=by_name[selected].landmarks.astype("float32", copy=False),
+        landmarks=by_name[selected].landmarks,
         metadata=metadata,
     )
 

@@ -17,6 +17,7 @@ from lib.landmarks.datasets.hard_negative_mining import (
     DEFAULT_HARD_NEGATIVE_WEIGHT,
     MAX_HARD_NEGATIVE_WEIGHT,
 )
+from lib.landmarks.ensemble.profile_routing import is_profile_or_occlusion_context
 from lib.landmarks.ensemble.runtime_features import (
     RUNTIME_FEATURE_CONTRACT_VERSION,
     runtime_feature_order,
@@ -54,8 +55,27 @@ from lib.landmarks.pipeline_conventions import (
 SCORER_ARTIFACT = "runtime_resolver_scorer.json"
 SCORER_V3_ARTIFACT = "runtime_resolver_scorer_v3.json"
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
+SCORER_VERSION_LEARNED_QUALITY_V3_PROFILE = "learned_quality_v3_profile"
+SCORER_V3_PROFILE_ARTIFACT = "runtime_resolver_scorer_v3_profile.json"
 ACTIVE_SCORER_VERSION = SCORER_VERSION_LEARNED_QUALITY_V3
 ACTIVE_SCORER_TARGET = TARGET_TRANSFORM_REGRET_V3
+
+
+def is_profile_specialist_row(row: CandidateQualityRow) -> bool:
+    """Return ``True`` when a row belongs to the profile/occlusion specialist scope."""
+    return bool(is_profile_or_occlusion_context(row))
+
+
+def filter_profile_specialist_rows(rows: T.Sequence[TaggedRow]) -> list[TaggedRow]:
+    """Return only the rows that fall on the profile/occlusion route.
+
+    Used to train the ``learned_quality_v3_profile`` specialist on profile,
+    large-yaw, rolled, and occlusion contexts without disturbing the general
+    scorer's normal/frontal/intermediate scope.
+    """
+    return [tagged for tagged in rows if is_profile_specialist_row(tagged[0])]
+
+
 SCORERS_DIR = "scorers"
 SCORER_SUITE_METRICS_JSON = "metrics.json"
 SCORER_SUITE_SENTINEL_JSON = ".scorer_training_complete.json"
@@ -194,7 +214,8 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
 
 def feature_order(rows: T.Sequence[CandidateQualityRow]) -> tuple[str, ...]:
     """Return stable runtime feature order for scorer training."""
-    return runtime_feature_order(row.feature_values for row in rows)
+    ordered: tuple[str, ...] = runtime_feature_order(row.feature_values for row in rows)
+    return ordered
 
 
 def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
@@ -246,9 +267,9 @@ def _hard_negative_multiplier(row: CandidateQualityRow) -> float:
     try:
         weight = float(row.hard_negative_weight)
     except (TypeError, ValueError):
-        return DEFAULT_HARD_NEGATIVE_WEIGHT
+        return float(DEFAULT_HARD_NEGATIVE_WEIGHT)
     if not math.isfinite(weight) or weight <= 0.0:
-        return DEFAULT_HARD_NEGATIVE_WEIGHT
+        return float(DEFAULT_HARD_NEGATIVE_WEIGHT)
     return weight
 
 

@@ -938,6 +938,8 @@ def build_sample_context(
         condition=condition,
         runtime_bucket=bucket_result.bucket,
         runtime_bucket_source=runtime_bucket_source,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
     )
 
     nme_by_candidate: dict[str, float] = {}

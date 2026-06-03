@@ -102,4 +102,49 @@ def write_scorer_policy_outputs(
             )
 
 
-__all__ = ["write_scorer_policy_outputs"]
+PROFILE_SCORER_METRICS_JSON = "profile_scorer_metrics.json"
+PROFILE_REGION_REPORT_CSV = "profile_region_report.csv"
+
+
+def write_profile_scorer_report(
+    *,
+    report: T.Mapping[str, T.Any],
+    output_dir: Path,
+) -> Path:
+    """Write the profile-specific scorer metrics and per-bucket region report.
+
+    ``report`` is the payload from
+    :func:`lib.landmarks.ensemble.scorer_eval.profile_scorer_report`. Writes
+    ``profile_scorer_metrics.json`` (full payload) plus a flat
+    ``profile_region_report.csv`` with one row per profile bucket.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = output_dir / PROFILE_SCORER_METRICS_JSON
+    write_json(metrics_path, dict(report))
+
+    buckets = report.get("buckets", {})
+    fieldnames = [
+        "bucket",
+        "transform_group_count_v3",
+        "mean_transform_regret_v3",
+        "p95_transform_regret_v3",
+        "avoidable_invalid_selection_rate_v3",
+        "all_invalid_selected_rate_v3",
+        "validity_stage_valid_rankable_count_v3",
+        "validity_stage_profile_soft_valid_count_v3",
+        "validity_stage_all_invalid_count_v3",
+        "profile_all_invalid_degraded_fallback_count",
+    ]
+    with (output_dir / PROFILE_REGION_REPORT_CSV).open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for bucket, summary in buckets.items():
+            row = {"bucket": bucket}
+            row.update({key: summary.get(key, 0) for key in fieldnames[1:]})
+            writer.writerow(row)
+    return metrics_path
+
+
+__all__ = ["write_profile_scorer_report", "write_scorer_policy_outputs"]

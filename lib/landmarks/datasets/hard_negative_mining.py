@@ -72,10 +72,10 @@ BUCKET_WEIGHT: dict[str, float] = {
 }
 """Suggested scorer training weights per hard-negative bucket."""
 
-DEFAULT_HARD_NEGATIVE_WEIGHT = 1.0
+DEFAULT_HARD_NEGATIVE_WEIGHT: float = 1.0
 """Weight used for any sample without a mined hard-negative bucket."""
 
-MAX_HARD_NEGATIVE_WEIGHT = 5.0
+MAX_HARD_NEGATIVE_WEIGHT: float = 5.0
 """Cap applied to combined hard-negative weighting to avoid training instability."""
 
 

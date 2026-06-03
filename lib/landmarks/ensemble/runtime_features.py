@@ -45,6 +45,28 @@ RUNTIME_PREFERRED_FEATURE_ORDER: tuple[str, ...] = (
     "max_disagreement_px",
     # Veto / validity features.
     "has_geometry_veto",
+    # Profile/occlusion visible-side features (#218). Emitted only for
+    # profile/occlusion contexts; frontal anchors default these to 0.0.
+    "profile_yaw_abs",
+    "profile_yaw_signed",
+    "profile_roll_abs",
+    "profile_is_left",
+    "profile_is_right",
+    "profile_is_large_yaw",
+    "profile_is_rolled",
+    "profile_has_occlusion",
+    "profile_has_single_eye_visible",
+    "profile_has_mouth_or_jaw_occluded",
+    "visible_side_consensus_distance",
+    "visible_side_candidate_spread",
+    "visible_eye_consensus_distance",
+    "visible_brow_consensus_distance",
+    "visible_mouth_corner_consensus_distance",
+    "nose_bridge_consistency",
+    "mouth_corner_asymmetry",
+    "occluded_side_spread",
+    "occluded_side_outlier_rate",
+    "candidate_profile_validity_score",
 )
 
 
