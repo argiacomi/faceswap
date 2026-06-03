@@ -14,7 +14,8 @@ import tools.landmarks.run_landmark_resolver_pipeline as pipeline
 
 
 class FakeTqdm:
-    instances: list["FakeTqdm"] = []
+    instances: list[FakeTqdm] = []
+    messages: list[str] = []
 
     def __init__(self, *, total: int, desc: str, unit: str, leave: bool) -> None:
         self.total = total
@@ -32,6 +33,10 @@ class FakeTqdm:
 
     def close(self) -> None:
         self.closed = True
+
+    @staticmethod
+    def write(value: str) -> None:
+        FakeTqdm.messages.append(value)
 
 
 def _progress_args(tmp_path: Path) -> argparse.Namespace:
@@ -67,6 +72,7 @@ def test_tqdm_progress_bar_tracks_inline_and_reused_manifest_stages(
     )
     seen: list[str] = []
     FakeTqdm.instances.clear()
+    FakeTqdm.messages.clear()
     progress_mod.PipelineProgress._BAR = None
 
     fake_tqdm_module = types.ModuleType("tqdm")
