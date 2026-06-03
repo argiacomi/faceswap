@@ -196,47 +196,42 @@ def test_misaligned_predicate_for_model_uses_editable_faces() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _dummy_landmarks() -> tuple[tuple[float, float], ...]:
-    return tuple((0.0, 0.0) for _ in range(68))
+def _grid_landmarks(
+    offset_x: float = 0.0, offset_y: float = 0.0
+) -> tuple[tuple[float, float], ...]:
+    """Return 68 spread-out source-pixel landmarks, optionally translated as a whole.
+
+    The cloud spans ~84x96 px (diagonal ~128), so a uniform translation is a realistic
+    whole-face position jump rather than a degenerate point.
+    """
+    return tuple(
+        (20.0 + (i % 8) * 12.0 + offset_x, 20.0 + (i // 8) * 12.0 + offset_y) for i in range(68)
+    )
 
 
-def test_neighbor_outlier_flags_current_face_vs_previous_and_next(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A frame is flagged when a face differs from the average of adjacent faces."""
-    import numpy as np
-
+def test_neighbor_outlier_flags_current_face_vs_previous_and_next() -> None:
+    """A face that jumps position relative to its adjacent frames is flagged."""
     from tools.manual import frame_filter as _frame_filter
 
     model = ManualEditableAlignments()
-    model.add_face(0, (0.0, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
-    model.add_face(1, (0.3, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
-    model.add_face(2, (0.0, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
-
-    def _fake_normalized(face, *, size=100):
-        return np.full((68, 2), float(face.bbox[0]), dtype=np.float32)
-
-    monkeypatch.setattr(_frame_filter, "_normalized_landmarks_for_face", _fake_normalized)
+    model.add_face(0, (20.0, 20.0, 110.0, 110.0), landmarks=_grid_landmarks())
+    # Frame 1's face jumps ~40px (a third of its size) off the neighbours' position.
+    model.add_face(1, (60.0, 20.0, 110.0, 110.0), landmarks=_grid_landmarks(offset_x=40.0))
+    model.add_face(2, (20.0, 20.0, 110.0, 110.0), landmarks=_grid_landmarks())
 
     assert _frame_filter.frame_neighbor_landmark_outlier_from_provider(model.faces, 1, 10) is True
     assert _frame_filter.neighbor_outlier_predicate_for_model(model, 10)(1) is True
+    # Stable frames whose neighbours interpolate their position are not flagged.
+    assert _frame_filter.neighbor_outlier_predicate_for_model(model, 10)(0) is False
 
 
-def test_neighbor_outlier_requires_adjacent_faces(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_neighbor_outlier_requires_adjacent_faces() -> None:
     """Edge frames without both neighbors are not treated as outliers."""
-    import numpy as np
-
     from tools.manual import frame_filter as _frame_filter
 
     model = ManualEditableAlignments()
-    model.add_face(0, (0.3, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
-    model.add_face(1, (0.0, 0.0, 10.0, 10.0), landmarks=_dummy_landmarks())
-
-    monkeypatch.setattr(
-        _frame_filter,
-        "_normalized_landmarks_for_face",
-        lambda face, *, size=100: np.full((68, 2), float(face.bbox[0]), dtype=np.float32),
-    )
+    model.add_face(0, (60.0, 20.0, 110.0, 110.0), landmarks=_grid_landmarks(offset_x=40.0))
+    model.add_face(1, (20.0, 20.0, 110.0, 110.0), landmarks=_grid_landmarks())
 
     assert _frame_filter.frame_neighbor_landmark_outlier_from_provider(model.faces, 0, 10) is False
 
@@ -250,7 +245,7 @@ def test_landmarks_outside_thumbnail_predicate(monkeypatch: pytest.MonkeyPatch) 
     face = EditableFace(
         face_index=0,
         bbox=(0.0, 0.0, 10.0, 10.0),
-        landmarks=_dummy_landmarks(),
+        landmarks=_grid_landmarks(),
     )
     monkeypatch.setattr(
         _frame_filter,
@@ -282,3 +277,130 @@ def test_new_filter_modes_use_supplied_predicates() -> None:
         "Landmarks Outside Thumbnail",
         thumbnail_outlier_predicate=lambda idx: idx == 2,
     ) == (2,)
+
+
+# ---------------------------------------------------------------------------
+# Real DetectedFace path: reuse the cached AlignedFace (fast) and flag outliers
+# ---------------------------------------------------------------------------
+
+
+def _stable_landmarks() -> object:
+    """Return a realistic, roughly frontal 68-point landmark array."""
+    import numpy as np
+
+    rng = np.random.default_rng(1234)
+    return (rng.random((68, 2)).astype("float32") * 120.0) + 40.0
+
+
+def _detected_face(landmarks: object) -> object:
+    """Build a manual-tool DetectedFace with its aligned face loaded, as the tool does."""
+    from lib.align.detected_face import DetectedFace
+
+    face = DetectedFace(landmarks_xy=landmarks)
+    face.load_aligned(None)
+    return face
+
+
+def test_thumbnail_landmarks_built_once_and_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The face-centered transform is built once per face, then served from the memo."""
+    from tools.manual import frame_filter as _frame_filter
+
+    face = _detected_face(_stable_landmarks())
+    first = _frame_filter._thumbnail_landmarks_for_face(face)
+    assert first is not None and first.shape == (68, 2)
+
+    # Any subsequent call for the same (unedited) face must hit the memo, not rebuild.
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("repeated calls must reuse the memoized landmarks, not rebuild")
+
+    monkeypatch.setattr(_frame_filter, "_aligned_landmarks_for_face", _boom)
+    second = _frame_filter._thumbnail_landmarks_for_face(face)
+    assert second is first
+
+
+def test_neighbor_outlier_flags_real_outlier_frame_only() -> None:
+    """A single bad frame between two stable frames is flagged; stable frames are not."""
+    import numpy as np
+
+    from tools.manual import frame_filter as _frame_filter
+
+    stable = _stable_landmarks()
+    # A whole-face position jump: the previous pose-normalized metric scored this as 0.0
+    # (translation invariant) and silently missed it; the raw-space metric catches it.
+    outlier = np.array(stable, dtype="float32") + 50.0
+
+    frames = {
+        0: (_detected_face(stable),),
+        1: (_detected_face(outlier),),
+        2: (_detected_face(stable),),
+    }
+    provider = lambda idx: frames.get(idx, ())  # noqa: E731
+
+    threshold_raw = 10  # shared Misaligned/Neighbor slider value -> 0.10 fraction of face size
+    assert _frame_filter.frame_neighbor_landmark_outlier_from_provider(provider, 1, threshold_raw)
+    # Edge frames lack both neighbours, so they are never treated as outliers.
+    assert not _frame_filter.frame_neighbor_landmark_outlier_from_provider(
+        provider, 0, threshold_raw
+    )
+    assert not _frame_filter.frame_neighbor_landmark_outlier_from_provider(
+        provider, 2, threshold_raw
+    )
+
+
+def test_thumbnail_landmarks_match_displayed_face_crop() -> None:
+    """The thumbnail check uses the same face-centered crop the viewer displays, not head."""
+    import numpy as np
+
+    from lib.align.aligned_face import AlignedFace
+    from tools.manual.frame_filter import (
+        THUMBNAIL_OUTSIDE_CENTERING,
+        THUMBNAIL_OUTSIDE_SIZE,
+        _thumbnail_landmarks_for_face,
+    )
+
+    assert THUMBNAIL_OUTSIDE_CENTERING == "face"
+    lms = _stable_landmarks()
+    points = _thumbnail_landmarks_for_face(_detected_face(lms))
+    assert points is not None
+
+    expected = np.asarray(
+        AlignedFace(lms, centering="face", size=THUMBNAIL_OUTSIDE_SIZE).landmarks,
+        dtype="float32",
+    )
+    assert np.allclose(points, expected)
+
+
+def _realistic_face(jaw_drop: float = 0.0) -> object:
+    """Return a realistic 68-point face (mean inner-51 + synthesized jaw), optionally dropping
+    the jaw line to simulate a blown-out detection whose landmarks leave the displayed crop."""
+    import numpy as np
+
+    from lib.align.constants import MEAN_FACE, LandmarkType
+
+    inner = np.asarray(MEAN_FACE[LandmarkType.LM_2D_51], dtype="float32")
+    inner = (inner - inner.mean(0)) * 150.0 + np.array([110.0, 110.0], dtype="float32")
+    cx, bot = inner[:, 0].mean(), inner[:, 1].max()
+    jaw = [
+        (
+            cx - np.cos((i / 16) * np.pi) * 150.0 * 0.62,
+            (bot + 10.0) + np.sin((i / 16) * np.pi) * 150.0 * 0.35,
+        )
+        for i in range(17)
+    ]
+    face = np.vstack([np.array(jaw, dtype="float32"), inner]).astype("float32")
+    if jaw_drop:
+        face[0:17, 1] += jaw_drop
+        face[8, 1] += jaw_drop * 0.5
+    return face
+
+
+def test_outside_thumbnail_flags_blown_out_jaw_not_clean_face() -> None:
+    """A face whose jaw spills past the displayed crop is flagged; a clean face is not."""
+    from tools.manual import frame_filter as _frame_filter
+
+    clean = _detected_face(_realistic_face())
+    blown_jaw = _detected_face(_realistic_face(jaw_drop=80.0))
+
+    assert _frame_filter.face_landmarks_outside_thumbnail(clean) is False
+    assert _frame_filter.face_landmarks_outside_thumbnail(blown_jaw) is True
+    assert _frame_filter.frame_landmarks_outside_thumbnail((clean, blown_jaw)) is True

@@ -24,6 +24,7 @@ state changes.
 from __future__ import annotations
 
 import typing as T
+import weakref
 
 import numpy as np
 import numpy.typing as npt
@@ -36,12 +37,11 @@ if T.TYPE_CHECKING:  # pragma: no cover - typing only
 LandmarkArray: T.TypeAlias = npt.NDArray[np.float32]
 CenteringType: T.TypeAlias = T.Literal["face", "head", "legacy"]
 LandmarkCache: T.TypeAlias = dict[tuple[int, int], "LandmarkArray | None"]
-"""Per-pass memo of normalized landmarks keyed by ``(frame_index, face_index)``.
+"""Per-pass memo of raw landmarks keyed by ``(frame_index, face_index)``.
 
-The neighbor-outlier scan revisits each frame's landmarks up to three times (as a
-frame's own faces, then as the previous/next neighbour of adjacent frames). Sharing
-one cache across a full ``filtered_frame_indices`` pass turns that ~3N ``AlignedFace``
-builds back into ~N."""
+The neighbor-outlier scan reads each frame's landmarks up to three times (as a frame's own
+faces, then as the previous/next neighbour of adjacent frames). Sharing one cache across a full
+``filtered_frame_indices`` pass reads each frame only once."""
 
 FilterMode = str
 """Type alias for filter-mode names — kept as ``str`` so editor-state
@@ -70,10 +70,14 @@ MISALIGNED_THRESHOLD_DEFAULT = 10
 to ``threshold / 100`` when compared to ``AlignedFace.average_distance``)."""
 
 THUMBNAIL_OUTSIDE_SIZE = 96
-"""Saved manual-tool face thumbnails are generated from a 96px head-centered crop."""
+"""Reference crop size for the outside-thumbnail test. The inside/outside decision is
+scale-invariant, so any size matches the variable-size faces shown in the viewer."""
 
-THUMBNAIL_OUTSIDE_CENTERING: CenteringType = "head"
-"""Centering used by the legacy thumbnail refresh path."""
+THUMBNAIL_OUTSIDE_CENTERING: CenteringType = "face"
+"""The Manual Tool's face viewer displays faces ``face``-centered (``Viewport._centering``),
+a tighter crop than the stored ``head`` thumbnail. The outside-thumbnail filter must test
+against this same crop, otherwise landmarks that visibly spill past the displayed thumbnail
+(e.g. a blown-out jaw) stay inside the looser head crop and are never flagged."""
 
 
 def filtered_frame_indices(
@@ -219,13 +223,43 @@ def _landmarks_array(face: T.Any) -> LandmarkArray | None:
     return landmarks
 
 
+def _validated_points(raw: T.Any) -> LandmarkArray | None:
+    """Return ``raw`` as a finite ``(N, 2)`` float32 array, or ``None`` if unusable."""
+    if raw is None:
+        return None
+    try:
+        points = T.cast(LandmarkArray, np.asarray(raw, dtype=np.float32))
+    except (TypeError, ValueError):
+        return None
+    if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 17:
+        return None
+    if not np.all(np.isfinite(points)):
+        return None
+    return points
+
+
+def _cached_aligned(face: T.Any) -> T.Any | None:
+    """Return a pre-computed ``AlignedFace`` already attached to ``face``, if available.
+
+    Manual-tool ``DetectedFace`` objects load a head-centered ``AlignedFace`` once at startup
+    and reset it whenever landmarks are edited, so reusing it avoids rebuilding the Umeyama
+    transform per face on every filter pass (~850x cheaper) while staying correctly invalidated.
+    ``DetectedFace.aligned`` asserts when no aligned face is loaded and neutral faces have no
+    ``aligned`` attribute at all, so both are guarded.
+    """
+    try:
+        return face.aligned
+    except (AssertionError, AttributeError):
+        return None
+
+
 def _aligned_landmarks_for_face(
     face: T.Any,
     *,
     centering: CenteringType,
     size: int,
 ) -> LandmarkArray | None:
-    """Return landmarks transformed into an ``AlignedFace`` coordinate system."""
+    """Return landmarks transformed into a freshly-built ``AlignedFace`` coordinate system."""
     landmarks = _landmarks_array(face)
     if landmarks is None:
         return None
@@ -237,21 +271,31 @@ def _aligned_landmarks_for_face(
 
     try:
         aligned = AlignedFace(landmarks, centering=centering, size=int(size))
-        points = T.cast(LandmarkArray, np.asarray(aligned.landmarks, dtype=np.float32))
+        return _validated_points(aligned.landmarks)
     except Exception:  # noqa: BLE001
         return None
 
-    if points.ndim != 2 or points.shape[1] != 2 or not np.all(np.isfinite(points)):
-        return None
-    return points
+
+def _face_scale(points: LandmarkArray) -> float:
+    """Return a characteristic face size (landmark bounding-box diagonal) in source pixels.
+
+    Used to normalize neighbor displacement into a resolution-independent fraction of face
+    size, so the shared distance slider behaves consistently across videos of any resolution.
+    """
+    span = points.max(axis=0) - points.min(axis=0)
+    diagonal = float(np.hypot(span[0], span[1]))
+    return diagonal if diagonal > 1e-6 else 1.0
 
 
-def _normalized_landmarks_for_face(face: T.Any, *, size: int = 100) -> LandmarkArray | None:
-    """Return face-centered normalized landmarks in roughly 0..1 coordinates."""
-    points = _aligned_landmarks_for_face(face, centering="face", size=size)
-    if points is None:
-        return None
-    return T.cast(LandmarkArray, points / float(size))
+_THUMBNAIL_LANDMARK_CACHE: weakref.WeakKeyDictionary[T.Any, tuple[tuple[int, str], LandmarkArray]]
+_THUMBNAIL_LANDMARK_CACHE = weakref.WeakKeyDictionary()
+"""Memo of face-centered thumbnail landmarks keyed on a face's cached head ``AlignedFace``.
+
+The viewer crop is ``face``-centered, which the cached head ``AlignedFace`` cannot supply, so a
+transform is built once per face and stored here. The key is the manual tool's per-face head
+``AlignedFace``, which is replaced on every landmark edit, so the memo invalidates itself on edit
+and is garbage-collected with the face — giving correct results without rebuilding the transform
+on every repeated ``count``/``frames_list`` access during navigation."""
 
 
 def _thumbnail_landmarks_for_face(
@@ -260,8 +304,22 @@ def _thumbnail_landmarks_for_face(
     size: int = THUMBNAIL_OUTSIDE_SIZE,
     centering: CenteringType = THUMBNAIL_OUTSIDE_CENTERING,
 ) -> LandmarkArray | None:
-    """Return landmarks in the same crop coordinate space used for saved thumbnails."""
-    return _aligned_landmarks_for_face(face, centering=centering, size=size)
+    """Return landmarks in the pixel space of the crop the face viewer actually displays.
+
+    The viewer shows faces ``face``-centered, a tighter crop than the stored head thumbnail, so a
+    landmark outside ``[0, size)`` here is a landmark that visibly spills past the displayed
+    thumbnail. The transform is built once per face and memoized on the face's cached head
+    ``AlignedFace`` (replaced on edit) to avoid rebuilding it on every filter pass.
+    """
+    aligned = _cached_aligned(face)
+    if aligned is not None:
+        cached = _THUMBNAIL_LANDMARK_CACHE.get(aligned)
+        if cached is not None and cached[0] == (size, centering):
+            return cached[1]
+    points = _aligned_landmarks_for_face(face, centering=centering, size=size)
+    if aligned is not None and points is not None:
+        _THUMBNAIL_LANDMARK_CACHE[aligned] = ((size, centering), points)
+    return points
 
 
 def _safe_faces_for_frame(
@@ -283,18 +341,18 @@ def _face_by_index(faces: T.Sequence[T.Any], face_index: int) -> T.Any | None:
     return None
 
 
-def _cached_normalized_landmarks(
+def _cached_raw_landmarks(
     faces_for_frame: T.Callable[[int], T.Sequence[T.Any]],
     frame_index: int,
     face_index: int,
     cache: LandmarkCache,
 ) -> LandmarkArray | None:
-    """Return memoized normalized landmarks for ``(frame_index, face_index)``."""
+    """Return memoized raw frame-space landmarks for ``(frame_index, face_index)``."""
     key = (int(frame_index), int(face_index))
     if key in cache:
         return cache[key]
     face = _face_by_index(_safe_faces_for_frame(faces_for_frame, frame_index), int(face_index))
-    points = None if face is None else _normalized_landmarks_for_face(face)
+    points = None if face is None else _landmarks_array(face)
     cache[key] = points
     return points
 
@@ -308,45 +366,44 @@ def face_neighbor_landmark_distance_from_provider(
     require_both_sides: bool = True,
     cache: LandmarkCache | None = None,
 ) -> float | None:
-    """Return current-face distance from the average of previous/next neighboring faces.
+    """Return how far a face's landmarks deviate from its neighbors' interpolated position.
 
-    The initial implementation matches faces by ``face_index`` because this is the same
-    ordering exposed by the Manual Tool's editable model and legacy face lists.  Frames at
-    the edge, missing landmarks, or missing adjacent matching faces return ``None``.
+    Landmarks are compared in raw frame space (not pose-normalized) so that a detection that
+    *jumps* in position, scale or shape between frames is caught — the most common temporal
+    outlier. The previous/next faces are averaged, which cancels smooth motion (the average of
+    the neighbors equals the expected position of a face moving linearly), so only abnormal
+    deviations remain. The residual is normalized by face size, giving a resolution-independent
+    fraction comparable to the shared ``Misaligned``/``Neighbor`` distance slider.
 
-    Pass a shared ``cache`` across a full-frame scan to avoid rebuilding the same
-    ``AlignedFace`` once per neighbouring frame.
+    Faces are matched across frames by ``face_index``. Frames at the edge, missing landmarks, or
+    missing adjacent matching faces return ``None``. Pass a shared ``cache`` across a full-frame
+    scan to read each frame's landmarks only once.
     """
     if cache is None:
         cache = {}
-    current = _cached_normalized_landmarks(faces_for_frame, frame_index, int(face_index), cache)
+    current = _cached_raw_landmarks(faces_for_frame, frame_index, int(face_index), cache)
     if current is None:
         return None
 
     neighbors: list[np.ndarray] = []
     max_window = max(1, int(window))
-    for offset in range(1, max_window + 1):
-        points = _cached_normalized_landmarks(
-            faces_for_frame, frame_index - offset, int(face_index), cache
-        )
-        if points is not None and points.shape == current.shape:
-            neighbors.append(points)
-            break
-    for offset in range(1, max_window + 1):
-        points = _cached_normalized_landmarks(
-            faces_for_frame, frame_index + offset, int(face_index), cache
-        )
-        if points is not None and points.shape == current.shape:
-            neighbors.append(points)
-            break
+    for direction in (-1, 1):
+        for offset in range(1, max_window + 1):
+            points = _cached_raw_landmarks(
+                faces_for_frame, frame_index + direction * offset, int(face_index), cache
+            )
+            if points is not None and points.shape == current.shape:
+                neighbors.append(points)
+                break
 
     if require_both_sides and len(neighbors) < 2:
         return None
     if not neighbors:
         return None
     reference = np.mean(np.stack(neighbors, axis=0), axis=0)
-    deltas = current - reference
-    return float(np.sqrt(np.sum(deltas * deltas, axis=1)).mean())
+    residual = float(np.sqrt(np.sum((current - reference) ** 2, axis=1)).mean())
+    scale = max(_face_scale(current), _face_scale(reference))
+    return residual / scale
 
 
 def frame_neighbor_landmark_outlier_from_provider(

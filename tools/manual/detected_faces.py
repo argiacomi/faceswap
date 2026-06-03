@@ -601,13 +601,15 @@ class Filter:
             distance = self._filter_distance
             return any(face.aligned.average_distance > distance for face in frame_faces)
         if filter_mode == "Neighbor Outliers":
-            return frame_neighbor_landmark_outlier_from_provider(
-                self._faces_for_frame,
-                frame_index,
-                self._filter_distance_raw,
+            return bool(
+                frame_neighbor_landmark_outlier_from_provider(
+                    self._faces_for_frame,
+                    frame_index,
+                    self._filter_distance_raw,
+                )
             )
         if filter_mode == "Landmarks Outside Thumbnail":
-            return frame_landmarks_outside_thumbnail(frame_faces)
+            return bool(frame_landmarks_outside_thumbnail(frame_faces))
         return True
 
     @property
