@@ -35,6 +35,13 @@ if T.TYPE_CHECKING:  # pragma: no cover - typing only
 
 LandmarkArray: T.TypeAlias = npt.NDArray[np.float32]
 CenteringType: T.TypeAlias = T.Literal["face", "head", "legacy"]
+LandmarkCache: T.TypeAlias = dict[tuple[int, int], "LandmarkArray | None"]
+"""Per-pass memo of normalized landmarks keyed by ``(frame_index, face_index)``.
+
+The neighbor-outlier scan revisits each frame's landmarks up to three times (as a
+frame's own faces, then as the previous/next neighbour of adjacent frames). Sharing
+one cache across a full ``filtered_frame_indices`` pass turns that ~3N ``AlignedFace``
+builds back into ~N."""
 
 FilterMode = str
 """Type alias for filter-mode names — kept as ``str`` so editor-state
@@ -189,8 +196,14 @@ def _landmarks_array(face: T.Any) -> LandmarkArray | None:
                 raw = None
         except TypeError:
             pass
-    if raw is None:
-        raw = getattr(face, "landmarks_xy", None)
+    if raw is None and getattr(face, "has_landmarks", True):
+        # ``DetectedFace.landmarks_xy`` asserts instead of returning ``None`` when no
+        # landmarks are present, so honour ``has_landmarks`` and swallow the assertion
+        # to keep this helper safe for landmark-less legacy faces.
+        try:
+            raw = getattr(face, "landmarks_xy", None)
+        except AssertionError:
+            raw = None
     if raw is None:
         return None
 
@@ -270,6 +283,22 @@ def _face_by_index(faces: T.Sequence[T.Any], face_index: int) -> T.Any | None:
     return None
 
 
+def _cached_normalized_landmarks(
+    faces_for_frame: T.Callable[[int], T.Sequence[T.Any]],
+    frame_index: int,
+    face_index: int,
+    cache: LandmarkCache,
+) -> LandmarkArray | None:
+    """Return memoized normalized landmarks for ``(frame_index, face_index)``."""
+    key = (int(frame_index), int(face_index))
+    if key in cache:
+        return cache[key]
+    face = _face_by_index(_safe_faces_for_frame(faces_for_frame, frame_index), int(face_index))
+    points = None if face is None else _normalized_landmarks_for_face(face)
+    cache[key] = points
+    return points
+
+
 def face_neighbor_landmark_distance_from_provider(
     faces_for_frame: T.Callable[[int], T.Sequence[T.Any]],
     frame_index: int,
@@ -277,43 +306,39 @@ def face_neighbor_landmark_distance_from_provider(
     *,
     window: int = 1,
     require_both_sides: bool = True,
+    cache: LandmarkCache | None = None,
 ) -> float | None:
     """Return current-face distance from the average of previous/next neighboring faces.
 
     The initial implementation matches faces by ``face_index`` because this is the same
     ordering exposed by the Manual Tool's editable model and legacy face lists.  Frames at
     the edge, missing landmarks, or missing adjacent matching faces return ``None``.
+
+    Pass a shared ``cache`` across a full-frame scan to avoid rebuilding the same
+    ``AlignedFace`` once per neighbouring frame.
     """
-    faces = _safe_faces_for_frame(faces_for_frame, frame_index)
-    face = _face_by_index(faces, int(face_index))
-    if face is None:
-        return None
-    current = _normalized_landmarks_for_face(face)
+    if cache is None:
+        cache = {}
+    current = _cached_normalized_landmarks(faces_for_frame, frame_index, int(face_index), cache)
     if current is None:
         return None
 
     neighbors: list[np.ndarray] = []
     max_window = max(1, int(window))
     for offset in range(1, max_window + 1):
-        prev_face = _face_by_index(
-            _safe_faces_for_frame(faces_for_frame, frame_index - offset),
-            int(face_index),
+        points = _cached_normalized_landmarks(
+            faces_for_frame, frame_index - offset, int(face_index), cache
         )
-        if prev_face is not None:
-            points = _normalized_landmarks_for_face(prev_face)
-            if points is not None and points.shape == current.shape:
-                neighbors.append(points)
-                break
+        if points is not None and points.shape == current.shape:
+            neighbors.append(points)
+            break
     for offset in range(1, max_window + 1):
-        next_face = _face_by_index(
-            _safe_faces_for_frame(faces_for_frame, frame_index + offset),
-            int(face_index),
+        points = _cached_normalized_landmarks(
+            faces_for_frame, frame_index + offset, int(face_index), cache
         )
-        if next_face is not None:
-            points = _normalized_landmarks_for_face(next_face)
-            if points is not None and points.shape == current.shape:
-                neighbors.append(points)
-                break
+        if points is not None and points.shape == current.shape:
+            neighbors.append(points)
+            break
 
     if require_both_sides and len(neighbors) < 2:
         return None
@@ -330,8 +355,13 @@ def frame_neighbor_landmark_outlier_from_provider(
     threshold_raw: int,
     *,
     window: int = 1,
+    cache: LandmarkCache | None = None,
 ) -> bool:
-    """Return whether any face in ``frame_index`` is an outlier vs adjacent frames."""
+    """Return whether any face in ``frame_index`` is an outlier vs adjacent frames.
+
+    Pass a shared ``cache`` across a full-frame scan to reuse normalized landmarks
+    computed for neighbouring frames.
+    """
     threshold = float(threshold_raw) / 100.0
     for face_index, _face in enumerate(_safe_faces_for_frame(faces_for_frame, frame_index)):
         distance = face_neighbor_landmark_distance_from_provider(
@@ -339,6 +369,7 @@ def frame_neighbor_landmark_outlier_from_provider(
             frame_index,
             face_index,
             window=window,
+            cache=cache,
         )
         if distance is not None and distance > threshold:
             return True

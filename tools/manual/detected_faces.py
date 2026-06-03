@@ -677,6 +677,10 @@ class Filter:
         face_count_per_index = self._detected_faces.face_count_per_index
         frame_indices = tuple(range(len(face_count_per_index)))
 
+        # Shared across the whole scan so a frame's normalized landmarks are only
+        # built once instead of being recomputed for each adjacent frame.
+        neighbor_cache: dict = {}
+
         retval = list(
             filtered_frame_indices(
                 frame_indices,
@@ -692,6 +696,7 @@ class Filter:
                         self._faces_for_frame,
                         idx,
                         self._filter_distance_raw,
+                        cache=neighbor_cache,
                     )
                 ),
                 thumbnail_outlier_predicate=lambda idx: frame_landmarks_outside_thumbnail(

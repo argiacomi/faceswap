@@ -13,6 +13,7 @@ from lib.gui.control_helper import set_slider_rounding
 from lib.gui.custom_widgets import Tooltip
 from lib.gui.utils import get_images
 from lib.utils import get_module_objects
+from tools.manual.frame_filter import FILTER_MODES
 
 from .control import BackgroundImage, Navigation
 from .editor import (  # noqa pylint:disable=unused-import
@@ -155,18 +156,8 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
 
     @property
     def _filter_modes(self):
-        """list: The filter modes combo box values"""
-        return [
-            "All Frames",
-            "Has Face(s)",
-            "No Faces",
-            "Single Face",
-            "Two Faces",
-            "Multiple Faces",
-            "Misaligned Faces",
-            "Neighbor Outliers",
-            "Landmarks Outside Thumbnail",
-        ]
+        """list: The filter modes combo box values, in shared legacy cycle order."""
+        return list(FILTER_MODES)
 
     def _add_nav(self):
         """Add the slider to navigate through frames"""
@@ -274,23 +265,22 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         Tooltip(fps_frame, text=self._helptext["fps"])
         return fps_frame
 
-    def _playback_delay_ms(self, started_at):
-        """Return playback delay in milliseconds after accounting for render duration."""
+    def _current_fps(self):
+        """int: The playback FPS clamped to the supported 1..60 range (24 on bad input)."""
         try:
             fps = int(self._globals.var_playback_fps.get())
         except TclError:
             fps = 24
-        fps = max(1, min(60, fps))
+        return max(1, min(60, fps))
+
+    def _playback_delay_ms(self, started_at):
+        """Return playback delay in milliseconds after accounting for render duration."""
         duration = int((time() - started_at) * 1000)
-        return max(1, int(round(1000 / fps)) - duration)
+        return max(1, int(round(1000 / self._current_fps())) - duration)
 
     def _clamp_playback_fps(self):
         """Clamp the playback FPS variable to the supported 1..60 range."""
-        try:
-            fps = int(self._globals.var_playback_fps.get())
-        except TclError:
-            fps = 24
-        self._globals.var_playback_fps.set(max(1, min(60, fps)))
+        self._globals.var_playback_fps.set(self._current_fps())
 
     def _add_transport_tk_trace(self):
         """Add the tkinter variable traces to buttons"""
