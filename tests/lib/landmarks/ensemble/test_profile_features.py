@@ -145,3 +145,22 @@ def test_occluded_side_perturbation_raises_occluded_spread() -> None:
     )
     # Candidate c diverges on the occluded (right) side from the consensus.
     assert out["c"]["occluded_side_spread"] > out["a"]["occluded_side_spread"]
+
+
+def test_profile_side_label_precedence_when_yaw_conflicts() -> None:
+    # Hard-slice/profile labels are treated as authoritative over noisy yaw.
+    assert pf.profile_side_from_context(runtime_bucket="profile_left", yaw_estimate=45.0) == "left"
+    assert pf.profile_side_from_context(condition="large_yaw_right", yaw_estimate=-45.0) == "right"
+
+
+def test_profile_side_conflicting_labels_are_deterministic() -> None:
+    # Document the current deterministic policy: when both labels are present,
+    # "left" wins because profile_side_from_context checks left before right.
+    assert (
+        pf.profile_side_from_context(
+            runtime_bucket="profile_left",
+            condition="profile_right",
+            yaw_estimate=45.0,
+        )
+        == "left"
+    )

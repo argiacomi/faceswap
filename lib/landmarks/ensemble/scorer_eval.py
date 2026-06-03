@@ -21,6 +21,7 @@ from lib.landmarks.ensemble.profile_repair import PROFILE_REPAIR_CANDIDATE_NAME
 from lib.landmarks.ensemble.profile_routing import (
     SCORER_POLICY_GENERAL,
     SCORER_POLICY_PROFILE,
+    condition_tags,
     is_profile_or_occlusion_context,
     scorer_route_for_context,
 )
@@ -137,6 +138,12 @@ REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
     "avoidable_invalid_selection_rate_v3",
     "all_invalid_selected_count_v3",
     "all_invalid_selected_rate_v3",
+    "profile_repair_candidate_group_count",
+    "profile_repair_candidate_valid_count_v3",
+    "profile_repair_candidate_selected_count",
+    "profile_repair_reduced_all_invalid_count",
+    "profile_repair_zero_valid_after_repair_count",
+    "profile_repair_candidate_hard_invalid_count_v3",
     "near_tie_excluded_count_v3",
     "zero_valid_group_count_v3",
     "too_few_valid_group_count_v3",
@@ -333,29 +340,33 @@ def choose_scorer(
     replacement_candidate = ""
     selectable = survivors if survivors else available
     v3_rows = _v3_rows_by_candidate(context)
-    v3_valid_selectable = {
-        name
-        for name in selectable
-        if name in v3_rows
-        and _row_bool(_v3_row_value(v3_rows[name], "rankable_v3", False))
-        and not _row_bool(_v3_row_value(v3_rows[name], "hard_invalid_v3", False))
-    }
-    if v3_valid_selectable:
-        # Stage 1: a v3 valid/rankable candidate exists -> only those are
-        # selectable, so a hard-invalid candidate is never chosen.
-        selectable = v3_valid_selectable
-    elif is_profile_or_occlusion_context(context):
-        # Stage 1 (profile route): no valid/rankable candidate. Prefer
-        # profile-soft-valid candidates when available, else mark the group as
-        # a degraded fallback instead of treating it as an ordinary choice.
-        soft_valid = _profile_soft_valid_selectable(context, selectable, v3_rows)
-        if soft_valid:
-            selectable = soft_valid
-            fallback_used = True
-            fallback_reason = "profile_soft_validity_fallback"
-        else:
-            fallback_used = True
-            fallback_reason = "profile_all_invalid_degraded_fallback"
+    # Only apply v3 validity-stage routing when v3 rows exist. Production-only
+    # contexts may have no GT/v3 rows; in that case validity is unknown rather
+    # than all-invalid, so leave the normal survivor set untouched.
+    if v3_rows:
+        v3_valid_selectable = {
+            name
+            for name in selectable
+            if name in v3_rows
+            and _row_bool(_v3_row_value(v3_rows[name], "rankable_v3", False))
+            and not _row_bool(_v3_row_value(v3_rows[name], "hard_invalid_v3", False))
+        }
+        if v3_valid_selectable:
+            # Stage 1: a v3 valid/rankable candidate exists -> only those are
+            # selectable, so a hard-invalid candidate is never chosen.
+            selectable = v3_valid_selectable
+        elif is_profile_or_occlusion_context(context):
+            # Stage 1 (profile route): no valid/rankable candidate. Prefer
+            # profile-soft-valid candidates when available, else mark the group
+            # as degraded fallback instead of treating it as an ordinary choice.
+            soft_valid = _profile_soft_valid_selectable(context, selectable, v3_rows)
+            if soft_valid:
+                selectable = soft_valid
+                fallback_used = True
+                fallback_reason = "profile_soft_validity_fallback"
+            else:
+                fallback_used = True
+                fallback_reason = "profile_all_invalid_degraded_fallback"
     chosen = min(selectable, key=lambda name: (scores.get(name, float("inf")), name))
     candidates_by_name = {candidate.name: candidate for candidate in context.candidates}
     hard_slice_fallback = _hard_slice_safe_single_candidate(
@@ -483,6 +494,8 @@ def _transform_summary_empty() -> dict[str, T.Any]:
         "profile_repair_candidate_valid_count_v3": 0,
         "profile_repair_candidate_selected_count": 0,
         "profile_repair_reduced_all_invalid_count": 0,
+        "profile_repair_zero_valid_after_repair_count": 0,
+        "profile_repair_candidate_hard_invalid_count_v3": 0,
     }
 
 
@@ -511,6 +524,8 @@ def transform_policy_summary_v3(
     profile_repair_candidate_valid_count = 0
     profile_repair_candidate_selected_count = 0
     profile_repair_reduced_all_invalid_count = 0
+    profile_repair_zero_valid_after_repair_count = 0
+    profile_repair_candidate_hard_invalid_count = 0
     for context in contexts:
         if context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED:
             continue
@@ -530,9 +545,11 @@ def transform_policy_summary_v3(
         repair_row = rows.get(PROFILE_REPAIR_CANDIDATE_NAME)
         if repair_row is not None:
             profile_repair_candidate_group_count += 1
-            repair_valid = _row_bool(
-                _v3_row_value(repair_row, "rankable_v3", False)
-            ) and not _row_bool(_v3_row_value(repair_row, "hard_invalid_v3", False))
+            repair_hard_invalid = _row_bool(_v3_row_value(repair_row, "hard_invalid_v3", False))
+            repair_valid = (
+                _row_bool(_v3_row_value(repair_row, "rankable_v3", False))
+                and not repair_hard_invalid
+            )
             valid_names = {
                 name
                 for name, row in rows.items()
@@ -543,6 +560,10 @@ def transform_policy_summary_v3(
                 profile_repair_candidate_valid_count += 1
                 if valid_names == {PROFILE_REPAIR_CANDIDATE_NAME}:
                     profile_repair_reduced_all_invalid_count += 1
+            else:
+                profile_repair_candidate_hard_invalid_count += int(repair_hard_invalid)
+            if zero_valid:
+                profile_repair_zero_valid_after_repair_count += 1
             if selected == PROFILE_REPAIR_CANDIDATE_NAME:
                 profile_repair_candidate_selected_count += 1
         if not zero_valid:
@@ -605,6 +626,12 @@ def transform_policy_summary_v3(
         "profile_repair_candidate_valid_count_v3": profile_repair_candidate_valid_count,
         "profile_repair_candidate_selected_count": profile_repair_candidate_selected_count,
         "profile_repair_reduced_all_invalid_count": profile_repair_reduced_all_invalid_count,
+        "profile_repair_zero_valid_after_repair_count": (
+            profile_repair_zero_valid_after_repair_count
+        ),
+        "profile_repair_candidate_hard_invalid_count_v3": (
+            profile_repair_candidate_hard_invalid_count
+        ),
     }
 
 
@@ -718,10 +745,8 @@ def per_bucket(
 
 
 def _condition_tags(context: T.Any) -> set[str]:
-    tags = {str(context.condition or "").strip().lower()}
-    tags.add(str(context.runtime_bucket or "").strip().lower())
-    tags.update(str(tag).strip().lower() for tag in getattr(context, "hard_case_tags", ()) or ())
-    return {tag for tag in tags if tag}
+    """Return centralized profile-routing tags as a set for legacy report helpers."""
+    return set(condition_tags(context))
 
 
 def split_labels_for_context(

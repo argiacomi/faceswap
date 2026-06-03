@@ -130,10 +130,19 @@ def build_hard_negative_manifest(
 
     for dataset, manifest_path in manifests.items():
         dataset_label = dataset.strip().lower()
-        dataset_counts: dict[str, int] = dict.fromkeys((*BUCKET_ORDER, "skipped", "duplicate"), 0)
+        dataset_counts: dict[str, int] = dict.fromkeys(
+            (*BUCKET_ORDER, "classified_by_label", "dataset_default", "skipped", "duplicate"),
+            0,
+        )
         for sample in _load_samples(manifest_path):
             sample.setdefault("dataset", dataset_label)
-            classification = classify_hard_negative(sample) or _default_class(dataset_label)
+            classification = classify_hard_negative(sample)
+            classification_source = "classified_by_label"
+            if classification is None:
+                classification = _default_class(dataset_label)
+                classification_source = (
+                    "dataset_default" if classification is not None else "skipped"
+                )
             if classification is None:
                 dataset_counts["skipped"] += 1
                 continue
@@ -146,6 +155,7 @@ def build_hard_negative_manifest(
             annotated.setdefault("dataset", dataset_label)
             classified[classification.bucket].append(annotated)
             dataset_counts[classification.bucket] += 1
+            dataset_counts[classification_source] += 1
         audit[dataset_label] = dataset_counts
 
     selected: list[dict[str, T.Any]] = []
@@ -173,6 +183,16 @@ def build_hard_negative_manifest(
         "counts": counts,
         "by_dataset": by_dataset,
         "weights": dict(BUCKET_WEIGHT),
+        "dataset_default_buckets": dict(DATASET_DEFAULT_BUCKET),
+        "quota_fill_rates": {
+            bucket: (
+                1.0
+                if (quota := quotas[bucket]) is None
+                else (counts[bucket] / max(float(quota), 1.0))
+            )
+            for bucket in BUCKET_ORDER
+        },
+        "anchor_count": counts.get("anchor", 0),
         "total": len(selected),
         "seed": seed,
         "allow_overlap": allow_overlap,

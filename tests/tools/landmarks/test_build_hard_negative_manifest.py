@@ -156,3 +156,17 @@ def test_quota_sampling_deterministic_with_seed(tmp_path: Path) -> None:
     second = _ids(tmp_path / "o2", seed=7)
     assert first == second
     assert len(first) == 3
+
+
+def test_audit_tracks_dataset_defaults(manifests, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    report = build_hard_negative_manifest(manifests=manifests, output_dir=out, write_audit=True)
+    audit = _load(out / "dataset_audit.json")
+
+    assert audit["300w"]["dataset_default"] == 1
+    assert audit["300w"]["anchor"] == 1
+    assert audit["cofw"]["dataset_default"] == 2
+    assert audit["cofw"]["occlusion"] == 2
+    assert report["dataset_default_buckets"]["300w"] == "anchor"
+    assert report["anchor_count"] == report["counts"]["anchor"]
+    assert "anchor" in report["quota_fill_rates"]

@@ -8,7 +8,7 @@ import hashlib
 import math
 import shutil
 import typing as T
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -300,27 +300,58 @@ def scorer_sample_weight(row: CandidateQualityRow, source: str = "") -> float:
 
 
 def scorer_sample_weighting_stats(tagged_rows: T.Sequence[TaggedRow]) -> dict[str, T.Any]:
-    weights = np.asarray(
-        [scorer_sample_weight(row, source) for row, source in tagged_rows],
-        dtype="float64",
-    )
+    weights_by_row: list[float] = []
+    multipliers_by_row: list[float] = []
+    capped_by_row: list[bool] = []
     by_split: dict[str, dict[str, T.Any]] = {}
     grouped: dict[str, list[float]] = defaultdict(list)
+    multiplier_counts: Counter[str] = Counter()
+
     for row, source in tagged_rows:
-        grouped[_hard_case_split_label(row, source)].append(scorer_sample_weight(row, source))
+        weight = scorer_sample_weight(row, source)
+        multiplier = _hard_negative_multiplier(row)
+        weights_by_row.append(weight)
+        multipliers_by_row.append(multiplier)
+        multiplier_counts[f"{multiplier:.3g}"] += 1
+        grouped[_hard_case_split_label(row, source)].append(weight)
+        capped_by_row.append(
+            multiplier > DEFAULT_HARD_NEGATIVE_WEIGHT
+            and weight
+            >= max(MAX_HARD_NEGATIVE_WEIGHT, HARD_CASE_SAMPLE_WEIGHTS["production_failure"])
+        )
+
+    weights = np.asarray(weights_by_row, dtype="float64")
+    multipliers = np.asarray(multipliers_by_row, dtype="float64")
     for split in ("normal", "profile", "occlusion", "profile_occlusion", "production_failure"):
         values = grouped.get(split, [])
         by_split[split] = {
             "row_count": len(values),
             "mean_weight": float(np.mean(values)) if values else 0.0,
             "max_weight": float(np.max(values)) if values else 0.0,
+            "saturated_at_hard_negative_cap_count": sum(
+                value >= MAX_HARD_NEGATIVE_WEIGHT for value in values
+            ),
         }
+
+    saturated_count = int(sum(capped_by_row))
+    multiplier_gt_default_count = (
+        int(np.sum(multipliers > DEFAULT_HARD_NEGATIVE_WEIGHT)) if multipliers.size else 0
+    )
     return {
         "strategy": "hard_case_weighting_single_scorer",
         "weights": HARD_CASE_SAMPLE_WEIGHTS,
         "row_count": int(weights.size),
         "mean_weight": float(np.mean(weights)) if weights.size else 0.0,
         "max_weight": float(np.max(weights)) if weights.size else 0.0,
+        "hard_negative_multiplier_distribution": dict(sorted(multiplier_counts.items())),
+        "hard_negative_multiplier_gt_default_count": multiplier_gt_default_count,
+        "hard_negative_multiplier_gt_default_rate": (
+            multiplier_gt_default_count / int(weights.size) if weights.size else 0.0
+        ),
+        "saturated_at_hard_negative_cap_count": saturated_count,
+        "saturated_at_hard_negative_cap_rate": (
+            saturated_count / int(weights.size) if weights.size else 0.0
+        ),
         "by_split": by_split,
     }
 
@@ -906,6 +937,10 @@ def train_runtime_resolver_scorer_suite(
     if profile_specialist_entry is not None:
         metrics["scorers"]["learned_quality_v3_profile"] = profile_specialist_entry
     metrics["profile_specialist_status"] = profile_specialist_status
+    metrics["profile_specialist_row_counts"] = {
+        "train_rows": len(profile_train_rows),
+        "eval_rows": len(profile_eval_rows),
+    }
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
     metrics["artifact"] = str(canonical_v3)
