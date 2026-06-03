@@ -37,10 +37,10 @@ def _truth_face() -> np.ndarray:
 
 
 def _truth_profile39() -> np.ndarray:
-    return np.stack(
-        [np.linspace(40, 160, 39), np.linspace(60, 150, 39)],
-        axis=1,
-    ).astype("float32")
+    x_coords = np.linspace(40, 160, 39, dtype="float32")
+    y_coords = np.linspace(60, 150, 39, dtype="float32")
+    points: np.ndarray = np.column_stack((x_coords, y_coords))
+    return points
 
 
 def _yaw_sample(sid: str, yaw_radians: float | None) -> dict:
