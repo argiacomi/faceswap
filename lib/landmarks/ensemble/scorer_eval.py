@@ -1725,6 +1725,7 @@ def score_policy_choices_routed(
     profile_route_general_fallback_enabled: bool = PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED,
     profile_route_general_fallback_min_margin: float = PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN,
     routed_fallback_diagnostics: list[dict[str, T.Any]] | None = None,
+    routed_choice_diagnostics: list[dict[str, T.Any]] | None = None,
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, str]:
     """Choose one candidate per sample, routing each context to its scorer.
@@ -1740,6 +1741,47 @@ def score_policy_choices_routed(
     if general is None and profile is None:
         raise ValueError("at least one runtime scorer policy is required for routed scoring")
     choices: dict[str, str] = {}
+
+    def record_choice(
+        context: SampleCandidateContext,
+        *,
+        route: str,
+        chosen: str,
+        decision_policy: str,
+        fallback_used: bool,
+        fallback_reason: str,
+        rejected_candidate: str,
+        replacement_candidate: str,
+        scores: T.Mapping[str, float] | None = None,
+        extra: T.Mapping[str, T.Any] | None = None,
+    ) -> None:
+        if routed_choice_diagnostics is None:
+            return
+        candidate_scores: dict[str, T.Any] = {}
+        for name, value in (scores or {}).items():
+            try:
+                score_value = float(value)
+            except (TypeError, ValueError):
+                candidate_scores[str(name)] = str(value)
+                continue
+            candidate_scores[str(name)] = score_value if math_is_finite(score_value) else None
+        payload: dict[str, T.Any] = {
+            "sample_id": context.sample_id,
+            "dataset": context.dataset,
+            "condition": context.condition,
+            "runtime_bucket": context.runtime_bucket,
+            "route": route,
+            "decision_policy": decision_policy,
+            "chosen": chosen,
+            "fallback_used": bool(fallback_used),
+            "fallback_reason": fallback_reason if fallback_used else "",
+            "rejected_candidate": rejected_candidate if fallback_used else "",
+            "replacement_candidate": replacement_candidate if fallback_used else "",
+            "candidate_scores": candidate_scores,
+        }
+        payload.update(dict(extra or {}))
+        routed_choice_diagnostics.append(payload)
+
     iterator = (
         progress(contexts, "Score routed scorer policy") if progress is not None else contexts
     )
@@ -1760,8 +1802,8 @@ def score_policy_choices_routed(
                 general_choice,
                 general_fallback_used,
                 general_fallback_reason,
-                _general_rejected_candidate,
-                _general_replacement_candidate,
+                general_rejected_candidate,
+                general_replacement_candidate,
             ) = choose_scorer(
                 context,
                 general_scores,
@@ -1772,8 +1814,8 @@ def score_policy_choices_routed(
                 profile_choice,
                 profile_fallback_used,
                 profile_fallback_reason,
-                _profile_rejected_candidate,
-                _profile_replacement_candidate,
+                profile_rejected_candidate,
+                profile_replacement_candidate,
             ) = choose_scorer(
                 context,
                 profile_scores,
@@ -1790,42 +1832,100 @@ def score_policy_choices_routed(
 
                 if profile_margin_vs_general < profile_route_general_fallback_min_margin:
                     choices[context.sample_id] = general_choice
+                    fallback_payload = {
+                        "sample_id": context.sample_id,
+                        "dataset": context.dataset,
+                        "condition": context.condition,
+                        "runtime_bucket": context.runtime_bucket,
+                        "route": route,
+                        "fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
+                        "rejected_candidate": profile_choice,
+                        "replacement_candidate": general_choice,
+                        "profile_choice_score": profile_choice_score,
+                        "general_choice_profile_score": general_choice_profile_score,
+                        "profile_margin_vs_general": profile_margin_vs_general,
+                        "required_margin": profile_route_general_fallback_min_margin,
+                        "profile_fallback_used": bool(profile_fallback_used),
+                        "profile_fallback_reason": profile_fallback_reason,
+                        "profile_rejected_candidate": profile_rejected_candidate,
+                        "profile_replacement_candidate": profile_replacement_candidate,
+                        "general_fallback_used": bool(general_fallback_used),
+                        "general_fallback_reason": general_fallback_reason,
+                        "general_rejected_candidate": general_rejected_candidate,
+                        "general_replacement_candidate": general_replacement_candidate,
+                    }
                     if routed_fallback_diagnostics is not None:
-                        routed_fallback_diagnostics.append(
-                            {
-                                "sample_id": context.sample_id,
-                                "dataset": context.dataset,
-                                "condition": context.condition,
-                                "runtime_bucket": context.runtime_bucket,
-                                "route": route,
-                                "fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
-                                "rejected_candidate": profile_choice,
-                                "replacement_candidate": general_choice,
-                                "profile_choice_score": profile_choice_score,
-                                "general_choice_profile_score": general_choice_profile_score,
-                                "profile_margin_vs_general": profile_margin_vs_general,
-                                "required_margin": profile_route_general_fallback_min_margin,
-                                "profile_fallback_used": bool(profile_fallback_used),
-                                "profile_fallback_reason": profile_fallback_reason,
-                                "general_fallback_used": bool(general_fallback_used),
-                                "general_fallback_reason": general_fallback_reason,
-                            }
-                        )
+                        routed_fallback_diagnostics.append(fallback_payload)
+                    record_choice(
+                        context,
+                        route=route,
+                        chosen=general_choice,
+                        decision_policy=SCORER_POLICY_GENERAL,
+                        fallback_used=True,
+                        fallback_reason=PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
+                        rejected_candidate=profile_choice,
+                        replacement_candidate=general_choice,
+                        scores=profile_scores,
+                        extra=fallback_payload,
+                    )
                     continue
 
             choices[context.sample_id] = profile_choice
+            record_choice(
+                context,
+                route=route,
+                chosen=profile_choice,
+                decision_policy=SCORER_POLICY_PROFILE,
+                fallback_used=bool(profile_fallback_used),
+                fallback_reason=profile_fallback_reason,
+                rejected_candidate=profile_rejected_candidate,
+                replacement_candidate=profile_replacement_candidate,
+                scores=profile_scores,
+                extra={
+                    "general_choice": general_choice,
+                    "profile_choice": profile_choice,
+                    "general_fallback_used": bool(general_fallback_used),
+                    "general_fallback_reason": general_fallback_reason,
+                    "general_rejected_candidate": general_rejected_candidate,
+                    "general_replacement_candidate": general_replacement_candidate,
+                },
+            )
             continue
 
         scorer = profile if route == SCORER_POLICY_PROFILE and profile is not None else general
+        decision_policy = (
+            SCORER_POLICY_PROFILE
+            if route == SCORER_POLICY_PROFILE and profile is not None
+            else SCORER_POLICY_GENERAL
+        )
         if scorer is None:
             scorer = profile
+            decision_policy = SCORER_POLICY_PROFILE
         scores = _score_context_rows(scorer, context_rows)
-        choices[context.sample_id] = choose_scorer(
+        (
+            chosen,
+            fallback_used,
+            fallback_reason,
+            rejected_candidate,
+            replacement_candidate,
+        ) = choose_scorer(
             context,
             scores,
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
             safe_fallback_min_delta=safe_fallback_min_delta,
-        )[0]
+        )
+        choices[context.sample_id] = chosen
+        record_choice(
+            context,
+            route=route,
+            chosen=chosen,
+            decision_policy=decision_policy,
+            fallback_used=bool(fallback_used),
+            fallback_reason=fallback_reason,
+            rejected_candidate=rejected_candidate,
+            replacement_candidate=replacement_candidate,
+            scores=scores,
+        )
     return choices
 
 
@@ -2498,13 +2598,21 @@ def _policy_rows_from_choices(
         oracle_choice = oracle_choices.get(context.sample_id, context.oracle)
 
         fallback_diag = fallback_by_sample_id.get(context.sample_id)
-        fallback_used = fallback_diag is not None
-        fallback_reason = str(fallback_diag.get("fallback_reason") or "") if fallback_diag else ""
+        fallback_used = bool(fallback_diag.get("fallback_used", True)) if fallback_diag else False
+        fallback_reason = (
+            str(fallback_diag.get("fallback_reason") or "")
+            if fallback_diag and fallback_used
+            else ""
+        )
         rejected_candidate = (
-            str(fallback_diag.get("rejected_candidate") or "") if fallback_diag else ""
+            str(fallback_diag.get("rejected_candidate") or "")
+            if fallback_diag and fallback_used
+            else ""
         )
         replacement_candidate = (
-            str(fallback_diag.get("replacement_candidate") or chosen) if fallback_diag else ""
+            str(fallback_diag.get("replacement_candidate") or chosen)
+            if fallback_diag and fallback_used
+            else ""
         )
 
         fallback_count += int(fallback_used)
@@ -2551,16 +2659,21 @@ def _policy_rows_from_choices(
 
         candidate_scores: dict[str, T.Any] = {}
         if fallback_diag:
-            candidate_scores = {
-                key: fallback_diag[key]
-                for key in (
-                    "profile_choice_score",
-                    "general_choice_profile_score",
-                    "profile_margin_vs_general",
-                    "required_margin",
-                )
-                if key in fallback_diag
-            }
+            raw_candidate_scores = fallback_diag.get("candidate_scores")
+            if isinstance(raw_candidate_scores, T.Mapping):
+                candidate_scores.update(dict(raw_candidate_scores))
+            candidate_scores.update(
+                {
+                    key: fallback_diag[key]
+                    for key in (
+                        "profile_choice_score",
+                        "general_choice_profile_score",
+                        "profile_margin_vs_general",
+                        "required_margin",
+                    )
+                    if key in fallback_diag
+                }
+            )
 
         rows.append(
             {
@@ -2847,6 +2960,7 @@ def evaluate_runtime_resolver_scorer(
             pass
 
     routed_fallback_diagnostics: list[dict[str, T.Any]] = []
+    routed_choice_diagnostics: list[dict[str, T.Any]] = []
     if SCORER_POLICY_GENERAL in scorers_by_policy and SCORER_POLICY_PROFILE in scorers_by_policy:
         routed_progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None
         if progress is not None:
@@ -2863,6 +2977,7 @@ def evaluate_runtime_resolver_scorer(
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
             safe_fallback_min_delta=safe_fallback_min_delta,
             routed_fallback_diagnostics=routed_fallback_diagnostics,
+            routed_choice_diagnostics=routed_choice_diagnostics,
             progress=routed_progress,
         )
 
@@ -2936,7 +3051,7 @@ def evaluate_runtime_resolver_scorer(
             current_choices=current_choices,
             oracle_choices=oracle_choices,
             source_by_sample_id=source_by_sample_id,
-            fallback_diagnostics=routed_fallback_diagnostics,
+            fallback_diagnostics=routed_choice_diagnostics,
         )
 
     installed_policy, installed_scorers, installed_status = load_installed_policy_scorers(
