@@ -30,6 +30,12 @@ from lib.landmarks.ensemble.profile_features import (
     profile_candidate_features,
     profile_side_from_context,
 )
+from lib.landmarks.ensemble.profile_repair import (
+    PROFILE_REPAIR_CANDIDATE_NAME,
+    build_profile_repair_landmarks,
+    profile_repair_features,
+    profile_repair_provenance,
+)
 from lib.landmarks.ensemble.profile_routing import (
     SCORER_POLICY_GENERAL,
     SCORER_POLICY_PROFILE,
@@ -1089,6 +1095,178 @@ def append_region_weight_candidate(
     )
 
 
+_PROFILE_REPAIR_SOFT_VETO_HINTS: tuple[str, ...] = (
+    "face_shape_plausibility_low",
+    "topology",
+    "self_intersection",
+    "inner_mouth_outside_outer_mouth",
+    "region_order",
+)
+
+
+def _profile_repair_has_eye_mouth_flip(metric: CandidateMetrics) -> bool:
+    """Return True for the fatal visible-core defect repair must never keep."""
+    raw_value = metric.eye_mouth_order_valid_after_deroll
+    if raw_value is not None:
+        if isinstance(raw_value, str):
+            if raw_value.strip().lower() in {"0", "false", "no"}:
+                return True
+        else:
+            try:
+                if not bool(raw_value):
+                    return True
+            except Exception:  # noqa: BLE001 - defensive for numpy/object scalars
+                pass
+    reasons = " ".join(
+        [
+            *(metric.geometry_veto_reasons or ()),
+            *(metric.shape_veto_reasons or ()),
+        ]
+    ).lower()
+    return bool("eye_mouth" in reasons or "flip" in reasons)
+
+
+def _soften_profile_repair_vetoes(reasons: T.Sequence[str]) -> tuple[str, ...]:
+    """Demote topology-style repair vetoes while keeping crop/bbox/eye-mouth fatal."""
+    kept: list[str] = []
+    for reason in reasons:
+        reason_text = str(reason)
+        lowered = reason_text.lower()
+        if "eye_mouth" in lowered or "flip" in lowered:
+            kept.append(reason_text)
+            continue
+        if any(hint in lowered for hint in _PROFILE_REPAIR_SOFT_VETO_HINTS):
+            continue
+        kept.append(reason_text)
+    return tuple(kept)
+
+
+def _has_profile_repair_trigger_reason(metrics: T.Mapping[str, CandidateMetrics]) -> bool:
+    """Return True when all-vetoed geometry looks like a repairable profile failure.
+
+    Do not create a synthetic repair candidate for arbitrary vetoes such as tests'
+    ``forced_test_veto`` or future non-profile hard stops. Live repair is meant for
+    the same shape/topology/profile-visible-side failures seen in offline GT-hard
+    all-invalid profile groups.
+    """
+    trigger_hints = (
+        "face_shape_plausibility_low",
+        "topology",
+        "self_intersection",
+        "inner_mouth_outside_outer_mouth",
+        "region_order",
+        "cloud_area_too_small",
+        "hull_area_too_small",
+    )
+    for metric in metrics.values():
+        reasons = [*(metric.geometry_veto_reasons or ()), *(metric.shape_veto_reasons or ())]
+        for reason in reasons:
+            lowered = str(reason).lower()
+            if any(hint in lowered for hint in trigger_hints):
+                return True
+    return False
+
+
+def append_profile_repair_candidate(
+    candidates: list[CandidateRecord],
+    *,
+    metrics: T.MutableMapping[str, CandidateMetrics],
+    runtime_bucket: str,
+    condition: str,
+    yaw_estimate: float | None,
+    candidate_extra_features: T.Mapping[str, T.Mapping[str, float]],
+    reference_bbox: tuple[float, float, float, float] | None,
+) -> tuple[dict[str, T.Any], dict[str, float]] | None:
+    """Append live ``profile_visible_side_repaired`` when the profile set is all-vetoed.
+
+    The repair reuses the offline source-selection and eye/mouth guards from
+    ``profile_repair.py``. Runtime only generates it for profile/occlusion-like
+    buckets where no current candidate survives geometry vetoes and the vetoes
+    look like repairable profile/shape failures.
+    """
+    if any(candidate.name == PROFILE_REPAIR_CANDIDATE_NAME for candidate in candidates):
+        return None
+
+    finite_names = _finite_candidate_names(candidates)
+    geometry_valid_names = {
+        name
+        for name in finite_names
+        if name in metrics and not metrics[name].geometry_veto_reasons
+    }
+    if geometry_valid_names:
+        return None
+    if not _has_profile_repair_trigger_reason(metrics):
+        return None
+
+    source_order = {str(candidate.name): index for index, candidate in enumerate(candidates)}
+    built = build_profile_repair_landmarks(
+        candidates,
+        metrics,
+        runtime_bucket=runtime_bucket,
+        condition=condition,
+        yaw_estimate=yaw_estimate,
+        candidate_extra_features=candidate_extra_features,
+    )
+    if built is None:
+        return None
+
+    repaired_landmarks, source_name, visible_side = built
+    base_candidates = list(candidates)
+    repair = CandidateRecord(
+        name=PROFILE_REPAIR_CANDIDATE_NAME,
+        landmarks=np.asarray(repaired_landmarks, dtype="float32"),
+        is_fusion=True,
+        contributing_models=(source_name,),
+    )
+    candidates.append(repair)
+
+    metric = _metric_for_candidate(repair, reference_bbox=reference_bbox)
+    metrics[repair.name] = metric
+    _apply_consensus_geometry(
+        [repair],
+        metrics,
+        consensus_candidates=base_candidates,
+        reference_bbox=reference_bbox,
+    )
+
+    # Post-build safety: the repaired candidate itself must not be eye/mouth flipped.
+    metric.geometry_veto_reasons = _soften_profile_repair_vetoes(
+        _shape_reasons(runtime_bucket, repair.name, metric)
+    )
+    if _profile_repair_has_eye_mouth_flip(metric):
+        candidates[:] = [candidate for candidate in candidates if candidate.name != repair.name]
+        metrics.pop(repair.name, None)
+        logger.debug(
+            "[RuntimeResolver] dropped %s: repaired candidate has fatal eye/mouth flip",
+            PROFILE_REPAIR_CANDIDATE_NAME,
+        )
+        return None
+
+    source_metric = metrics.get(source_name)
+    shape_score = float(getattr(source_metric, "shape_plausibility_score", 0.0) or 0.0)
+    source_rank = source_order.get(source_name, len(source_order))
+
+    provenance = profile_repair_provenance(
+        source_candidate=source_name,
+        visible_side=visible_side,
+        reason="live_runtime_all_candidates_vetoed",
+    )
+    feature_values = profile_repair_features(
+        visible_side=visible_side,
+        source_rank=source_rank,
+        shape_score=shape_score,
+    )
+
+    logger.debug(
+        "[RuntimeResolver] appended %s source=%s visible_side=%s bucket=%s",
+        PROFILE_REPAIR_CANDIDATE_NAME,
+        source_name,
+        visible_side,
+        runtime_bucket,
+    )
+    return dict(provenance), feature_values
+
+
 def _priority_for_bucket(bucket: str, available: T.AbstractSet[str]) -> list[str]:
     priority = list(BUCKET_PRIORITIES.get(bucket, DEFAULT_PRIORITY))
     priority.extend(name for name in DEFAULT_PRIORITY if name not in priority)
@@ -2038,6 +2216,33 @@ def resolve_runtime(
         roll_estimate=roll_estimate,
     )
 
+    profile_repair_metadata: dict[str, T.Any] = {}
+    profile_repair_feature_values: dict[str, float] = {}
+    profile_repair_result = append_profile_repair_candidate(
+        candidates,
+        metrics=metrics,
+        runtime_bucket=bucket,
+        condition=bucket,
+        yaw_estimate=yaw_estimate,
+        candidate_extra_features=candidate_extra_features,
+        reference_bbox=reference_bbox,
+    )
+    if profile_repair_result is not None:
+        profile_repair_metadata, profile_repair_feature_values = profile_repair_result
+        candidate_extra_features = _candidate_extra_features(
+            candidates,
+            metrics,
+            reference_bbox=reference_bbox,
+            condition=bucket,
+            runtime_bucket=bucket,
+            runtime_bucket_source=runtime_bucket_source,
+            yaw_estimate=yaw_estimate,
+            roll_estimate=roll_estimate,
+        )
+        candidate_extra_features.setdefault(PROFILE_REPAIR_CANDIDATE_NAME, {}).update(
+            profile_repair_feature_values
+        )
+
     available = {candidate.name for candidate in candidates}
     priority = _priority_for_bucket(bucket, available)
     roll_vetoed = _roll_vetoes(
@@ -2394,6 +2599,8 @@ def resolve_runtime(
         "mean_shape_fit_error": _metrics_payload(metrics, "mean_shape_fit_error"),
         "topology_violation_count": _metrics_payload(metrics, "topology_violation_count"),
         "model_predictions_available": {prediction.model: True for prediction in predictions},
+        "profile_repair_candidate_appended": bool(profile_repair_metadata),
+        "profile_repair": profile_repair_metadata,
         "roll_vetoed": sorted(roll_vetoed & available),
         "geometry_vetoed": sorted(geometry_vetoed & available),
         "rolls": _metrics_payload(metrics, "roll_degrees"),

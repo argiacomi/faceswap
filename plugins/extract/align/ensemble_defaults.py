@@ -113,6 +113,7 @@ resolver_policy = ConfigItem(
     choices=[
         "roll_aware_veto",
         "learned_quality_v3",
+        "learned_quality_v3_routed",
     ],
 )
 
