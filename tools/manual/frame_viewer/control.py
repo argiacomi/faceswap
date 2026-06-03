@@ -51,7 +51,11 @@ class Navigation:
         frame_count = self._det_faces.filter.count
         if self._current_nav_frame_count == frame_count:
             logger.trace("Filtered count has not changed. Returning")
-        if self._globals.var_filter_mode.get() == "Misaligned Faces":
+        if self._globals.var_filter_mode.get() in (
+            "Misaligned Faces",
+            "Neighbor Outliers",
+            "Landmarks Outside Thumbnail",
+        ):
             self._det_faces.tk_face_count_changed.set(True)
         self._update_total_frame_count()
         if reset_progress:

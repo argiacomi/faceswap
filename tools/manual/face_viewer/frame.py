@@ -684,8 +684,17 @@ class Grid:
         :attr:`_display_faces`, :attr:`_raw_indices`, :attr:`_frames_list` and :attr:`is_valid`
         """
         self._face_size = self._canvas.face_size
-        self._raw_indices = self._detected_faces.filter.raw_indices
         self._frames_list = self._detected_faces.filter.frames_list
+        raw_indices_for_frames = getattr(
+            self._detected_faces.filter,
+            "_raw_indices_for_frames",
+            None,
+        )
+        self._raw_indices = (
+            raw_indices_for_frames(self._frames_list)
+            if callable(raw_indices_for_frames)
+            else self._detected_faces.filter.raw_indices
+        )
         self._get_grid()
         self._get_display_faces()
         self._canvas.coords("backdrop", 0, 0, *self.dimensions)

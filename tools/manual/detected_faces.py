@@ -631,26 +631,23 @@ class Filter:
         """The number of frames that meet the current filter criteria."""
         return len(self.frames_list)
 
-    @property
-    def raw_indices(self) -> dict[T.Literal["frame", "face"], list[int]]:
-        """The frame and face indices that meet the current filter criteria for each displayed
-        face.
+    def _raw_indices_for_frames(
+        self,
+        frames_list: T.Sequence[int],
+    ) -> dict[T.Literal["frame", "face"], list[int]]:
+        """Return display frame and face indices for one filtered-frame snapshot.
 
-        Issue #201 bug 3 — the ``All Frames`` and ``No Faces`` filters now
-        emit a synthetic ``(frame_idx, -1)`` entry for every frame that
-        has no faces, so the bottom grid allocates a cell for every such
-        frame instead of silently dropping it. The renderer recognises
-        ``face_idx == -1`` (with ``frame_idx >= 0``) as
-        "draw a full-frame thumbnail" — distinct from the trailing
-        grid padding which uses ``frame_idx == -1`` as well.
+        Dynamic filters can shrink after a landmark edit. Building raw indices from
+        the same frame-list snapshot used by navigation prevents the grid and
+        transport mapping from drifting apart.
         """
         frame_indices: list[int] = []
         face_indices: list[int] = []
-        face_counts = self._detected_faces.face_count_per_index  # Copy to avoid recalculations
+        face_counts = self._detected_faces.face_count_per_index
         filter_mode = self._globals.var_filter_mode.get()
         include_empty_frames = filter_mode in ("All Frames", "No Faces")
 
-        for frame_idx in self.frames_list:
+        for frame_idx in frames_list:
             count = face_counts[frame_idx]
             if count == 0 and include_empty_frames:
                 frame_indices.append(frame_idx)
@@ -670,6 +667,16 @@ class Filter:
             face_indices,
         )
         return retval
+
+    @property
+    def raw_indices(self) -> dict[T.Literal["frame", "face"], list[int]]:
+        """The frame and face indices that meet the current filter criteria.
+
+        ``raw_indices`` remains as a compatibility property. New callers that
+        also need ``frames_list`` should call ``_raw_indices_for_frames`` with
+        their already computed frame-list snapshot.
+        """
+        return self._raw_indices_for_frames(self.frames_list)
 
     @property
     def frames_list(self) -> list[int]:
@@ -738,6 +745,15 @@ class FaceUpdate:
         self._tk_unsaved = detected_faces.tk_unsaved
         self._extractor = detected_faces.extractor
         logger.debug("Initialized %s", self.__class__.__name__)
+
+    def _mark_filter_membership_dirty(self) -> None:
+        """Refresh the bottom grid when landmark edits can change the active filter."""
+        if self._globals.var_filter_mode.get() in (
+            "Misaligned Faces",
+            "Neighbor Outliers",
+            "Landmarks Outside Thumbnail",
+        ):
+            self._tk_face_count_changed.set(True)
 
     @property
     def _tk_edited(self) -> tk.BooleanVar:
@@ -1317,8 +1333,7 @@ class FaceUpdate:
         )
         assert aligned.face is not None
         face.thumbnail = generate_thumbnail(aligned.face, size=96)
-        if self._globals.var_filter_mode.get() == "Misaligned Faces":
-            self._detected_faces.tk_face_count_changed.set(True)
+        self._mark_filter_membership_dirty()
         self._tk_edited.set(True)
 
 

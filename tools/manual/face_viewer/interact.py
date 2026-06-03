@@ -51,12 +51,14 @@ class HoverBox:
             fill="",
             tags="hover_box",
         )
-        self._current_frame_index = None
-        self._current_face_index = None
+        self._current_frame_index: int | None = None
+        self._current_face_index: int | None = None
         self._canvas.bind("<Leave>", lambda e: self._clear())
         self._canvas.bind("<Motion>", self.on_hover)
-        self._canvas.bind("<ButtonPress-1>", lambda e: self._select_frame(multi_select=False))
-        self._canvas.bind("<Shift-ButtonPress-1>", lambda e: self._select_frame(multi_select=True))
+        self._canvas.bind("<ButtonPress-1>", lambda e: self._select_frame(e, multi_select=False))
+        self._canvas.bind(
+            "<Shift-ButtonPress-1>", lambda e: self._select_frame(e, multi_select=True)
+        )
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     @property
@@ -126,11 +128,18 @@ class HoverBox:
         self._canvas.itemconfig(self._box, state="normal")
         self._canvas.tag_raise(self._box)
 
-    def _select_frame(self, multi_select: bool) -> None:
+    def _select_frame(self, event: tk.Event, multi_select: bool) -> None:
         """Select the face and the subsequent frame (in the editor view) when a face is clicked
         on in the :class:`Viewport`."""
-        frame_id = self._current_frame_index
-        face_idx = self._current_face_index
+        coords = (
+            int(self._canvas.canvasx(event.x)),
+            int(self._canvas.canvasy(event.y)),
+        )
+        face = self._viewport.face_from_point(*coords)
+        frame_id = int(face[0])
+        face_idx = int(face[1])
+        self._current_frame_index = None if frame_id == -1 else frame_id
+        self._current_face_index = None if frame_id == -1 else face_idx
         is_zoomed = self._globals.is_zoomed
         logger.debug(
             "Face clicked. Global frame index: %s, Current frame_id: %s, "
@@ -141,7 +150,7 @@ class HoverBox:
             is_zoomed,
             multi_select,
         )
-        if frame_id is None or face_idx is None:
+        if frame_id == -1:
             return
 
         if int(face_idx) < 0:
@@ -156,7 +165,7 @@ class HoverBox:
                 return
 
             transport_id = self._grid.transport_index_from_frame(frame_id)
-            logger.trace(
+            logger.trace(  # type: ignore[attr-defined]
                 "frame_index: %s, transport_id: %s, face_idx: %s",
                 frame_id,
                 transport_id,
