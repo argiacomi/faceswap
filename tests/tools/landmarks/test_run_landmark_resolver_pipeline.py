@@ -412,6 +412,7 @@ def test_single_dataset_source_dir_is_passed_to_base_build(
     assert command[command.index("--dataset") + 1] == "wflw"
     assert command[command.index("--source-dir") + 1] == str(tmp_path / "wflw_source")
     assert command[command.index("--manifest-mode") + 1] == "replace"
+    assert "--include-39pt-profile" in command
 
 
 def test_hard_source_manifest_and_cache_default_to_aflw2000_3d(
@@ -437,6 +438,7 @@ def test_hard_source_manifest_and_cache_default_to_aflw2000_3d(
     )
     assert manifest_command[manifest_command.index("--manifest-mode") + 1] == "replace"
     assert "--hard-build-extra" in manifest_command
+    assert "--include-39pt-profile" in manifest_command
     assert cache_command[cache_command.index("--manifest") + 1] == str(paths.hard_source_manifest)
     assert cache_command[cache_command.index("--cache-dir") + 1] == str(paths.run_cache)
     assert "--run-models" in cache_command

@@ -87,7 +87,9 @@ STAGES: tuple[str, ...] = (
 )
 DEFAULT_MODELS = "fan,hrnet,spiga,orformer"
 DEFAULT_CANDIDATES = "fan,hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
-DEFAULT_HARD_SOURCE_DATASET = "aflw2000-3d"
+DEFAULT_DATASET = "wflw,cofw,merl-rav,aflw2000-3d,300w,menpo2d,multipie"
+MINED_HARD_SOURCE_DATASET = "mined"
+DEFAULT_HARD_SOURCE_DATASET = MINED_HARD_SOURCE_DATASET
 DEFAULT_PREDICTION_CACHE_DEVICE = "gpu"
 DEFAULT_PREDICTION_CACHE_COMPILE = "default"
 BASE_DATASET_MANIFEST_SENTINEL_FILENAME = ".base_dataset_manifest_complete.json"
@@ -102,6 +104,16 @@ CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
 PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V3,)
 STAGE_ALIASES: dict[str, str] = {}
+
+HARD_NEGATIVE_MANIFEST_FLAGS: dict[str, str] = {
+    "wflw": "--wflw-manifest",
+    "aflw2000-3d": "--aflw2000-manifest",
+    "merl-rav": "--merl-rav-manifest",
+    "cofw": "--cofw-manifest",
+    "menpo2d": "--menpo2d-manifest",
+    "multipie": "--multipie-manifest",
+    "300w": "--w300-manifest",
+}
 
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
@@ -438,7 +450,7 @@ def _split_csv_values(value: T.Any) -> tuple[str, ...]:
 
 
 def _base_datasets(args: argparse.Namespace) -> tuple[str, ...]:
-    return _split_csv_values(getattr(args, "dataset", None)) or ("wflw",)
+    return _split_csv_values(getattr(args, "dataset", None)) or _split_csv_values(DEFAULT_DATASET)
 
 
 def _validate_dataset_source_args(args: argparse.Namespace) -> None:
@@ -460,6 +472,12 @@ def _validate_dataset_source_args(args: argparse.Namespace) -> None:
             "Datasets cannot have both --dataset-source and --dataset-source-zip: "
             + ", ".join(overlap)
         )
+    if _mined_hard_source_enabled(args):
+        if getattr(args, "hard_source_dir", None) is not None:
+            raise ValueError("--hard-source-dir is not valid with --hard-source-dataset=mined")
+        if getattr(args, "hard_source_zip", None) is not None:
+            raise ValueError("--hard-source-zip is not valid with --hard-source-dataset=mined")
+        return
     if (
         getattr(args, "hard_source_dir", None) is not None
         and getattr(args, "hard_source_zip", None) is not None
@@ -505,6 +523,184 @@ def _dataset_source_zip_map(args: argparse.Namespace) -> dict[str, Path]:
     if source_zip is not None and len(datasets) == 1:
         mapping.setdefault(datasets[0], Path(source_zip))
     return mapping
+
+
+def _normalized_dataset_name(value: T.Any) -> str:
+    """Return the dataset key used by hard-negative mining manifests."""
+    name = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "aflw2000": "aflw2000-3d",
+        "aflw2000-3d": "aflw2000-3d",
+        "aflw2000-3d-68": "aflw2000-3d",
+        "merl-rav": "merl-rav",
+        "merlrav": "merl-rav",
+        "menpo": "menpo2d",
+        "menpo-2d": "menpo2d",
+        "menpo2d": "menpo2d",
+        "multi-pie": "multipie",
+        "multipie": "multipie",
+        "w300": "300w",
+        "300-w": "300w",
+        "300w": "300w",
+        "wflw": "wflw",
+        "cofw": "cofw",
+    }
+    return aliases.get(name, name)
+
+
+def _hard_source_dataset(args: argparse.Namespace) -> str:
+    return _normalized_dataset_name(
+        getattr(args, "hard_source_dataset", DEFAULT_HARD_SOURCE_DATASET)
+        or DEFAULT_HARD_SOURCE_DATASET
+    )
+
+
+def _mined_hard_source_enabled(args: argparse.Namespace) -> bool:
+    return _hard_source_dataset(args) == MINED_HARD_SOURCE_DATASET
+
+
+def _sample_dataset(sample: T.Mapping[str, T.Any]) -> str:
+    dataset = sample.get("dataset")
+    if not dataset:
+        source = sample.get("source")
+        if isinstance(source, T.Mapping):
+            dataset = source.get("dataset")
+    return _normalized_dataset_name(dataset)
+
+
+def _manifest_path_value(value: T.Any, *, base_dir: Path) -> T.Any:
+    """Return absolute path strings for manifest file path fields.
+
+    ``load_manifest`` resolves relative ``image`` / ``landmarks`` paths against
+    the manifest that contains them. Mined mode writes derived manifests under
+    ``hard_source/`` while the original generated files live under
+    ``dataset/generated/``. Convert copied path fields to absolute strings before
+    handing them to the miner so the final mined manifest remains relocatable
+    across the hard-source output directory.
+    """
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return value
+    path = Path(raw)
+    if path.is_absolute():
+        return raw
+    return str((base_dir / path).resolve())
+
+
+def _absolutize_manifest_sample_paths(
+    sample: T.Mapping[str, T.Any],
+    *,
+    base_dir: Path,
+) -> dict[str, T.Any]:
+    """Copy ``sample`` and absolutize path fields resolved from ``base_dir``."""
+    copied = dict(sample)
+    for key in (
+        "image",
+        "image_path",
+        "landmarks",
+        "ground_truth",
+        "mask",
+        "mask_path",
+        "segmentation",
+        "segmentation_path",
+    ):
+        if key in copied:
+            copied[key] = _manifest_path_value(copied[key], base_dir=base_dir)
+    return copied
+
+
+def _hard_negative_mined_input_dir(paths: PipelinePaths) -> Path:
+    return paths.hard_source_dataset_dir / "mined_inputs"
+
+
+def _mined_hard_negative_manifest_paths(paths: PipelinePaths) -> dict[str, Path]:
+    root = _hard_negative_mined_input_dir(paths)
+    return {dataset: root / dataset / "manifest.json" for dataset in HARD_NEGATIVE_MANIFEST_FLAGS}
+
+
+def _datasets_in_manifest(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    payload = _load_manifest_payload(path)
+    samples = payload.get("samples", payload.get("scenarios", []))
+    if not isinstance(samples, list):
+        return set()
+    datasets: set[str] = set()
+    for sample in samples:
+        if isinstance(sample, T.Mapping):
+            dataset = _sample_dataset(sample)
+            if dataset in HARD_NEGATIVE_MANIFEST_FLAGS:
+                datasets.add(dataset)
+    return datasets
+
+
+def _write_mined_hard_negative_input_manifests(paths: PipelinePaths) -> list[Path]:
+    """Split the merged base GT manifest into per-dataset manifests for mining.
+
+    The hard-negative miner intentionally takes separate dataset manifests so it
+    can apply dataset-specific defaults such as 300W→anchor and COFW→occlusion.
+    The pipeline already builds a merged base manifest, so mined mode derives
+    those per-dataset manifests from the merged run manifest without requiring
+    additional public CLI arguments.
+    """
+    payload = _load_manifest_payload(paths.run_manifest)
+    samples = payload.get("samples", payload.get("scenarios", []))
+    if not isinstance(samples, list):
+        raise ValueError(f"manifest samples must be a list: {paths.run_manifest}")
+
+    grouped: dict[str, list[dict[str, T.Any]]] = {
+        dataset: [] for dataset in HARD_NEGATIVE_MANIFEST_FLAGS
+    }
+    unsupported_counts: dict[str, int] = {}
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        dataset = _sample_dataset(sample)
+        if dataset in grouped:
+            grouped[dataset].append(
+                _absolutize_manifest_sample_paths(
+                    sample,
+                    base_dir=paths.run_manifest.parent,
+                )
+            )
+        elif dataset:
+            unsupported_counts[dataset] = unsupported_counts.get(dataset, 0) + 1
+
+    written: list[Path] = []
+    input_dir = _hard_negative_mined_input_dir(paths)
+    shutil.rmtree(input_dir, ignore_errors=True)
+
+    for dataset, dataset_samples in grouped.items():
+        if not dataset_samples:
+            continue
+        manifest_path = _mined_hard_negative_manifest_paths(paths)[dataset]
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_payload = dict(payload)
+        dataset_payload.pop("scenarios", None)
+        dataset_payload["samples"] = dataset_samples
+        existing_metadata = dataset_payload.get("metadata")
+        metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}
+        metadata.update(
+            {
+                "derived_from": str(paths.run_manifest),
+                "dataset": dataset,
+                "sample_count": len(dataset_samples),
+                "purpose": "mined_hard_negative_source_input",
+            }
+        )
+        dataset_payload["metadata"] = metadata
+        write_json(manifest_path, dataset_payload)
+        written.append(manifest_path)
+
+    if not written:
+        details = ", ".join(f"{key}={value}" for key, value in sorted(unsupported_counts.items()))
+        raise ValueError(
+            "mined hard-source mode found no supported datasets in "
+            f"{paths.run_manifest}. Unsupported dataset counts: {details or '<none>'}"
+        )
+    return written
 
 
 def _sha256_file(path: Path) -> str:
@@ -589,7 +785,10 @@ def _commands_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> l
                 manifest_mode="replace" if index == 0 else "merge",
                 source_dir=source_map.get(dataset),
                 source_zip=source_zip_map.get(dataset),
-                extra=getattr(args, "dataset_build_arg", []),
+                # Include 39-point profile samples by default (no-op for non
+                # Menpo2D/MultiPIE datasets); they feed the mined hard-source
+                # manifest and stay filtered out of canonical-68 scorer paths.
+                extra=["--include-39pt-profile", *getattr(args, "dataset_build_arg", [])],
             )
         )
     return commands
@@ -599,16 +798,67 @@ def _command_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> li
     return _commands_dataset_build(args, paths)[0]
 
 
+def _command_mined_hard_source_manifest(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> list[str]:
+    manifest_paths = _mined_hard_negative_manifest_paths(paths)
+    available = _datasets_in_manifest(paths.run_manifest)
+    datasets = [dataset for dataset in HARD_NEGATIVE_MANIFEST_FLAGS if dataset in available]
+    if not datasets:
+        # If the per-dataset input manifests were already prepared, prefer those.
+        datasets = [
+            dataset for dataset, manifest_path in manifest_paths.items() if manifest_path.is_file()
+        ]
+    if not datasets and not paths.run_manifest.exists():
+        # Full-pipeline dry-runs plan build_hard_source_manifest before the
+        # build_dataset_manifest command has executed. Show the expected command
+        # shape without requiring generated split inputs to exist yet.
+        datasets = list(HARD_NEGATIVE_MANIFEST_FLAGS)
+    if not datasets:
+        raise ValueError(
+            "--hard-source-dataset=mined requires supported datasets in the base "
+            f"manifest {paths.run_manifest}"
+        )
+
+    argv = [
+        args.python_executable,
+        _script("build_hard_negative_manifest.py"),
+        "--output-dir",
+        str(paths.hard_source_dataset_dir),
+    ]
+    for dataset in datasets:
+        argv.extend([HARD_NEGATIVE_MANIFEST_FLAGS[dataset], str(manifest_paths[dataset])])
+
+    extra = list(getattr(args, "hard_source_dataset_build_arg", []))
+    if "--write-audit" not in extra:
+        argv.append("--write-audit")
+    return _append_extra(argv, extra)
+
+
 def _command_hard_source_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    hard_source_dataset = _hard_source_dataset(args)
+    if hard_source_dataset == MINED_HARD_SOURCE_DATASET:
+        return _command_mined_hard_source_manifest(args, paths)
+
+    # Include MenpoBenchmark 39-point profile samples by default for the
+    # hard-source build so profile/large-yaw coverage is not silently dropped.
+    # The flag is prepended; an explicit ``--no-39pt-profile`` in the
+    # caller-supplied build args still wins because argparse honors the last
+    # occurrence.
+    extra_args = [
+        "--include-39pt-profile",
+        *getattr(args, "hard_source_dataset_build_arg", []),
+    ]
     return _dataset_build_command(
         args,
         paths,
-        dataset=getattr(args, "hard_source_dataset", DEFAULT_HARD_SOURCE_DATASET),
+        dataset=hard_source_dataset,
         output_dir=paths.hard_source_dataset_dir,
         manifest_mode="replace",
         source_dir=getattr(args, "hard_source_dir", None),
         source_zip=getattr(args, "hard_source_zip", None),
-        extra=getattr(args, "hard_source_dataset_build_arg", []),
+        extra=extra_args,
     )
 
 
@@ -1102,7 +1352,9 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
     stage = _canonical_stage_name(stage) or stage
     return {
         "build_dataset_manifest": [],
-        "build_hard_source_manifest": [],
+        "build_hard_source_manifest": [paths.run_manifest]
+        if _mined_hard_source_enabled(args)
+        else [],
         "build_prediction_cache": [paths.run_manifest],
         "build_hard_source_prediction_cache": [_effective_hard_source_manifest(args, paths)],
         "build_splits": [paths.run_manifest],
@@ -1195,7 +1447,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
     stage = _canonical_stage_name(stage) or stage
     cache_behavior = {
         "build_dataset_manifest": "writes merged run-root base GT manifest; first dataset uses --manifest-mode replace and later datasets use --manifest-mode merge; completion sentinel is written only after all dataset builds succeed",
-        "build_hard_source_manifest": "writes separate AFLW2000-3D hard-source manifest under run-root; --resume skips when manifest exists",
+        "build_hard_source_manifest": "writes hard-source manifest under run-root; --hard-source-dataset=mined derives per-dataset inputs from the merged base manifest and runs build_hard_negative_manifest.py; legacy single-dataset mode runs build_quality_dataset.py; --resume skips when manifest exists",
         "build_prediction_cache": "writes base GT predictions into the shared run-root prediction cache and records a base-cache sentinel",
         "build_hard_source_prediction_cache": "writes hard-source predictions into the same run-root prediction cache and records a hard-source-cache sentinel",
         "build_splits": "writes fit/select/report splits and split manifests; --resume skips when all split artifacts exist",
@@ -2416,10 +2668,38 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 )
             command = _command_hard_source_manifest(args, paths)
             if args.dry_run:
+                notes: list[str] = []
+                if _mined_hard_source_enabled(args):
+                    datasets = sorted(_datasets_in_manifest(paths.run_manifest))
+                    notes.append(
+                        "would derive mined hard-negative inputs for dataset(s): "
+                        + (", ".join(datasets) if datasets else "<none>")
+                    )
                 return StageResult(
-                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                    stage,
+                    "planned",
+                    command=command,
+                    outputs=outputs,
+                    contract=contract.to_json(),
+                    notes=notes,
                 )
+            notes = []
+            if _mined_hard_source_enabled(args):
+                written = _write_mined_hard_negative_input_manifests(paths)
+                notes.append(f"derived {len(written)} mined hard-negative input manifest(s)")
+                command = _command_hard_source_manifest(args, paths)
             _run_command(command)
+            if notes:
+                validated = _validate_stage_outputs(stage, paths, args)
+                return StageResult(
+                    stage,
+                    "ok",
+                    command=command,
+                    outputs=outputs,
+                    validated_outputs=validated,
+                    contract=contract.to_json(),
+                    notes=notes,
+                )
         elif stage == "build_prediction_cache":
             command = _command_prediction_cache(args, paths)
             if args.dry_run:
@@ -2774,7 +3054,7 @@ def _summary_payload(
             "hard_source": {
                 "manifest": str(_effective_hard_source_manifest(args, paths)),
                 "cache": str(paths.run_cache),
-                "dataset": getattr(args, "hard_source_dataset", DEFAULT_HARD_SOURCE_DATASET),
+                "dataset": _hard_source_dataset(args),
             },
             SOURCE_GT_HARD: {
                 "manifest": str(paths.hard_manifest),
@@ -2938,12 +3218,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--python-executable", default=sys.executable)
     parser.add_argument(
         "--dataset",
-        action="append",
-        default=None,
+        default=DEFAULT_DATASET,
         help=(
             "Base GT dataset to include in the search pool. Repeat the flag or pass a "
             "comma-separated list. The first dataset is written with manifest-mode=replace; "
-            "later datasets use manifest-mode=merge. Defaults to wflw."
+            "later datasets use manifest-mode=merge. Defaults to "
+            f"{DEFAULT_DATASET}."
         ),
     )
     parser.add_argument(
@@ -2971,7 +3251,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hard-source-dataset",
         default=DEFAULT_HARD_SOURCE_DATASET,
-        help="Dataset used to build the separate pose-driven GT-hard source manifest.",
+        help=(
+            "Dataset used to build the separate GT-hard source manifest. Use 'mined' "
+            "to derive per-dataset mined hard-negative inputs from the merged base "
+            "manifest and run build_hard_negative_manifest.py. Any other value uses "
+            "the legacy single-dataset build_quality_dataset.py path."
+        ),
     )
     parser.add_argument(
         "--hard-source-dir",
