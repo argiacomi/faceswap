@@ -265,6 +265,51 @@ class Augmentation(GlobalSection):
     )
 
 
+@dataclass
+class Automation(GlobalSection):
+    """trainer.automation section"""
+
+    helptext = _(
+        "Training Automation Options.\n"
+        "A set-and-forget phase scheduler that gradually ramps optional detail, perceptual, "
+        "boundary and identity losses as training progresses through broad-reconstruction, "
+        "detail-refinement and final-refinement phases.\n"
+        "The schedule is deterministic from the current iteration only: restarting at the same "
+        "iteration reproduces the same phase and multipliers. The 'off' default preserves "
+        "existing behavior exactly."
+    )
+
+    training_automation = ConfigItem(
+        datatype=str,
+        default="off",
+        choices=["off", "conservative", "balanced", "aggressive"],
+        gui_radio=True,
+        fixed=False,
+        group=_("phase scheduling"),
+        info=_(
+            "Automatically ramp optional loss components through deterministic training phases. "
+            "Configured loss weights are treated as the requested maximums; the scheduler only "
+            "scales them down during earlier phases and never above the configured value."
+            "\n\toff - Disable automation. Effective loss weights are exactly as configured."
+            "\n\tconservative - Late, gentle ramps with capped detail and identity strength."
+            "\n\tbalanced - Moderate ramp timing and strength. Recommended starting point."
+            "\n\taggressive - Early, full-strength ramps."
+        ),
+    )
+
+    training_automation_dry_run = ConfigItem(
+        datatype=bool,
+        default=False,
+        fixed=False,
+        group=_("phase scheduling"),
+        info=_(
+            "Preview mode. Log the scheduled phase and effective multipliers each iteration "
+            "without applying them to training, so you can see what the selected automation mode "
+            "would do. Ignored when 'training_automation' is 'off'."
+        ),
+    )
+
+
 def get_defaults() -> dict[str, GlobalSection]:
     """Obtain the default values for adding to the config.ini file
 

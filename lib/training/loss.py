@@ -149,6 +149,19 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         self._identity_start_iteration = identity_start_iteration
         self._iteration = 0
 
+        # First configured reconstruction loss is treated as the "primary" component, the
+        # remainder as "secondary". The phase scheduler injects per-component multipliers via
+        # :meth:`set_schedule`; the defaults below are exact no-ops so disabled automation and
+        # un-scheduled training behave identically.
+        self._primary_function: str | None = next(iter(self._functions), None)
+        self._schedule: dict[str, float] = {
+            "primary_loss": 1.0,
+            "secondary_loss": 1.0,
+            "boundary_loss": 1.0,
+            "region_perceptual_loss": 1.0,
+            "identity_loss": 1.0,
+        }
+
         self._mask_loss_function = (
             None
             if mask_loss is None
@@ -188,6 +201,32 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
             The current model training iteration
         """
         self._iteration = iteration
+
+    def set_schedule(self, multipliers: T.Mapping[str, float] | None) -> None:
+        """Inject scheduled per-component loss multipliers from the phase scheduler.
+
+        The multipliers are applied on top of the user-configured loss weights, which remain
+        the requested maximums. Passing ``None`` (or omitting a key) restores the no-op default
+        of ``1.0`` for that component, so disabled automation is an exact behavioral no-op.
+
+        Parameters
+        ----------
+        multipliers
+            Mapping of loss-component name (``primary_loss``, ``secondary_loss``,
+            ``boundary_loss``, ``region_perceptual_loss``, ``identity_loss``) to a non-negative
+            multiplier, or ``None`` to reset all components to ``1.0``.
+        """
+        for name in self._schedule:
+            value = 1.0 if multipliers is None else float(multipliers.get(name, 1.0))
+            if value < 0.0:
+                raise ValueError(f"Scheduled multiplier '{name}' must be >= 0.0. Got {value}")
+            self._schedule[name] = value
+
+    def _function_schedule_multiplier(self, name: str) -> float:
+        """Return the scheduled multiplier for a configured reconstruction loss function."""
+        if name == self._primary_function:
+            return self._schedule["primary_loss"]
+        return self._schedule["secondary_loss"]
 
     def _occlusion_weight(self, meta: BatchMeta, index: int) -> torch.Tensor | None:
         """Obtain the per-pixel occlusion-exclusion weight for an output if enabled.
@@ -445,12 +484,14 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         if self._boundary_loss is not None and face_mask is not None:
             loss = self._boundary_loss(y_true, y_pred, face_mask)
             unweighted["boundary"] = loss
-            weighted["boundary"] = loss * self._boundary_weight
+            weighted["boundary"] = loss * self._boundary_weight * self._schedule["boundary_loss"]
 
         if self._region_perceptual_loss is not None:
             loss = self._region_perceptual_loss(y_true, y_pred, face_mask, eye_mask, mouth_mask)
             unweighted["region_perceptual"] = loss
-            weighted["region_perceptual"] = loss * self._region_perceptual_weight
+            weighted["region_perceptual"] = (
+                loss * self._region_perceptual_weight * self._schedule["region_perceptual_loss"]
+            )
 
         if (
             self._identity_loss is not None
@@ -459,7 +500,7 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         ):
             loss = self._identity_loss(y_true, y_pred, face_mask)
             unweighted["identity"] = loss
-            weighted["identity"] = loss * self._identity_weight
+            weighted["identity"] = loss * self._identity_weight * self._schedule["identity_loss"]
 
         return unweighted, weighted
 
@@ -505,7 +546,10 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
 
             unweighted = self._get_spatial_loss(y_true, y_pred, meta, idx)
             unweighted |= self._get_non_spatial_loss(y_true, y_pred, meta, idx)
-            weighted = {k: v * self._weights[k] for k, v in unweighted.items()}
+            weighted = {
+                k: v * self._weights[k] * self._function_schedule_multiplier(k)
+                for k, v in unweighted.items()
+            }
 
             extra_unweighted, extra_weighted = self._get_extra_losses(
                 y_true, y_pred, meta, idx, idx == largest_idx

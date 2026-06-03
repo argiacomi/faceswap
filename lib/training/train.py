@@ -27,6 +27,7 @@ from lib.torch_utils import (
 from lib.training.batch_size_finder import BatchSizeProbe, TrainingBatchSizeFinder
 from lib.training.data import PreviewLoader, TrainLoader, get_label, get_sorted_images
 from lib.training.faceqa_diagnostics import FaceQALossDiagnostics
+from lib.training.phase_scheduler import ScheduleState, TrainingPhaseScheduler
 from lib.training.preview import Samples
 from lib.training.preview_diagnostics import PreviewDiagnostics
 from lib.training.tensorboard import TorchTensorBoard
@@ -134,6 +135,9 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         self._tensorboard = self._set_tensorboard()
         self._faceqa_diagnostics = self._set_faceqa_diagnostics()
         self._faceqa_diagnostic_logs: dict[str, float] = {}
+        self._phase_scheduler = self._set_phase_scheduler()
+        self._phase_schedule_state: ScheduleState | None = None
+        self._phase_last_logged: str | None = None
         self._preview_diagnostics = self._set_preview_diagnostics()
         self._samples = Samples(
             self._model.coverage_ratio,
@@ -435,6 +439,53 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         logger.debug("[Trainer] No learning rate finder rate. Not setting")
         return False
 
+    def _set_phase_scheduler(self) -> TrainingPhaseScheduler:
+        """Build the deterministic training phase scheduler from trainer config.
+
+        Returns
+        -------
+        The configured :class:`~lib.training.phase_scheduler.TrainingPhaseScheduler`. When the
+        automation mode is ``"off"`` the scheduler is a behavioral no-op.
+        """
+        mode = str(trn_cfg.Automation.training_automation())
+        dry_run = bool(trn_cfg.Automation.training_automation_dry_run())
+        scheduler: TrainingPhaseScheduler = TrainingPhaseScheduler.for_mode(
+            T.cast(T.Any, mode),
+            dry_run=dry_run and mode != "off",
+        )
+        logger.debug("[Trainer] Phase scheduler: mode=%s, dry_run=%s", mode, dry_run)
+        if mode != "off":
+            logger.info(
+                "Training automation enabled: mode='%s'%s",
+                mode,
+                " (dry-run, no behavior change)" if dry_run else "",
+            )
+        return scheduler
+
+    def _update_phase_schedule(self) -> None:
+        """Update the loss collator schedule for the current iteration and log transitions.
+
+        Deterministic from the current total iteration only, so resuming at the same iteration
+        reproduces the same phase and multipliers. A no-op when automation is disabled.
+        """
+        if self._phase_scheduler.mode == "off":
+            return
+
+        state = self._phase_scheduler.at(self._model.iterations)
+        self._phase_schedule_state = state
+        self._plugin.loss_func.set_schedule(state.effective_multipliers.as_dict())
+
+        if state.phase != self._phase_last_logged:
+            logger.info(
+                "[Phase scheduler] %s -> %s at iteration %s (%s)%s",
+                self._phase_last_logged or "start",
+                state.phase,
+                state.iteration,
+                state.transition_reason,
+                " [dry-run]" if state.dry_run else "",
+            )
+            self._phase_last_logged = state.phase
+
     def _set_tensorboard(self) -> TorchTensorBoard | None:
         """Set up Tensorboard callback for logging loss.
 
@@ -649,6 +700,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         try:
             inputs, targets, meta = next(self._train_loader)
             self._plugin.loss_func.set_iteration(self._model.iterations)
+            self._update_phase_schedule()
             loss = self._plugin.train_batch(
                 [i.to(self._device) for i in inputs],
                 [t.to(self._device) for t in targets],
@@ -709,6 +761,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                 logs[f"mask_{lbl}"] = out.mask.mean().item()
         if self._faceqa_diagnostic_logs:
             logs["faceqa_diagnostics"] = self._faceqa_diagnostic_logs
+        if self._phase_schedule_state is not None:
+            logs.update(self._phase_schedule_state.tensorboard_scalars())
         self._tensorboard.on_train_batch_end(self._model.iterations, logs=logs)
 
     def _collate_and_store_loss(self, loss: list[BatchLoss]) -> np.ndarray:

@@ -291,3 +291,92 @@ def test_collator_occlusion_requires_mask() -> None:
     baseline = _collator()(y_true, y_pred, meta).unweighted[0]["mae"]
     no_mask = _collator(occlusion_strength=1.0)(y_true, y_pred, meta).unweighted[0]["mae"]
     assert torch.allclose(baseline, no_mask)
+
+
+# ---------------------------------------------------------------------------
+# Phase scheduler multiplier injection (set_schedule)
+# ---------------------------------------------------------------------------
+def _extras_collator() -> LossCollator:
+    """Build a collator with every advanced loss enabled for schedule tests."""
+    return _collator(
+        boundary_loss=BoundaryLoss("mae", 4, "both", "bgr"),
+        boundary_weight=0.1,
+        region_perceptual_loss=RegionWeightedPerceptualLoss("ssim", "bgr", 2.0, 2.0, 2.0, 2.0),
+        region_perceptual_weight=0.1,
+        identity_loss=IdentityLoss(_FakeRecognizer(), 16, "bgr"),
+        identity_weight=0.1,
+    )
+
+
+def test_set_schedule_identity_is_behavioral_noop() -> None:
+    """Identity (all 1.0) multipliers reproduce the un-scheduled weighted values exactly."""
+    torch.manual_seed(0)
+    y_true, y_pred = _targets()
+    collator = _extras_collator()
+
+    baseline = {k: v.clone() for k, v in collator(y_true, y_pred, _meta()).weighted[0].items()}
+    collator.set_schedule(
+        {
+            "primary_loss": 1.0,
+            "secondary_loss": 1.0,
+            "boundary_loss": 1.0,
+            "region_perceptual_loss": 1.0,
+            "identity_loss": 1.0,
+        }
+    )
+    out = collator(y_true, y_pred, _meta()).weighted[0]
+
+    for key, value in baseline.items():
+        assert torch.allclose(out[key], value)
+
+
+def test_set_schedule_scales_primary_and_secondary_independently() -> None:
+    """``primary_loss`` scales the first function only; ``secondary_loss`` scales the rest."""
+    y_true, y_pred = _targets()
+    collator = _collator()  # functions: ssim (primary), mae (secondary)
+
+    baseline = collator(y_true, y_pred, _meta()).weighted[0]
+    collator.set_schedule({"primary_loss": 0.5, "secondary_loss": 0.0})
+    out = collator(y_true, y_pred, _meta()).weighted[0]
+
+    assert torch.allclose(out["ssim"], baseline["ssim"] * 0.5)
+    assert torch.allclose(out["mae"], torch.zeros_like(baseline["mae"]))
+
+
+def test_set_schedule_scales_extra_losses() -> None:
+    """Boundary, region-perceptual and identity multipliers scale only their components."""
+    y_true, y_pred = _targets()
+    collator = _extras_collator()
+
+    baseline = collator(y_true, y_pred, _meta()).weighted[0]
+    collator.set_schedule(
+        {"boundary_loss": 0.0, "region_perceptual_loss": 0.25, "identity_loss": 0.5}
+    )
+    out = collator(y_true, y_pred, _meta()).weighted[0]
+
+    assert torch.allclose(out["boundary"], torch.zeros_like(baseline["boundary"]))
+    assert torch.allclose(out["region_perceptual"], baseline["region_perceptual"] * 0.25)
+    assert torch.allclose(out["identity"], baseline["identity"] * 0.5)
+    # Reconstruction components are untouched by the extra-loss multipliers.
+    assert torch.allclose(out["ssim"], baseline["ssim"])
+
+
+def test_set_schedule_none_resets_to_identity() -> None:
+    """Passing ``None`` restores the no-op multipliers."""
+    y_true, y_pred = _targets()
+    collator = _collator()
+
+    baseline = collator(y_true, y_pred, _meta()).weighted[0]
+    collator.set_schedule({"primary_loss": 0.0, "secondary_loss": 0.0})
+    collator.set_schedule(None)
+    out = collator(y_true, y_pred, _meta()).weighted[0]
+
+    for key, value in baseline.items():
+        assert torch.allclose(out[key], value)
+
+
+def test_set_schedule_rejects_negative_multiplier() -> None:
+    """Negative multipliers are rejected to avoid sign-flipping the loss."""
+    collator = _collator()
+    with pytest.raises(ValueError, match="primary_loss"):
+        collator.set_schedule({"primary_loss": -1.0})
