@@ -2658,12 +2658,15 @@ def evaluate_runtime_resolver_scorer(
     primary_scorer_policy = scorer_policy_key(scorer)
     if not promotion_policy:
         promotion_policy = primary_scorer_policy
-    elif promotion_policy != primary_scorer_policy:
+    elif (
+        promotion_policy != primary_scorer_policy
+        and promotion_policy != ROUTED_GENERAL_PROFILE_POLICY
+    ):
         raise ValueError(
-            "promotion_policy must match the evaluated primary_scorer_policy; "
+            "promotion_policy must match the evaluated primary_scorer_policy "
+            "or be learned_quality_v3_routed with both general/profile scorers present; "
             f"got promotion_policy={promotion_policy!r} and "
-            f"primary_scorer_policy={primary_scorer_policy!r}. "
-            "Evaluate routed as the primary policy before promoting it."
+            f"primary_scorer_policy={primary_scorer_policy!r}."
         )
 
     scorer_summary = policy_summary(
@@ -2742,6 +2745,37 @@ def evaluate_runtime_resolver_scorer(
         worst_sample_count=worst_sample_count,
     )
 
+    if promotion_policy == ROUTED_GENERAL_PROFILE_POLICY:
+        routed_choices = report_extra_scorer_choices.get(ROUTED_GENERAL_PROFILE_POLICY)
+        if routed_choices is None:
+            raise ValueError(
+                "promotion_policy learned_quality_v3_routed requires both "
+                "learned_quality_v3.json and learned_quality_v3_profile.json next to "
+                "the scorer artifact"
+            )
+        primary_scorer_policy = ROUTED_GENERAL_PROFILE_POLICY
+        scorer_choices = dict(routed_choices)
+        scorer_summary = policy_summary(
+            contexts,
+            scorer_choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+        report_extra_scorer_choices[ROUTED_GENERAL_PROFILE_POLICY] = scorer_choices
+        metrics_by_split = split_metric_summary(
+            contexts,
+            choices=scorer_choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+        region_report_summary = write_region_reports(
+            contexts=contexts,
+            choices=scorer_choices,
+            source_by_sample_id=source_by_sample_id,
+            output_dir=output_dir,
+            failure_threshold=failure_threshold,
+            worst_sample_count=worst_sample_count,
+        )
+        hard_bucket_failed_gates = hard_bucket_promotion_gates(metrics_by_split)
+
     installed_policy, installed_scorers, installed_status = load_installed_policy_scorers(
         installed_scorer_dir
     )
@@ -2768,6 +2802,33 @@ def evaluate_runtime_resolver_scorer(
         extra_scorer_choices[f"installed_current_{policy_name}"] = installed_scorer_choices[
             policy_name
         ]
+
+    if (
+        installed_policy == ROUTED_GENERAL_PROFILE_POLICY
+        and SCORER_POLICY_GENERAL in installed_scorers
+        and SCORER_POLICY_PROFILE in installed_scorers
+    ):
+        installed_routed_progress: (
+            T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None
+        ) = None
+        if progress is not None:
+
+            def installed_routed_progress(
+                values: T.Sequence[T.Any],
+                desc: str,
+            ) -> T.Iterable[T.Any]:
+                return progress(values, f"{desc} [installed_current_learned_quality_v3_routed]")
+
+        installed_scorer_choices[ROUTED_GENERAL_PROFILE_POLICY] = score_policy_choices_routed(
+            contexts,
+            installed_scorers,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+            progress=installed_routed_progress,
+        )
+        extra_scorer_choices[f"installed_current_{ROUTED_GENERAL_PROFILE_POLICY}"] = (
+            installed_scorer_choices[ROUTED_GENERAL_PROFILE_POLICY]
+        )
 
     current_summary = policy_summary(
         contexts,
