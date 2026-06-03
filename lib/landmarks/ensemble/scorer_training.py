@@ -795,9 +795,18 @@ def train_runtime_resolver_scorer_suite(
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
+    profile39_manifest: Path | None = None,
+    profile39_cache_dir: Path | None = None,
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, T.Any]:
-    """Train the active v3 scorer from one canonical row split."""
+    """Train the active v3 scorer from one canonical row split.
+
+    When ``profile39_manifest`` / ``profile39_cache_dir`` are supplied, the
+    profile specialist (``learned_quality_v3_profile``) is trained from the
+    partial-schema 39-point profile rows instead of the canonical-profile rows,
+    and a separate profile39 report is written. 39-point GT never enters the
+    canonical-68 scorer target.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     contexts = load_scorer_contexts(
@@ -941,6 +950,51 @@ def train_runtime_resolver_scorer_suite(
         "train_rows": len(profile_train_rows),
         "eval_rows": len(profile_eval_rows),
     }
+
+    profile39_status = "skipped_no_profile39_inputs"
+    if profile39_manifest is not None and profile39_cache_dir is not None:
+        from lib.landmarks.ensemble.profile39_dataset import load_profile39_rows
+        from lib.landmarks.ensemble.profile39_training import (
+            PROFILE39_SCORER_ARTIFACT,
+            train_profile39_specialist,
+        )
+
+        profile39_rows = load_profile39_rows(
+            manifest_path=profile39_manifest,
+            cache_dir=profile39_cache_dir,
+            weights_path=weights_path,
+            candidates=candidates,
+            outlier_threshold=outlier_threshold,
+        )
+        if not profile39_rows:
+            profile39_status = "skipped_no_profile39_rows"
+        else:
+            profile39_dir = output_dir / "v3_profile39"
+            try:
+                profile39_metrics = train_profile39_specialist(
+                    profile39_rows,
+                    output_dir=profile39_dir,
+                    candidates=candidates,
+                    learning_rate=learning_rate,
+                    iterations=iterations,
+                    num_leaves=num_leaves,
+                    split_seed=split_seed,
+                )
+                # The partial-schema 39-point ranker becomes the profile policy
+                # when 39-point data is available (kept separate from canonical).
+                canonical_v3_profile = scorers_dir / "learned_quality_v3_profile.json"
+                shutil.copy2(profile39_dir / PROFILE39_SCORER_ARTIFACT, canonical_v3_profile)
+                metrics["scorers"]["learned_quality_v3_profile"] = {
+                    **profile39_metrics,
+                    "canonical_artifact": str(canonical_v3_profile),
+                    "trained_from": "profile39_partial_schema",
+                }
+                metrics["profile39"] = profile39_metrics
+                profile39_status = "trained"
+            except (ValueError, RuntimeError) as err:
+                profile39_status = f"skipped: {err}"
+    metrics["profile39_specialist_status"] = profile39_status
+
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
     metrics["artifact"] = str(canonical_v3)
