@@ -906,6 +906,7 @@ def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(
     required_and_outputs = (
         paths.hard_manifest,
         paths.production_manifest,
+        paths.hard_source_manifest,
         paths.hard_source_cache_sentinel,
         paths.production_cache_sentinel,
         paths.best_weights,
@@ -1352,6 +1353,7 @@ def test_resume_skips_completed_stages_records_validated_outputs_and_progress(
     )
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
+    _export_artifacts(args, paths)
     (paths.output_root / "config_update_preview.json").write_text("{}\n", encoding="utf-8")
     (paths.output_root / "config_update_patch.ini").write_text(
         "[align.ensemble]\n", encoding="utf-8"

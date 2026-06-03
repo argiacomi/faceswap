@@ -14,6 +14,7 @@ import numpy as np
 
 from lib.landmarks.ensemble.production_artifacts import (
     LEARNED_POLICIES,
+    ROUTED_GENERAL_PROFILE_POLICY,
     ProductionBundleError,
     load_production_bundle,
 )
@@ -164,7 +165,6 @@ V3_RESERVED_ROW_FIELDS: tuple[str, ...] = (
     "soft_structural_penalty_v3",
 )
 
-ROUTED_GENERAL_PROFILE_POLICY = "routed_general_profile"
 PROFILE_SCORER_METRICS_JSON = "profile_scorer_metrics.json"
 PROFILE_SCORER_POLICY_REPORT_JSON = "profile_scorer_policy_report.json"
 PROFILE_SCORER_POLICY_REPORT_CSV = "profile_scorer_policy_report.csv"
@@ -2600,6 +2600,40 @@ def evaluate_runtime_resolver_scorer(
         primary_scorer_policy: scorer_choices,
     }
 
+    # Evaluate the deployable routed policy when the sibling profile scorer is present.
+    # The runtime bundle uses concrete scorers keyed by learned_quality_v3 and
+    # learned_quality_v3_profile, while config promotes learned_quality_v3_routed.
+    scorers_by_policy: dict[str, RuntimeResolverLearnedScorerLike] = {
+        primary_scorer_policy: scorer,
+    }
+    profile_scorer_path = scorer_path.parent / "learned_quality_v3_profile.json"
+    if primary_scorer_policy == SCORER_POLICY_GENERAL and profile_scorer_path.is_file():
+        try:
+            profile_scorer = load_runtime_resolver_scorer(profile_scorer_path)
+            assert_lower_score_is_better(profile_scorer)
+            if scorer_policy_key(profile_scorer) == SCORER_POLICY_PROFILE:
+                scorers_by_policy[SCORER_POLICY_PROFILE] = profile_scorer
+        except (OSError, ValueError, RuntimeError):
+            pass
+
+    if SCORER_POLICY_GENERAL in scorers_by_policy and SCORER_POLICY_PROFILE in scorers_by_policy:
+        routed_progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None
+        if progress is not None:
+
+            def routed_progress(
+                values: T.Sequence[T.Any],
+                desc: str,
+            ) -> T.Iterable[T.Any]:
+                return progress(values, f"{desc} [learned_quality_v3_routed]")
+
+        extra_scorer_choices[ROUTED_GENERAL_PROFILE_POLICY] = score_policy_choices_routed(
+            contexts,
+            scorers_by_policy,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+            progress=routed_progress,
+        )
+
     report_extra_scorer_choices = dict(extra_scorer_choices)
 
     profile_policy_scorers = load_eval_policy_scorers(scorer_path, scorer)
@@ -2849,7 +2883,8 @@ def evaluate_runtime_resolver_scorer(
             {
                 key: value
                 for key, value in production_reweighted_gt_policy_metrics["policies"].items()
-                if key in LEARNED_POLICIES and isinstance(value, dict)
+                if key in (*LEARNED_POLICIES, ROUTED_GENERAL_PROFILE_POLICY)
+                and isinstance(value, dict)
             }
         )
     elif production_contexts:
@@ -2857,7 +2892,8 @@ def evaluate_runtime_resolver_scorer(
             {
                 key: value
                 for key, value in production_only_policy_metrics.items()
-                if key in LEARNED_POLICIES and isinstance(value, dict)
+                if key in (*LEARNED_POLICIES, ROUTED_GENERAL_PROFILE_POLICY)
+                and isinstance(value, dict)
             }
         )
     else:
@@ -2865,7 +2901,9 @@ def evaluate_runtime_resolver_scorer(
             {
                 key: value
                 for key, value in {primary_scorer_policy: scorer_summary}.items()
-                if key in LEARNED_POLICIES and isinstance(value, dict) and value
+                if key in (*LEARNED_POLICIES, ROUTED_GENERAL_PROFILE_POLICY)
+                and isinstance(value, dict)
+                and value
             }
         )
     selected_policy_metrics.setdefault(

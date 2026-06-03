@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from lib.landmarks.datasets.manifest_io import filter_canonical_68_samples, load_manifest
 from lib.landmarks.ensemble.production_artifacts import (
     LEARNED_POLICIES,
+    ROUTED_GENERAL_PROFILE_POLICY,
     install_production_bundle,
 )
 from lib.landmarks.ensemble.scorer_dataset import (
@@ -103,7 +104,7 @@ CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
-SCORER_VERSION_LEARNED_QUALITY_V3_ROUTED = "learned_quality_v3_routed"
+SCORER_VERSION_LEARNED_QUALITY_V3_ROUTED = ROUTED_GENERAL_PROFILE_POLICY
 
 PROMOTED_POLICIES = (
     SCORER_VERSION_LEARNED_QUALITY_V3,
@@ -1152,6 +1153,11 @@ def _scorer_training_sentinel_payload(
         "production_manifest_sha256": _sha256_file(paths.production_manifest),
         "hard_source_cache_sentinel": str(paths.hard_source_cache_sentinel),
         "hard_source_cache_sentinel_sha256": _sha256_file(paths.hard_source_cache_sentinel),
+        "profile39_manifest": str(_effective_hard_source_manifest(args, paths)),
+        "profile39_manifest_sha256": _sha256_file(_effective_hard_source_manifest(args, paths)),
+        "profile39_cache_dir": str(paths.run_cache),
+        "profile39_cache_sentinel": str(paths.hard_source_cache_sentinel),
+        "profile39_cache_sentinel_sha256": _sha256_file(paths.hard_source_cache_sentinel),
         "production_cache_sentinel": str(paths.production_cache_sentinel),
         "production_cache_sentinel_sha256": _sha256_file(paths.production_cache_sentinel),
         "best_weights": str(paths.best_weights),
@@ -1437,6 +1443,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         ),
         "scorer_training": [
             paths.hard_manifest,
+            _effective_hard_source_manifest(args, paths),
             paths.run_cache,
             paths.hard_source_cache_sentinel,
             paths.production_manifest,
@@ -1446,7 +1453,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.frozen_gt_metadata,
         ],
         "scorer_evaluation": [
-            _promoted_scorer_source(args, paths),
+            *_promoted_scorer_sources(args, paths).values(),
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
         ],
@@ -1454,7 +1461,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         "artifact_export": [
             paths.best_setup,
             paths.best_weights,
-            _promoted_scorer_source(args, paths),
+            *_promoted_scorer_sources(args, paths).values(),
             paths.scorer_report,
             paths.frozen_gt_metadata,
         ],
@@ -1603,17 +1610,62 @@ def _dataset_manifest_sentinel_matches(args: argparse.Namespace, paths: Pipeline
     )
 
 
+def _promoted_scorer_sources(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, Path]:
+    """Return concrete scorer artifacts required by the promoted runtime policy."""
+    policy = _promoted_runtime_policy(args, paths)
+    concrete = {
+        SCORER_VERSION_LEARNED_QUALITY_V3: paths.canonical_v3_scorer_artifact,
+        "learned_quality_v3_profile": paths.canonical_v3_profile_scorer_artifact,
+    }
+    if policy == SCORER_VERSION_LEARNED_QUALITY_V3_ROUTED:
+        return dict(concrete)
+    if policy in concrete:
+        return {policy: concrete[policy]}
+    raise PipelineContractError(f"unsupported promoted learned policy {policy!r}")
+
+
+def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
+    """Compatibility source for legacy single-scorer report fields.
+
+    Routed runtime installs both concrete scorers; the legacy top-level
+    source/version fields point at the general scorer while the structured
+    scorer_sources payload carries the full set.
+    """
+    sources = _promoted_scorer_sources(args, paths)
+    return sources.get(SCORER_VERSION_LEARNED_QUALITY_V3) or next(iter(sources.values()))
+
+
+def _scorer_source_manifest(paths: T.Mapping[str, Path]) -> dict[str, dict[str, str]]:
+    payload: dict[str, dict[str, str]] = {}
+    for policy, path in sorted(paths.items()):
+        scorer_payload = _read_json(path)
+        payload[policy] = {
+            "source": str(path),
+            "source_sha256": _sha256_file(path),
+            "version": str(
+                scorer_payload.get("scorer_version") or scorer_payload.get("version") or policy
+            ),
+            "target": str(scorer_payload.get("target") or ""),
+            "model_type": str(scorer_payload.get("model_type") or ""),
+        }
+    return payload
+
+
 def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
     manifest = _read_json(paths.promotion_manifest)
+    scorer_sources = _promoted_scorer_sources(args, paths)
+    expected_sources = _scorer_source_manifest(scorer_sources)
     scorer_source = _promoted_scorer_source(args, paths)
     scorer_payload = _read_json(scorer_source)
     expected_version = str(
         scorer_payload.get("scorer_version")
         or scorer_payload.get("version")
         or args.promoted_scorer_version
+        or SCORER_VERSION_LEARNED_QUALITY_V3
     )
     return (
-        manifest.get("active_policy") == _promoted_runtime_policy(args)
+        manifest.get("active_policy") == _promoted_runtime_policy(args, paths)
+        and manifest.get("runtime_resolver_scorer_sources") == expected_sources
         and manifest.get("runtime_resolver_scorer_source") == str(scorer_source)
         and manifest.get("runtime_resolver_scorer_source_sha256") == _sha256_file(scorer_source)
         and str(manifest.get("runtime_resolver_scorer_version") or "") == expected_version
@@ -2161,7 +2213,9 @@ def _promotion_check(
     report = _read_json(paths.scorer_report)
 
     policy_name = (
-        _promoted_runtime_policy(args) if args is not None else SCORER_VERSION_LEARNED_QUALITY_V3
+        _promoted_runtime_policy(args, paths)
+        if args is not None
+        else SCORER_VERSION_LEARNED_QUALITY_V3
     )
 
     gates = report.get("installed_baseline_promotion")
@@ -2330,18 +2384,19 @@ def _validate_stage_outputs(
     return validated
 
 
-def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
-    policy = _promoted_runtime_policy(args)
-    if policy != SCORER_VERSION_LEARNED_QUALITY_V3:
-        raise PipelineContractError(f"unsupported promoted learned policy {policy!r}")
-    return paths.canonical_v3_scorer_artifact
-
-
-def _promoted_runtime_policy(args: argparse.Namespace) -> str:
+def _promoted_runtime_policy(
+    args: argparse.Namespace,
+    paths: PipelinePaths | None = None,
+) -> str:
     explicit = str(getattr(args, "promoted_policy", "") or "")
     if explicit:
         return explicit
-    return str(getattr(args, "promoted_scorer_version", "") or SCORER_VERSION_LEARNED_QUALITY_V3)
+    requested = str(getattr(args, "promoted_scorer_version", "") or "")
+    if requested:
+        return requested
+    if paths is not None and paths.canonical_v3_profile_scorer_artifact.is_file():
+        return SCORER_VERSION_LEARNED_QUALITY_V3_ROUTED
+    return SCORER_VERSION_LEARNED_QUALITY_V3
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
@@ -2358,9 +2413,11 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
     output_root/current tree.
     """
     _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
+    scorer_sources = _promoted_scorer_sources(args, paths)
     scorer_source = _promoted_scorer_source(args, paths)
     scorer_payload = _read_json(scorer_source)
-    active_policy = _promoted_runtime_policy(args)
+    active_policy = _promoted_runtime_policy(args, paths)
+    scorer_source_manifest = _scorer_source_manifest(scorer_sources)
     manifest: dict[str, T.Any] = {
         "active_policy": active_policy,
         "best_setup": str(paths.best_setup),
@@ -2369,6 +2426,7 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
         "best_weights_sha256": _sha256_file(paths.best_weights),
         "runtime_resolver_scorer_source": str(scorer_source),
         "runtime_resolver_scorer_source_sha256": _sha256_file(scorer_source),
+        "runtime_resolver_scorer_sources": scorer_source_manifest,
         "runtime_resolver_scorer_version": str(
             scorer_payload.get("scorer_version")
             or scorer_payload.get("version")
@@ -2378,6 +2436,7 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
             "active_policy": active_policy,
             "source": str(scorer_source),
             "source_sha256": _sha256_file(scorer_source),
+            "scorers": scorer_source_manifest,
             "target": str(scorer_payload.get("target") or ""),
             "model_type": str(scorer_payload.get("model_type") or ""),
             "immutable_scorer_artifact": True,
@@ -2421,7 +2480,7 @@ def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str,
         "reject_outliers": "False",
         "outlier_threshold": "3.5",
         "min_models": "1",
-        "resolver_policy": _promoted_runtime_policy(args),
+        "resolver_policy": _promoted_runtime_policy(args, paths),
         "use_alignment_resolver": "True",
         "hard_case_strategy": "static_weighted_downweight",
         "secondary_hard_case_strategy": "static_weighted_hard_drop",
@@ -2447,12 +2506,16 @@ def _config_patch_text(section: str, updates: T.Mapping[str, str]) -> str:
 
 
 def _validate_config_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> None:
-    for path, label in (
+    required_artifacts: list[tuple[Path, str]] = [
         (paths.best_setup, "promoted setup artifact"),
         (paths.best_weights, "promoted weights artifact"),
-        (_promoted_scorer_source(args, paths), "promoted runtime resolver scorer artifact"),
         (paths.scorer_report, "scorer evaluation report"),
-    ):
+    ]
+    required_artifacts.extend(
+        (path, f"promoted runtime resolver scorer artifact [{policy}]")
+        for policy, path in _promoted_scorer_sources(args, paths).items()
+    )
+    for path, label in required_artifacts:
         _require(path, label)
 
 
@@ -3322,11 +3385,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--promoted-scorer-version",
-        choices=PROMOTED_POLICIES,
-        default=SCORER_VERSION_LEARNED_QUALITY_V3,
+        choices=("", *PROMOTED_POLICIES),
+        default="",
         help=(
-            "Scorer artifact to export into the stable runtime resolver scorer path. "
-            "Defaults to learned_quality_v3."
+            "Scorer policy/artifact to promote. Defaults to auto: "
+            "learned_quality_v3_routed when the profile scorer exists, otherwise "
+            "learned_quality_v3."
         ),
     )
     parser.add_argument(
