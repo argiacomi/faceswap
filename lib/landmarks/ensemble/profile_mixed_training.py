@@ -31,6 +31,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import CandidateQuality
 from lib.landmarks.ensemble.scorer_target_config import (
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     SCORE_SEMANTICS_PREDICTED_COST,
+    TARGET_PROFILE_MIXED_TRANSFORM_REGRET,
 )
 from lib.landmarks.pipeline_conventions import write_json
 
@@ -43,7 +44,8 @@ MIXED_PROFILE_FEATURE_IMPORTANCES_CSV = (
 )
 
 SCORER_VERSION_LEARNED_QUALITY_V3_PROFILE = "learned_quality_v3_profile"
-TARGET_PROFILE_MIXED_TRANSFORM_REGRET = "profile_mixed_transform_regret_v1"
+# Re-exported from scorer_target_config so runtime validation and this trainer
+# share a single source of truth without a circular import.
 MIXED_PROFILE_OBJECTIVE = "lambdarank_mixed_profile_transform_regret"
 MIXED_PROFILE_TRAINING_MODE = "grouped_lambdarank_mixed_profile"
 CANONICAL68_PROFILE_SOURCE = "canonical68_profile"
@@ -93,7 +95,7 @@ def _canonical_row_and_source(
     if isinstance(item, tuple) and len(item) == 2:
         row, source = item
         return row, str(source or fallback_source)
-    return T.cast(CandidateQualityRow, item), fallback_source
+    return item, fallback_source
 
 
 def _group_has_regret_gap(rows: T.Sequence[MixedProfileRankRow]) -> bool:

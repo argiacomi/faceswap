@@ -8,6 +8,9 @@ TARGET_TRANSFORM_COST_V3 = "transform_alignment_cost_v3"
 # Partial-schema 39-point profile ranking target used by the profile specialist
 # (learned_quality_v3_profile). Kept separate from the canonical-68 targets.
 TARGET_PROFILE39_TRANSFORM_REGRET = "profile39_transform_regret"
+# Mixed canonical-68/profile39 ranking target used when the profile specialist is
+# trained from both row sources in one LambdaRank model. Profile-policy only.
+TARGET_PROFILE_MIXED_TRANSFORM_REGRET = "profile_mixed_transform_regret_v1"
 
 REGRESSION_TARGETS: tuple[str, ...] = (TARGET_TRANSFORM_REGRET_V3,)
 SCORER_TARGETS: tuple[str, ...] = REGRESSION_TARGETS
@@ -35,6 +38,7 @@ __all__ = [
     "SCORE_SEMANTICS_PREDICTED_COST",
     "SCORER_TARGETS",
     "TARGET_PROFILE39_TRANSFORM_REGRET",
+    "TARGET_PROFILE_MIXED_TRANSFORM_REGRET",
     "TARGET_TRANSFORM_COST_V3",
     "TARGET_TRANSFORM_REGRET_V3",
 ]

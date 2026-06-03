@@ -39,6 +39,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_LARGE_COST_THRESHOLD,
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     SCORE_SEMANTICS_PREDICTED_COST,
+    TARGET_PROFILE_MIXED_TRANSFORM_REGRET,
     TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_targets import (
@@ -797,15 +798,24 @@ def train_runtime_resolver_scorer_suite(
     allow_image_backfill: bool = False,
     profile39_manifest: Path | None = None,
     profile39_cache_dir: Path | None = None,
+    mixed_profile: bool = True,
+    profile39_eval_fraction: float = 0.2,
+    profile39_query_weight: float = 1.0,
+    mixed_profile_split_seed: str = "mixed_profile_v1",
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Train the active v3 scorer from one canonical row split.
 
-    When ``profile39_manifest`` / ``profile39_cache_dir`` are supplied, the
-    profile specialist (``learned_quality_v3_profile``) is trained from the
-    partial-schema 39-point profile rows instead of the canonical-profile rows,
-    and a separate profile39 report is written. 39-point GT never enters the
-    canonical-68 scorer target.
+    The profile specialist (``learned_quality_v3_profile``) is produced by exactly
+    one trainer, chosen by which row sources are available:
+
+    * canonical-68 profile rows **and** 39-point rows (with ``mixed_profile``) →
+      one mixed LambdaRank model (``profile_mixed_transform_regret_v1``);
+    * 39-point rows only → the partial-schema 39-point specialist;
+    * canonical-68 profile rows only → the canonical profile specialist.
+
+    39-point GT never enters the canonical-68 scorer target, and the 39-point
+    specialist no longer blindly overwrites the canonical profile artifact.
     """
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -884,14 +894,102 @@ def train_runtime_resolver_scorer_suite(
     canonical_v3 = scorers_dir / "learned_quality_v3.json"
     shutil.copy2(v3_dir / SCORER_V3_ARTIFACT, canonical_v3)
 
-    profile_specialist_status = "skipped_no_profile_rows"
-    profile_specialist_entry: dict[str, T.Any] | None = None
+    # ------------------------------------------------------------------
+    # Profile specialist (learned_quality_v3_profile)
+    #
+    # Exactly one trainer writes the profile artifact, chosen by which row
+    # sources are present. When both canonical-68 profile rows and 39-point
+    # rows exist (and ``mixed_profile`` is enabled) they are trained together
+    # in one mixed LambdaRank model, so 39-point data no longer blindly
+    # overwrites the canonical profile specialist.
+    # ------------------------------------------------------------------
     profile_train_rows = filter_profile_specialist_rows(train_tagged_rows)
     profile_eval_rows = filter_profile_specialist_rows(eval_tagged_rows)
-    if profile_train_rows:
+
+    profile39_rows: list[T.Any] = []
+    profile39_report: dict[str, T.Any] | None = None
+    if profile39_manifest is not None and profile39_cache_dir is not None:
+        from lib.landmarks.ensemble.profile39_dataset import (
+            load_profile39_rows,
+            profile39_mix_report,
+        )
+
+        profile39_rows = load_profile39_rows(
+            manifest_path=profile39_manifest,
+            cache_dir=profile39_cache_dir,
+            weights_path=weights_path,
+            candidates=candidates,
+            outlier_threshold=outlier_threshold,
+        )
+        profile39_report = profile39_mix_report(profile39_rows)
+
+    canonical_v3_profile = scorers_dir / "learned_quality_v3_profile.json"
+    profile_specialist_entry: dict[str, T.Any] | None = None
+    profile_specialist_status = "skipped_no_profile_rows"
+    profile_specialist_mode = "none"
+
+    if profile_train_rows and profile39_rows and mixed_profile:
+        from lib.landmarks.ensemble.profile_mixed_training import (
+            MIXED_PROFILE_SCORER_ARTIFACT,
+            train_mixed_profile_specialist,
+        )
+
+        profile_mixed_dir = output_dir / "v3_profile_mixed"
+        try:
+            profile_metrics = train_mixed_profile_specialist(
+                canonical_train_rows=profile_train_rows,
+                canonical_eval_rows=profile_eval_rows,
+                profile39_rows=profile39_rows,
+                output_dir=profile_mixed_dir,
+                candidates=candidates,
+                eval_fraction=profile39_eval_fraction,
+                split_seed=mixed_profile_split_seed,
+                profile39_query_weight=profile39_query_weight,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                num_leaves=num_leaves,
+            )
+            shutil.copy2(profile_mixed_dir / MIXED_PROFILE_SCORER_ARTIFACT, canonical_v3_profile)
+            profile_specialist_entry = {
+                **profile_metrics,
+                "canonical_artifact": str(canonical_v3_profile),
+                "trained_from": "mixed_canonical68_profile_and_profile39",
+            }
+            profile_specialist_status = "trained"
+            profile_specialist_mode = "mixed_profile"
+        except (ValueError, RuntimeError) as err:
+            profile_specialist_status = f"skipped_mixed_profile: {err}"
+    elif profile39_rows:
+        from lib.landmarks.ensemble.profile39_training import (
+            PROFILE39_SCORER_ARTIFACT,
+            train_profile39_specialist,
+        )
+
+        profile39_dir = output_dir / "v3_profile39"
+        try:
+            profile_metrics = train_profile39_specialist(
+                profile39_rows,
+                output_dir=profile39_dir,
+                candidates=candidates,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                num_leaves=num_leaves,
+                split_seed=split_seed,
+            )
+            shutil.copy2(profile39_dir / PROFILE39_SCORER_ARTIFACT, canonical_v3_profile)
+            profile_specialist_entry = {
+                **profile_metrics,
+                "canonical_artifact": str(canonical_v3_profile),
+                "trained_from": "profile39_partial_schema",
+            }
+            profile_specialist_status = "trained"
+            profile_specialist_mode = "profile39"
+        except (ValueError, RuntimeError) as err:
+            profile_specialist_status = f"skipped_profile39: {err}"
+    elif profile_train_rows:
         profile_dir = output_dir / "v3_lambdarank_profile"
         try:
-            profile_v3_metrics = _train_v3_lambdarank_from_tagged_rows(
+            profile_metrics = _train_v3_lambdarank_from_tagged_rows(
                 train_tagged_rows=profile_train_rows,
                 eval_tagged_rows=profile_eval_rows,
                 candidates=candidates,
@@ -905,13 +1003,14 @@ def train_runtime_resolver_scorer_suite(
                 policy=SCORER_VERSION_LEARNED_QUALITY_V3_PROFILE,
                 artifact_filename=SCORER_V3_PROFILE_ARTIFACT,
             )
-            canonical_v3_profile = scorers_dir / "learned_quality_v3_profile.json"
             shutil.copy2(profile_dir / SCORER_V3_PROFILE_ARTIFACT, canonical_v3_profile)
             profile_specialist_entry = {
-                **profile_v3_metrics,
+                **profile_metrics,
                 "canonical_artifact": str(canonical_v3_profile),
+                "trained_from": "canonical68_profile",
             }
             profile_specialist_status = "trained"
+            profile_specialist_mode = "canonical68_profile"
         except ValueError as err:
             profile_specialist_status = f"skipped_insufficient_rankable_profile_rows: {err}"
 
@@ -946,54 +1045,14 @@ def train_runtime_resolver_scorer_suite(
     if profile_specialist_entry is not None:
         metrics["scorers"]["learned_quality_v3_profile"] = profile_specialist_entry
     metrics["profile_specialist_status"] = profile_specialist_status
+    metrics["profile_specialist_mode"] = profile_specialist_mode
     metrics["profile_specialist_row_counts"] = {
         "train_rows": len(profile_train_rows),
         "eval_rows": len(profile_eval_rows),
+        "profile39_rows": len(profile39_rows),
     }
-
-    profile39_status = "skipped_no_profile39_inputs"
-    if profile39_manifest is not None and profile39_cache_dir is not None:
-        from lib.landmarks.ensemble.profile39_dataset import load_profile39_rows
-        from lib.landmarks.ensemble.profile39_training import (
-            PROFILE39_SCORER_ARTIFACT,
-            train_profile39_specialist,
-        )
-
-        profile39_rows = load_profile39_rows(
-            manifest_path=profile39_manifest,
-            cache_dir=profile39_cache_dir,
-            weights_path=weights_path,
-            candidates=candidates,
-            outlier_threshold=outlier_threshold,
-        )
-        if not profile39_rows:
-            profile39_status = "skipped_no_profile39_rows"
-        else:
-            profile39_dir = output_dir / "v3_profile39"
-            try:
-                profile39_metrics = train_profile39_specialist(
-                    profile39_rows,
-                    output_dir=profile39_dir,
-                    candidates=candidates,
-                    learning_rate=learning_rate,
-                    iterations=iterations,
-                    num_leaves=num_leaves,
-                    split_seed=split_seed,
-                )
-                # The partial-schema 39-point ranker becomes the profile policy
-                # when 39-point data is available (kept separate from canonical).
-                canonical_v3_profile = scorers_dir / "learned_quality_v3_profile.json"
-                shutil.copy2(profile39_dir / PROFILE39_SCORER_ARTIFACT, canonical_v3_profile)
-                metrics["scorers"]["learned_quality_v3_profile"] = {
-                    **profile39_metrics,
-                    "canonical_artifact": str(canonical_v3_profile),
-                    "trained_from": "profile39_partial_schema",
-                }
-                metrics["profile39"] = profile39_metrics
-                profile39_status = "trained"
-            except (ValueError, RuntimeError) as err:
-                profile39_status = f"skipped: {err}"
-    metrics["profile39_specialist_status"] = profile39_status
+    if profile39_report is not None:
+        metrics["profile39"] = profile39_report
 
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
@@ -1115,6 +1174,7 @@ __all__ = [
     "SCORER_VERSION_LEARNED_QUALITY_V3",
     "ACTIVE_SCORER_VERSION",
     "ACTIVE_SCORER_TARGET",
+    "TARGET_PROFILE_MIXED_TRANSFORM_REGRET",
     "SCORERS_DIR",
     "SCORER_SUITE_METRICS_JSON",
     "SCORER_SUITE_SENTINEL_JSON",

@@ -119,6 +119,39 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Prediction cache directory for the --profile39-manifest samples.",
     )
+    parser.add_argument(
+        "--mixed-profile",
+        action="store_true",
+        default=True,
+        help=(
+            "When canonical-68 profile rows and 39-point rows are both present, train the "
+            "profile specialist (learned_quality_v3_profile) as one mixed LambdaRank model. "
+            "39-point GT still never enters the canonical-68 scorer target."
+        ),
+    )
+    parser.add_argument(
+        "--no-mixed-profile",
+        dest="mixed_profile",
+        action="store_false",
+        help="Disable mixed training; 39-point rows train the standalone profile39 specialist.",
+    )
+    parser.add_argument(
+        "--profile39-eval-fraction",
+        type=float,
+        default=0.2,
+        help="Held-out fraction of 39-point query groups for the mixed profile specialist.",
+    )
+    parser.add_argument(
+        "--profile39-query-weight",
+        type=float,
+        default=1.0,
+        help="Per-group weight applied to 39-point queries in the mixed profile specialist.",
+    )
+    parser.add_argument(
+        "--mixed-profile-split-seed",
+        default="mixed_profile_v1",
+        help="Deterministic seed for the mixed profile specialist 39-point train/eval split.",
+    )
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -151,6 +184,10 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         allow_image_backfill=args.allow_image_backfill,
         profile39_manifest=args.profile39_manifest,
         profile39_cache_dir=args.profile39_cache_dir,
+        mixed_profile=args.mixed_profile,
+        profile39_eval_fraction=args.profile39_eval_fraction,
+        profile39_query_weight=args.profile39_query_weight,
+        mixed_profile_split_seed=args.mixed_profile_split_seed,
         progress=_context_progress,
     )
     logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])
