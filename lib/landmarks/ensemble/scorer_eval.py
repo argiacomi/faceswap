@@ -2463,6 +2463,154 @@ def row_contexts_from_scorer_rows(
     return contexts, source_by_sample_id
 
 
+def _policy_rows_from_choices(
+    *,
+    contexts: T.Sequence[T.Any],
+    choices: T.Mapping[str, str],
+    current_choices: T.Mapping[str, str],
+    oracle_choices: T.Mapping[str, str],
+    source_by_sample_id: T.Mapping[str, str],
+    fallback_diagnostics: T.Sequence[T.Mapping[str, T.Any]] = (),
+) -> tuple[
+    list[dict[str, T.Any]],
+    int,
+    int,
+    int,
+    list[dict[str, T.Any]],
+    dict[str, bool],
+]:
+    fallback_by_sample_id = {
+        str(item.get("sample_id") or ""): item
+        for item in fallback_diagnostics
+        if item.get("sample_id")
+    }
+
+    rows: list[dict[str, T.Any]] = []
+    fallback_impacts: list[dict[str, T.Any]] = []
+    fallback_used_by_sample_id: dict[str, bool] = {}
+    fallback_count = 0
+    safe_fallback_count = 0
+    hard_slice_fallback_count = 0
+
+    for context in contexts:
+        chosen = choices[context.sample_id]
+        current_choice = current_choices.get(context.sample_id, context.current_policy_choice)
+        oracle_choice = oracle_choices.get(context.sample_id, context.oracle)
+
+        fallback_diag = fallback_by_sample_id.get(context.sample_id)
+        fallback_used = fallback_diag is not None
+        fallback_reason = str(fallback_diag.get("fallback_reason") or "") if fallback_diag else ""
+        rejected_candidate = (
+            str(fallback_diag.get("rejected_candidate") or "") if fallback_diag else ""
+        )
+        replacement_candidate = (
+            str(fallback_diag.get("replacement_candidate") or chosen) if fallback_diag else ""
+        )
+
+        fallback_count += int(fallback_used)
+        safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
+        hard_slice_fallback_count += int(fallback_reason == "consensus_collapse_fusion_rejected")
+        fallback_used_by_sample_id[context.sample_id] = fallback_used
+
+        rejected_nme = (
+            context.nme_by_candidate.get(rejected_candidate)
+            if rejected_candidate in context.nme_by_candidate
+            else None
+        )
+        replacement_nme = (
+            context.nme_by_candidate.get(chosen)
+            if fallback_used and chosen in context.nme_by_candidate
+            else None
+        )
+        rejected_failure = (
+            context.failure_by_candidate.get(rejected_candidate)
+            if rejected_candidate in context.failure_by_candidate
+            else None
+        )
+        replacement_failure = (
+            context.failure_by_candidate.get(chosen)
+            if fallback_used and chosen in context.failure_by_candidate
+            else None
+        )
+
+        if fallback_used and rejected_nme is not None and replacement_nme is not None:
+            fallback_impacts.append(
+                {
+                    "sample_id": context.sample_id,
+                    "fallback_reason": fallback_reason,
+                    "rejected_candidate": rejected_candidate,
+                    "replacement_candidate": chosen,
+                    "nme_delta_vs_rejected": replacement_nme - rejected_nme,
+                    "failure_delta_vs_rejected": (
+                        None
+                        if rejected_failure is None or replacement_failure is None
+                        else int(replacement_failure) - int(rejected_failure)
+                    ),
+                }
+            )
+
+        candidate_scores: dict[str, T.Any] = {}
+        if fallback_diag:
+            candidate_scores = {
+                key: fallback_diag[key]
+                for key in (
+                    "profile_choice_score",
+                    "general_choice_profile_score",
+                    "profile_margin_vs_general",
+                    "required_margin",
+                )
+                if key in fallback_diag
+            }
+
+        rows.append(
+            {
+                "source": context_source(context, source_by_sample_id),
+                "sample_id": context.sample_id,
+                "dataset": context.dataset,
+                "condition": context.condition,
+                "runtime_bucket": context.runtime_bucket,
+                "runtime_bucket_source": context.runtime_bucket_source,
+                "hard_case_tags": "|".join(getattr(context, "hard_case_tags", ())),
+                "chosen": chosen,
+                "chosen_nme": context.nme_by_candidate[chosen],
+                "chosen_failure": int(context.failure_by_candidate[chosen]),
+                "current_bucket_policy": current_choice,
+                "current_bucket_policy_nme": context.nme_by_candidate[current_choice],
+                "oracle": oracle_choice,
+                "oracle_nme": context.nme_by_candidate[oracle_choice],
+                "gap_vs_oracle": (
+                    context.nme_by_candidate[chosen] - context.nme_by_candidate[oracle_choice]
+                ),
+                "candidate_scores": json.dumps(candidate_scores, sort_keys=True),
+                "fallback_used": int(fallback_used),
+                "fallback_reason": fallback_reason,
+                "rejected_candidate": rejected_candidate,
+                "replacement_candidate": replacement_candidate,
+                "rejected_candidate_nme": rejected_nme,
+                "replacement_candidate_nme": replacement_nme,
+                "fallback_nme_delta_vs_rejected": (
+                    None
+                    if rejected_nme is None or replacement_nme is None
+                    else replacement_nme - rejected_nme
+                ),
+                "fallback_failure_delta_vs_rejected": (
+                    None
+                    if rejected_failure is None or replacement_failure is None
+                    else int(replacement_failure) - int(rejected_failure)
+                ),
+            }
+        )
+
+    return (
+        rows,
+        fallback_count,
+        safe_fallback_count,
+        hard_slice_fallback_count,
+        fallback_impacts,
+        fallback_used_by_sample_id,
+    )
+
+
 def evaluate_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -2775,6 +2923,21 @@ def evaluate_runtime_resolver_scorer(
             worst_sample_count=worst_sample_count,
         )
         hard_bucket_failed_gates = hard_bucket_promotion_gates(metrics_by_split)
+        (
+            rows,
+            fallback_count,
+            safe_fallback_count,
+            hard_slice_fallback_count,
+            fallback_impacts,
+            fallback_used_by_sample_id,
+        ) = _policy_rows_from_choices(
+            contexts=contexts,
+            choices=scorer_choices,
+            current_choices=current_choices,
+            oracle_choices=oracle_choices,
+            source_by_sample_id=source_by_sample_id,
+            fallback_diagnostics=routed_fallback_diagnostics,
+        )
 
     installed_policy, installed_scorers, installed_status = load_installed_policy_scorers(
         installed_scorer_dir
