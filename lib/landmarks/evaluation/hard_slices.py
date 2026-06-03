@@ -66,6 +66,32 @@ ROLL_HARD_SLICES: tuple[str, ...] = (
 HARD_SLICES: tuple[str, ...] = (*YAW_HARD_SLICES, *ROLL_HARD_SLICES)
 ALL_SLICES: tuple[str, ...] = (*REFERENCE_SLICES, *HARD_SLICES)
 
+#: Buckets written by the hard-negative manifest builder (#217). When a sample
+#: already carries one of these we trust the mined selection and skip AFLW pose
+#: slicing entirely - mined manifests are themselves the selected hard source.
+HARD_NEGATIVE_BUCKETS: frozenset[str] = frozenset(
+    {"profile_occlusion", "profile", "occlusion", "anchor"}
+)
+
+
+def hard_negative_bucket(sample: T.Mapping[str, T.Any]) -> str | None:
+    """Return the mined hard-negative bucket for a sample, or ``None``.
+
+    Reads ``metadata.hard_negative_bucket`` (set by the hard-negative manifest
+    builder), tolerating the value at the sample top level too. Only the four
+    canonical buckets are recognized so arbitrary condition strings do not
+    bypass pose slicing.
+    """
+    raw_metadata = sample.get("metadata")
+    metadata: dict[str, T.Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw = (
+        metadata.get("hard_negative_bucket")
+        or sample.get("hard_negative_bucket")
+        or sample.get("hard_negative_bucket_name")
+    )
+    bucket = str(raw or "").strip().lower()
+    return bucket if bucket in HARD_NEGATIVE_BUCKETS else None
+
 
 @dataclass(frozen=True)
 class HardSliceThresholds:
@@ -198,6 +224,22 @@ def slice_manifest_samples(
     counts: dict[str, int] = dict.fromkeys(ALL_SLICES, 0)
     sliced: list[dict[str, T.Any]] = []
     for sample in samples:
+        # Mined / hard-negative-annotated samples bypass AFLW pose slicing: the
+        # mined manifest is already the selected hard source, so the bucket is
+        # trusted directly and Pose_Para is not required. Anchors are kept (they
+        # are deliberate controls in the #217 mix) regardless of ``hard_only``.
+        bucket = hard_negative_bucket(sample)
+        if bucket is not None:
+            counts[bucket] = counts.get(bucket, 0) + 1
+            tagged = dict(sample)
+            tagged["hard_slice"] = bucket
+            tagged["condition"] = bucket
+            conditions = list(tagged.get("conditions") or [])
+            if bucket not in conditions:
+                conditions.insert(0, bucket)
+            tagged["conditions"] = conditions
+            sliced.append(tagged)
+            continue
         yaw_deg = yaw_degrees(sample)
         roll_deg = roll_degrees(sample)
         yaw_label = yaw_slice_label(yaw_deg, thresholds=thresholds)
@@ -227,11 +269,13 @@ __all__ = [
     "DEFAULT_PROFILE_MAX_DEGREES",
     "DEFAULT_PROFILE_MIN_DEGREES",
     "DEFAULT_ROLL_DEGREES",
+    "HARD_NEGATIVE_BUCKETS",
     "HARD_SLICES",
     "REFERENCE_SLICES",
     "ROLL_HARD_SLICES",
     "YAW_HARD_SLICES",
     "HardSliceThresholds",
+    "hard_negative_bucket",
     "hard_slice_label",
     "is_hard_slice",
     "roll_degrees",
