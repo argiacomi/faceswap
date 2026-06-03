@@ -62,6 +62,10 @@ DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
 PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED = True
 PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN = 0.0
 PROFILE_ROUTE_GENERAL_FALLBACK_REASON = "profile_route_general_fallback_low_margin"
+
+ANCHOR_INTERMEDIATE_CURRENT_GUARD_ENABLED = True
+ANCHOR_INTERMEDIATE_CURRENT_GUARD_MIN_DELTA = 0.01
+ANCHOR_INTERMEDIATE_CURRENT_GUARD_REASON = "anchor_intermediate_current_guard"
 PROMOTION_SCOPES = ("universal", "production")
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
 RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
@@ -1716,6 +1720,100 @@ def score_policy_choices(
     return choices
 
 
+def is_anchor_intermediate_current_guard_context(context: T.Any) -> bool:
+    """Return whether the context is the hard-normal anchor/intermediate slice."""
+    return (
+        str(getattr(context, "condition", "") or "") == "anchor"
+        and str(getattr(context, "runtime_bucket", "") or "") == "intermediate"
+    )
+
+
+def _candidate_allowed_for_anchor_intermediate_guard(
+    context: SampleCandidateContext,
+    candidate: str,
+) -> bool:
+    """Return whether a current-policy candidate is safe to preserve.
+
+    This intentionally mirrors the evaluator's available runtime candidate checks:
+    do not preserve a candidate missing from the eval set, geometry-vetoed, or
+    v3 hard-invalid/rank-unavailable when v3 labels are present.
+    """
+    if not candidate or candidate not in context.nme_by_candidate:
+        return False
+
+    metric = context.metrics.get(candidate)
+    if metric is not None and metric.geometry_veto_reasons:
+        return False
+
+    v3_rows = _v3_rows_by_candidate(context)
+    if not v3_rows:
+        return True
+
+    row = v3_rows.get(candidate)
+    if row is None:
+        return False
+
+    return _row_bool(_v3_row_value(row, "rankable_v3", False)) and not _row_bool(
+        _v3_row_value(row, "hard_invalid_v3", False)
+    )
+
+
+def _anchor_intermediate_current_guard_result(
+    context: SampleCandidateContext,
+    *,
+    scores: T.Mapping[str, float],
+    chosen: str,
+    fallback_used: bool,
+    min_delta: float,
+) -> tuple[str, bool, str, str, str, dict[str, T.Any]] | None:
+    """Fallback to current policy on anchor/intermediate unless routed clearly wins."""
+    if fallback_used:
+        return None
+    if not is_anchor_intermediate_current_guard_context(context):
+        return None
+
+    current_choice = str(getattr(context, "current_policy_choice", "") or "")
+    if not current_choice or current_choice == chosen:
+        return None
+    if not _candidate_allowed_for_anchor_intermediate_guard(context, current_choice):
+        return None
+
+    chosen_score = scores.get(chosen)
+    current_score = scores.get(current_choice)
+    if chosen_score is None or current_score is None:
+        return None
+
+    try:
+        chosen_score_f = float(chosen_score)
+        current_score_f = float(current_score)
+    except (TypeError, ValueError):
+        return None
+
+    if not math_is_finite(chosen_score_f) or not math_is_finite(current_score_f):
+        return None
+
+    # Lower score is better. Keep learned/routed only when it is clearly better
+    # than the existing current/bucket policy candidate.
+    if chosen_score_f < current_score_f - min_delta:
+        return None
+
+    return (
+        current_choice,
+        True,
+        ANCHOR_INTERMEDIATE_CURRENT_GUARD_REASON,
+        chosen,
+        current_choice,
+        {
+            "anchor_intermediate_guard_min_delta": min_delta,
+            "anchor_intermediate_guard_routed_choice": chosen,
+            "anchor_intermediate_guard_current_choice": current_choice,
+            "anchor_intermediate_guard_routed_score": chosen_score_f,
+            "anchor_intermediate_guard_current_score": current_score_f,
+            "anchor_intermediate_guard_score_delta": chosen_score_f - current_score_f,
+        },
+    )
+
+
 def score_policy_choices_routed(
     contexts: T.Sequence[SampleCandidateContext],
     scorers_by_policy: T.Mapping[str, RuntimeResolverLearnedScorerLike],
@@ -1726,6 +1824,8 @@ def score_policy_choices_routed(
     profile_route_general_fallback_min_margin: float = PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN,
     routed_fallback_diagnostics: list[dict[str, T.Any]] | None = None,
     routed_choice_diagnostics: list[dict[str, T.Any]] | None = None,
+    anchor_intermediate_current_guard_enabled: bool = ANCHOR_INTERMEDIATE_CURRENT_GUARD_ENABLED,
+    anchor_intermediate_current_guard_min_delta: float = ANCHOR_INTERMEDIATE_CURRENT_GUARD_MIN_DELTA,
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, str]:
     """Choose one candidate per sample, routing each context to its scorer.
@@ -1914,6 +2014,25 @@ def score_policy_choices_routed(
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
             safe_fallback_min_delta=safe_fallback_min_delta,
         )
+        guard_extra: dict[str, T.Any] = {}
+        if anchor_intermediate_current_guard_enabled:
+            guard_result = _anchor_intermediate_current_guard_result(
+                context,
+                scores=scores,
+                chosen=chosen,
+                fallback_used=bool(fallback_used),
+                min_delta=anchor_intermediate_current_guard_min_delta,
+            )
+            if guard_result is not None:
+                (
+                    chosen,
+                    fallback_used,
+                    fallback_reason,
+                    rejected_candidate,
+                    replacement_candidate,
+                    guard_extra,
+                ) = guard_result
+
         choices[context.sample_id] = chosen
         record_choice(
             context,
@@ -1925,6 +2044,7 @@ def score_policy_choices_routed(
             rejected_candidate=rejected_candidate,
             replacement_candidate=replacement_candidate,
             scores=scores,
+            extra=guard_extra,
         )
     return choices
 
@@ -3382,6 +3502,12 @@ def evaluate_runtime_resolver_scorer(
         report_status = "fail"
         report_gate_source = "installed_baseline"
 
+    anchor_intermediate_current_guard_diagnostics = [
+        item
+        for item in routed_choice_diagnostics
+        if item.get("fallback_reason") == ANCHOR_INTERMEDIATE_CURRENT_GUARD_REASON
+    ]
+
     report: dict[str, T.Any] = {
         "status": report_status,
         "promotion_status": report_status,
@@ -3465,6 +3591,15 @@ def evaluate_runtime_resolver_scorer(
         "profile_route_general_fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
         "profile_route_general_fallback_count": len(routed_fallback_diagnostics),
         "profile_route_general_fallbacks": routed_fallback_diagnostics[:worst_sample_count],
+        "anchor_intermediate_current_guard_enabled": ANCHOR_INTERMEDIATE_CURRENT_GUARD_ENABLED,
+        "anchor_intermediate_current_guard_min_delta": ANCHOR_INTERMEDIATE_CURRENT_GUARD_MIN_DELTA,
+        "anchor_intermediate_current_guard_reason": ANCHOR_INTERMEDIATE_CURRENT_GUARD_REASON,
+        "anchor_intermediate_current_guard_count": len(
+            anchor_intermediate_current_guard_diagnostics
+        ),
+        "anchor_intermediate_current_guard_fallbacks": (
+            anchor_intermediate_current_guard_diagnostics[:worst_sample_count]
+        ),
         "per_bucket": per_bucket(contexts, scorer_choices),
         "metrics_by_split": metrics_by_split,
         "region_reports": region_report_summary,
@@ -3522,6 +3657,15 @@ def evaluate_runtime_resolver_scorer(
         "profile_route_general_fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
         "profile_route_general_fallback_min_margin": PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN,
         "profile_route_general_fallbacks": routed_fallback_diagnostics[:worst_sample_count],
+        "anchor_intermediate_current_guard_enabled": ANCHOR_INTERMEDIATE_CURRENT_GUARD_ENABLED,
+        "anchor_intermediate_current_guard_count": len(
+            anchor_intermediate_current_guard_diagnostics
+        ),
+        "anchor_intermediate_current_guard_reason": ANCHOR_INTERMEDIATE_CURRENT_GUARD_REASON,
+        "anchor_intermediate_current_guard_min_delta": ANCHOR_INTERMEDIATE_CURRENT_GUARD_MIN_DELTA,
+        "anchor_intermediate_current_guard_fallbacks": (
+            anchor_intermediate_current_guard_diagnostics[:worst_sample_count]
+        ),
         "impact": fallback_impact_summary(fallback_impacts),
     }
     report["artifacts"] = {
@@ -3555,6 +3699,9 @@ __all__ = [
     "PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED",
     "PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN",
     "PROFILE_ROUTE_GENERAL_FALLBACK_REASON",
+    "ANCHOR_INTERMEDIATE_CURRENT_GUARD_ENABLED",
+    "ANCHOR_INTERMEDIATE_CURRENT_GUARD_MIN_DELTA",
+    "ANCHOR_INTERMEDIATE_CURRENT_GUARD_REASON",
     "PROMOTION_SCOPES",
     "assert_lower_score_is_better",
     "evaluate_runtime_resolver_scorer",
