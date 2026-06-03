@@ -67,6 +67,12 @@ RUNTIME_PREFERRED_FEATURE_ORDER: tuple[str, ...] = (
     "occluded_side_spread",
     "occluded_side_outlier_rate",
     "candidate_profile_validity_score",
+    # Profile repair candidate features (#219).
+    "candidate_is_profile_repaired",
+    "profile_repair_source_rank",
+    "profile_repair_visible_side_left",
+    "profile_repair_visible_side_right",
+    "profile_repair_candidate_shape_score",
 )
 
 

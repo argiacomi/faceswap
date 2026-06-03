@@ -104,3 +104,19 @@ def test_filter_profile_specialist_rows() -> None:
 
 def test_profile_policy_name_constant() -> None:
     assert SCORER_VERSION_LEARNED_QUALITY_V3_PROFILE == "learned_quality_v3_profile"
+
+
+def test_transform_summary_exposes_repair_and_validity_counters() -> None:
+    summary = scorer_eval.transform_policy_summary_v3([], {}, source_by_sample_id={})
+    for key in (
+        "validity_stage_valid_rankable_count_v3",
+        "validity_stage_profile_soft_valid_count_v3",
+        "validity_stage_all_invalid_count_v3",
+        "profile_all_invalid_degraded_fallback_count",
+        "profile_repair_candidate_group_count",
+        "profile_repair_candidate_valid_count_v3",
+        "profile_repair_candidate_selected_count",
+        "profile_repair_reduced_all_invalid_count",
+    ):
+        assert key in summary
+        assert summary[key] == 0

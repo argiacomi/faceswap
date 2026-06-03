@@ -29,11 +29,14 @@ from lib.landmarks.ensemble.hard_condition_taxonomy import (
     NEW_HARD_CONDITION_LABELS,
     derive_hard_condition_taxonomy,
 )
+from lib.landmarks.ensemble.profile_features import profile_candidate_features
 from lib.landmarks.ensemble.profile_repair import (
+    DEFAULT_REPAIR_COMPRESSION,
     PROFILE_REPAIR_CANDIDATE_NAME,
     build_profile_repair_landmarks,
     is_profile_repair_context,
     profile_repair_features,
+    profile_repair_provenance,
 )
 from lib.landmarks.ensemble.runtime_features import candidate_feature_map, runtime_feature_order
 from lib.landmarks.ensemble.runtime_resolver import (
@@ -42,6 +45,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     ModelPrediction,
     RuntimeBucketResult,
     RuntimeResolverConfig,
+    _bbox_diag,
     _candidate_extra_features,
     _circular_median,
     _max_landmark_consensus_px,
@@ -431,6 +435,7 @@ class SampleCandidateContext:
     selected_candidate_missing_from_eval: bool
     candidate_extra_features: dict[str, dict[str, float]]
     hard_negative_weight: float = 1.0
+    profile_repair_provenance: dict[str, T.Any] | None = None
 
 
 def parse_candidates(
@@ -947,13 +952,14 @@ def build_sample_context(
         yaw_estimate=yaw_estimate,
         roll_estimate=roll_estimate,
     )
-    candidates = _append_profile_repair_candidate(
+    candidates, profile_repair_provenance_meta = _append_profile_repair_candidate(
         candidates,
         metrics,
         candidate_extra_features,
         runtime_bucket=bucket_result.bucket,
         condition=condition,
         yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
         reference_bbox=reference_bbox,
     )
 
@@ -1024,6 +1030,7 @@ def build_sample_context(
         selected_candidate_missing_from_eval=selected_candidate_missing_from_eval,
         candidate_extra_features=candidate_extra_features,
         hard_negative_weight=_hard_negative_weight_from_sample(sample),
+        profile_repair_provenance=profile_repair_provenance_meta,
     )
 
 
@@ -1035,27 +1042,30 @@ def _append_profile_repair_candidate(
     runtime_bucket: str,
     condition: str,
     yaw_estimate: float | None,
+    roll_estimate: float | None,
     reference_bbox: tuple[float, float, float, float] | None,
-) -> tuple[CandidateRecord, ...]:
+) -> tuple[tuple[CandidateRecord, ...], dict[str, T.Any] | None]:
     """Append a ``profile_visible_side_repaired`` candidate for all-invalid groups.
 
     Only fires on profile/occlusion contexts where every existing candidate is
     geometry-vetoed (an all-invalid proxy computable before v3 cost), so normal
     and partially-valid groups are unchanged. The repaired candidate is built
     with real landmarks and run through the normal metric/shape/v3 pipeline; it
-    is appended only when it passes the repair sanity gates.
+    is appended only when it passes the repair sanity gates. Returns the
+    (possibly extended) candidate tuple plus string repair provenance (or
+    ``None`` when nothing was appended).
     """
     if not is_profile_repair_context((runtime_bucket, condition)):
-        return candidates
+        return candidates, None
     if not candidates or PROFILE_REPAIR_CANDIDATE_NAME in {c.name for c in candidates}:
-        return candidates
+        return candidates, None
     all_vetoed = all(
         metrics.get(candidate.name) is not None
         and bool(metrics[candidate.name].geometry_veto_reasons)
         for candidate in candidates
     )
     if not all_vetoed:
-        return candidates
+        return candidates, None
     built = build_profile_repair_landmarks(
         candidates,
         metrics,
@@ -1065,7 +1075,7 @@ def _append_profile_repair_candidate(
         candidate_extra_features=candidate_extra_features,
     )
     if built is None:
-        return candidates
+        return candidates, None
     repaired_landmarks, source_name, visible_side = built
     record = CandidateRecord(
         name=PROFILE_REPAIR_CANDIDATE_NAME,
@@ -1081,12 +1091,37 @@ def _append_profile_repair_candidate(
         0,
     )
     shape_score = float(getattr(metric, "shape_plausibility_score", 0.0) or 0.0)
-    candidate_extra_features[record.name] = profile_repair_features(
+    extended = (*candidates, record)
+    # Give the repair candidate the same profile feature payload as its peers so
+    # the profile specialist sees its visible/occluded-side geometry, plus the
+    # repair-specific provenance features.
+    blob = f"{condition} {runtime_bucket}".lower()
+    repair_profile_features = profile_candidate_features(
+        extended,
+        metrics,
+        diag=_bbox_diag(reference_bbox),
+        side=visible_side,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
+        has_occlusion="occlusion" in blob or "occluded" in blob,
+        has_single_eye_visible="single_eye" in blob,
+        has_mouth_or_jaw_occluded="mouth_or_jaw" in blob or "mouth_jaw" in blob,
+    ).get(record.name, {})
+    candidate_extra_features[record.name] = {
+        **repair_profile_features,
+        **profile_repair_features(
+            visible_side=visible_side,
+            source_rank=source_rank,
+            shape_score=shape_score,
+        ),
+    }
+    provenance = profile_repair_provenance(
+        source_candidate=source_name,
         visible_side=visible_side,
-        source_rank=source_rank,
-        shape_score=shape_score,
+        reason="all_candidates_geometry_vetoed",
+        compression=DEFAULT_REPAIR_COMPRESSION,
     )
-    return (*candidates, record)
+    return extended, provenance
 
 
 def _hard_negative_weight_from_sample(sample: LandmarkSample) -> float:

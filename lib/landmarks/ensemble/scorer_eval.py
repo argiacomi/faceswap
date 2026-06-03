@@ -17,6 +17,7 @@ from lib.landmarks.ensemble.production_artifacts import (
     ProductionBundleError,
     load_production_bundle,
 )
+from lib.landmarks.ensemble.profile_repair import PROFILE_REPAIR_CANDIDATE_NAME
 from lib.landmarks.ensemble.profile_routing import (
     SCORER_POLICY_GENERAL,
     SCORER_POLICY_PROFILE,
@@ -478,6 +479,10 @@ def _transform_summary_empty() -> dict[str, T.Any]:
         "validity_stage_profile_soft_valid_count_v3": 0,
         "validity_stage_all_invalid_count_v3": 0,
         "profile_all_invalid_degraded_fallback_count": 0,
+        "profile_repair_candidate_group_count": 0,
+        "profile_repair_candidate_valid_count_v3": 0,
+        "profile_repair_candidate_selected_count": 0,
+        "profile_repair_reduced_all_invalid_count": 0,
     }
 
 
@@ -502,6 +507,10 @@ def transform_policy_summary_v3(
     validity_stage_profile_soft_valid_count = 0
     validity_stage_all_invalid_count = 0
     profile_all_invalid_degraded_fallback_count = 0
+    profile_repair_candidate_group_count = 0
+    profile_repair_candidate_valid_count = 0
+    profile_repair_candidate_selected_count = 0
+    profile_repair_reduced_all_invalid_count = 0
     for context in contexts:
         if context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED:
             continue
@@ -518,6 +527,24 @@ def transform_policy_summary_v3(
             not _row_bool(_v3_row_value(row, "hard_invalid_v3", False)) for row in rows.values()
         )
         is_profile_route = is_profile_or_occlusion_context(context)
+        repair_row = rows.get(PROFILE_REPAIR_CANDIDATE_NAME)
+        if repair_row is not None:
+            profile_repair_candidate_group_count += 1
+            repair_valid = _row_bool(
+                _v3_row_value(repair_row, "rankable_v3", False)
+            ) and not _row_bool(_v3_row_value(repair_row, "hard_invalid_v3", False))
+            valid_names = {
+                name
+                for name, row in rows.items()
+                if _row_bool(_v3_row_value(row, "rankable_v3", False))
+                and not _row_bool(_v3_row_value(row, "hard_invalid_v3", False))
+            }
+            if repair_valid:
+                profile_repair_candidate_valid_count += 1
+                if valid_names == {PROFILE_REPAIR_CANDIDATE_NAME}:
+                    profile_repair_reduced_all_invalid_count += 1
+            if selected == PROFILE_REPAIR_CANDIDATE_NAME:
+                profile_repair_candidate_selected_count += 1
         if not zero_valid:
             validity_stage_valid_rankable_count += 1
         elif has_soft_valid and is_profile_route:
@@ -574,6 +601,10 @@ def transform_policy_summary_v3(
         "profile_all_invalid_degraded_fallback_count": (
             profile_all_invalid_degraded_fallback_count
         ),
+        "profile_repair_candidate_group_count": profile_repair_candidate_group_count,
+        "profile_repair_candidate_valid_count_v3": profile_repair_candidate_valid_count,
+        "profile_repair_candidate_selected_count": profile_repair_candidate_selected_count,
+        "profile_repair_reduced_all_invalid_count": profile_repair_reduced_all_invalid_count,
     }
 
 

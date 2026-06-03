@@ -585,8 +585,15 @@ def _train_v3_lambdarank_from_tagged_rows(
     learning_rate: float,
     iterations: int,
     num_leaves: int,
+    policy: str = SCORER_VERSION_LEARNED_QUALITY_V3,
+    artifact_filename: str = SCORER_V3_ARTIFACT,
 ) -> dict[str, T.Any]:
-    """Train learned_quality_v3 from rankable transform-regret rows only."""
+    """Train a v3 LambdaRank scorer (``policy``) from rankable rows only.
+
+    ``policy`` is written into the artifact's version/runtime_policy so the
+    general scorer and the ``learned_quality_v3_profile`` specialist share the
+    same training path and target, differing only by routed scope.
+    """
 
     try:
         import lightgbm as lgb
@@ -634,14 +641,14 @@ def _train_v3_lambdarank_from_tagged_rows(
     )
     artifact = {
         "artifact_schema_version": 3,
-        "version": SCORER_VERSION_LEARNED_QUALITY_V3,
-        "scorer_version": SCORER_VERSION_LEARNED_QUALITY_V3,
+        "version": policy,
+        "scorer_version": policy,
         "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
         "target": TARGET_TRANSFORM_REGRET_V3,
         "objective": "lambdarank_visible_transform_regret",
         "training_mode": "grouped_lambdarank_rankable_v3_only",
         "selection_target": "inverse_transform_regret_v3_rank",
-        "runtime_policy": SCORER_VERSION_LEARNED_QUALITY_V3,
+        "runtime_policy": policy,
         "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
         "higher_is_better": False,
         "failure_threshold": failure_threshold,
@@ -681,7 +688,7 @@ def _train_v3_lambdarank_from_tagged_rows(
             "deterministic": True,
         },
     }
-    artifact_path = write_json(output_dir / SCORER_V3_ARTIFACT, artifact)
+    artifact_path = write_json(output_dir / artifact_filename, artifact)
     rows_path = write_tagged_rows_csv(grouped_train, output_dir / TRAINING_ROWS_CSV)
     eval_rows_path = write_tagged_rows_csv(rankable_eval, output_dir / EVAL_ROWS_CSV)
     importances_path = _write_feature_importance_csv(
@@ -837,7 +844,38 @@ def train_runtime_resolver_scorer_suite(
     canonical_v3 = scorers_dir / "learned_quality_v3.json"
     shutil.copy2(v3_dir / SCORER_V3_ARTIFACT, canonical_v3)
 
-    metrics = {
+    profile_specialist_status = "skipped_no_profile_rows"
+    profile_specialist_entry: dict[str, T.Any] | None = None
+    profile_train_rows = filter_profile_specialist_rows(train_tagged_rows)
+    profile_eval_rows = filter_profile_specialist_rows(eval_tagged_rows)
+    if profile_train_rows:
+        profile_dir = output_dir / "v3_lambdarank_profile"
+        try:
+            profile_v3_metrics = _train_v3_lambdarank_from_tagged_rows(
+                train_tagged_rows=profile_train_rows,
+                eval_tagged_rows=profile_eval_rows,
+                candidates=candidates,
+                output_dir=profile_dir,
+                failure_threshold=failure_threshold,
+                eval_fraction=eval_fraction,
+                split_seed=split_seed,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                num_leaves=num_leaves,
+                policy=SCORER_VERSION_LEARNED_QUALITY_V3_PROFILE,
+                artifact_filename=SCORER_V3_PROFILE_ARTIFACT,
+            )
+            canonical_v3_profile = scorers_dir / "learned_quality_v3_profile.json"
+            shutil.copy2(profile_dir / SCORER_V3_PROFILE_ARTIFACT, canonical_v3_profile)
+            profile_specialist_entry = {
+                **profile_v3_metrics,
+                "canonical_artifact": str(canonical_v3_profile),
+            }
+            profile_specialist_status = "trained"
+        except ValueError as err:
+            profile_specialist_status = f"skipped_insufficient_rankable_profile_rows: {err}"
+
+    metrics: dict[str, T.Any] = {
         "artifact_schema_version": 1,
         "scorer_dataset": dataset_manifest,
         "active_scorer_version": ACTIVE_SCORER_VERSION,
@@ -865,6 +903,9 @@ def train_runtime_resolver_scorer_suite(
         "eval_fraction": eval_fraction,
         "candidates": list(candidates),
     }
+    if profile_specialist_entry is not None:
+        metrics["scorers"]["learned_quality_v3_profile"] = profile_specialist_entry
+    metrics["profile_specialist_status"] = profile_specialist_status
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
     metrics["artifact"] = str(canonical_v3)

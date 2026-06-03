@@ -795,7 +795,17 @@ def test_scorer_suite_trains_only_active_v3_target_and_persists_feature_contract
     canonical_v3 = output_dir / "scorers" / "learned_quality_v3.json"
     artifact = json.loads(canonical_v3.read_text(encoding="utf-8"))
 
-    assert set(metrics["scorers"]) == {"learned_quality_v3"}
+    # The general scorer is always trained; the profile specialist is added
+    # whenever profile/occlusion rows exist (#218/#219).
+    assert "learned_quality_v3" in metrics["scorers"]
+    assert set(metrics["scorers"]) <= {"learned_quality_v3", "learned_quality_v3_profile"}
+    assert "profile_specialist_status" in metrics
+    if "learned_quality_v3_profile" in metrics["scorers"]:
+        canonical_v3_profile = output_dir / "scorers" / "learned_quality_v3_profile.json"
+        assert canonical_v3_profile.is_file()
+        profile_artifact = json.loads(canonical_v3_profile.read_text(encoding="utf-8"))
+        assert profile_artifact["runtime_policy"] == "learned_quality_v3_profile"
+        assert profile_artifact["target"] == TARGET_TRANSFORM_REGRET_V3
     assert metrics["active_target"] == TARGET_TRANSFORM_REGRET_V3
     assert metrics["artifact"] == str(canonical_v3)
     assert canonical_v3.is_file()
@@ -2078,8 +2088,7 @@ def test_v3_learnability_gate_attributes_avoidable_invalid_selection() -> None:
     )
 
     assert (
-        "avoidable_invalid_selection_rate_above_validity_detector_gate"
-        in result["failed_gates"]
+        "avoidable_invalid_selection_rate_above_validity_detector_gate" in result["failed_gates"]
     )
     failure = next(
         item
