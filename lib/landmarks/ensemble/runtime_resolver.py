@@ -2497,7 +2497,9 @@ def resolve_runtime(
             "scorer_paths": {
                 str(key): str(value) for key, value in (config.scorer_paths or {}).items()
             },
-            "scorer_routed_policy": ROUTED_GENERAL_PROFILE_POLICY,
+            "scorer_routed_policy": config.policy
+            if config.policy == ROUTED_GENERAL_PROFILE_POLICY
+            else "",
             "scorer_routed_route_policy": routed_route_source,
             "scorer_version": scorer.version,
             "scorer_model_type": scorer.model_type,

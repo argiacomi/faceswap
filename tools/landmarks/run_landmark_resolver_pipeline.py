@@ -1304,7 +1304,7 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         "--promotion-scope",
         args.promotion_scope,
         "--promotion-policy",
-        _promoted_runtime_policy(args),
+        _promoted_runtime_policy(args, paths),
         "--installed-scorer-dir",
         str(
             getattr(
@@ -2669,7 +2669,7 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
             for policy, source in scorer_sources.items()
             if policy in LEARNED_POLICIES and source.is_file()
         },
-        active_policy=_promoted_runtime_policy(args),
+        active_policy=_promoted_runtime_policy(args, paths),
         source_output_root=paths.output_root,
         created_by="run_landmark_resolver_pipeline.py",
     )
