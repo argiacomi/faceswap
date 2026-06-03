@@ -607,6 +607,14 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         self._set_training_batch_size(batch_size)
         model_state = self._snapshot_model_state()
         optimizer_state = self._snapshot_optimizer_state()
+
+        # Mirror the real training-batch preamble so the probe measures the same loss path that
+        # normal training will use at this iteration: schedule-free optimizer mode, iteration-gated
+        # losses, and phase-scheduled loss multipliers.
+        self._optimizer.train()
+        self._plugin.loss_func.set_iteration(self._model.iterations)
+        self._update_phase_schedule()
+
         vram_allocated = 0
         vram_reserved = 0
         try:
@@ -674,13 +682,23 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         self._model.state.save()
 
         if auto_apply and recommendation.suggested_batch_size > 0:
-            self._set_training_batch_size(recommendation.suggested_batch_size)
-            self._model.state.add_session_batchsize(recommendation.suggested_batch_size)
-            logger.info(
-                "Applied recommended training batch size: %s",
-                recommendation.suggested_batch_size,
-            )
-            return
+            if recommendation.gradient_accumulation_recommended:
+                logger.warning(
+                    "Batch-size finder recommended batch size %s with gradient accumulation "
+                    "steps %s to reach effective batch size %s. Auto-apply only updates batch "
+                    "size, so the recommendation has been recorded but not applied.",
+                    recommendation.suggested_batch_size,
+                    recommendation.gradient_accumulation_steps,
+                    recommendation.effective_batch_size,
+                )
+            else:
+                self._set_training_batch_size(recommendation.suggested_batch_size)
+                self._model.state.add_session_batchsize(recommendation.suggested_batch_size)
+                logger.info(
+                    "Applied recommended training batch size: %s",
+                    recommendation.suggested_batch_size,
+                )
+                return
 
         self._set_training_batch_size(original_batch_size)
 

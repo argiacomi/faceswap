@@ -331,8 +331,9 @@ class TrainArgs(FaceSwapArgs):
                 "group": _("training"),
                 "help": _(
                     "Apply the batch-size finder's conservative recommendation to this training "
-                    "run. Without this option, the finder reports results and exits without "
-                    "changing the configured batch size."
+                    "run when no gradient accumulation is required. Without this option, the "
+                    "finder reports results and exits without changing the configured batch size. "
+                    "If accumulation is recommended, results are recorded but not auto-applied."
                 ),
             }
         )

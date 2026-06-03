@@ -96,8 +96,22 @@ class _Meta:
         return self
 
 
+class _ProbeLossFunc:
+    """Fake loss function object that records iteration updates."""
+
+    def __init__(self) -> None:
+        self.iterations: list[int] = []
+
+    def set_iteration(self, iteration: int) -> None:
+        """Record the iteration supplied by the probe preamble."""
+        self.iterations.append(iteration)
+
+
 class _ProbePlugin:
     """Fake plugin that raises accelerator OOM during train."""
+
+    def __init__(self) -> None:
+        self.loss_func = _ProbeLossFunc()
 
     def train_batch(
         self,
@@ -119,6 +133,11 @@ class _ProbeOptimizer:
     def __init__(self) -> None:
         self.zeroed = False
         self.restored = False
+        self.train_called = False
+
+    def train(self) -> None:
+        """Record that the probe put the optimizer into training mode."""
+        self.train_called = True
 
     def state_dict(self) -> dict[str, object]:
         """Return fake optimizer state."""
@@ -206,19 +225,26 @@ def test_probe_clears_gradients_after_oom() -> None:
     """OOM probes should restore state and clear partial gradients."""
     trainer = T.cast(T.Any, Trainer.__new__(Trainer))
     optimizer = _ProbeOptimizer()
+    plugin = _ProbePlugin()
+    schedule_updates: list[bool] = []
     trainer._device = torch.device("cpu")
-    trainer._plugin = _ProbePlugin()
+    trainer._model = type("_ProbeModel", (), {"iterations": 123})()
+    trainer._plugin = plugin
     trainer._optimizer = optimizer
     trainer._train_loader = iter([([torch.zeros((1, 1))], [torch.zeros((1, 1))], _Meta())])
     trainer._set_training_batch_size = lambda _batch_size: None
     trainer._snapshot_model_state = lambda: ("state_dict", {})
     trainer._restore_model_state = lambda _state: None
+    trainer._update_phase_schedule = lambda: schedule_updates.append(True)
 
     probe = Trainer.probe_training_batch_size(trainer, 4)
 
     assert probe.success is False
     assert probe.error is not None
     assert is_accelerator_oom_error(torch.OutOfMemoryError(probe.error))
+    assert optimizer.train_called is True
+    assert plugin.loss_func.iterations == [123]
+    assert schedule_updates == [True]
     assert optimizer.restored is True
     assert optimizer.zeroed is True
 
@@ -254,3 +280,25 @@ def test_trainer_find_batch_size_auto_apply_uses_recommendation(tmp_path: Path) 
 
     assert trainer.batch_size == 5
     assert trainer._model.state.batch_size == 5
+
+
+def test_trainer_find_batch_size_auto_apply_skips_accumulation_recommendation(
+    tmp_path: Path,
+) -> None:
+    """Auto apply should not silently ignore a recommended accumulation change."""
+    trainer = _Trainer(batch_size=4, safe_limit=3, folders=_folders(tmp_path))
+
+    Trainer.find_batch_size(
+        T.cast("Trainer", trainer),
+        max_batch_size=8,
+        target_effective_batch_size=4,
+        auto_apply=True,
+    )
+
+    assert trainer.batch_size == 4
+    assert trainer._model.state.saved is True
+    assert trainer._model.state.recommendation is not None
+    assert trainer._model.state.recommendation["suggested_batch_size"] == 2
+    assert trainer._model.state.recommendation["gradient_accumulation_recommended"] is True
+    assert trainer._model.state.recommendation["gradient_accumulation_steps"] == 2
+    assert trainer._model.state.batch_size == 0
