@@ -59,6 +59,9 @@ RuntimeResolverLearnedScorerLike = RuntimeResolverLearnedScorer
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
 DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
+PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED = True
+PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN = 0.03
+PROFILE_ROUTE_GENERAL_FALLBACK_REASON = "profile_route_general_fallback_low_margin"
 PROMOTION_SCOPES = ("universal", "production")
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
 RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
@@ -1719,6 +1722,9 @@ def score_policy_choices_routed(
     *,
     risk_floor_for_safe_fallback: float,
     safe_fallback_min_delta: float,
+    profile_route_general_fallback_enabled: bool = PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED,
+    profile_route_general_fallback_min_margin: float = PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN,
+    routed_fallback_diagnostics: list[dict[str, T.Any]] | None = None,
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, str]:
     """Choose one candidate per sample, routing each context to its scorer.
@@ -1739,10 +1745,80 @@ def score_policy_choices_routed(
     )
     for context in iterator:
         route = scorer_route_for_context(context)
+        context_rows = _context_rows_for_eval(context)
+
+        if (
+            profile_route_general_fallback_enabled
+            and route == SCORER_POLICY_PROFILE
+            and general is not None
+            and profile is not None
+        ):
+            general_scores = _score_context_rows(general, context_rows)
+            profile_scores = _score_context_rows(profile, context_rows)
+
+            (
+                general_choice,
+                general_fallback_used,
+                general_fallback_reason,
+                _general_rejected_candidate,
+                _general_replacement_candidate,
+            ) = choose_scorer(
+                context,
+                general_scores,
+                risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+                safe_fallback_min_delta=safe_fallback_min_delta,
+            )
+            (
+                profile_choice,
+                profile_fallback_used,
+                profile_fallback_reason,
+                _profile_rejected_candidate,
+                _profile_replacement_candidate,
+            ) = choose_scorer(
+                context,
+                profile_scores,
+                risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+                safe_fallback_min_delta=safe_fallback_min_delta,
+            )
+
+            if profile_choice != general_choice:
+                profile_choice_score = float(profile_scores.get(profile_choice, float("inf")))
+                general_choice_profile_score = float(
+                    profile_scores.get(general_choice, float("inf"))
+                )
+                profile_margin_vs_general = general_choice_profile_score - profile_choice_score
+
+                if profile_margin_vs_general < profile_route_general_fallback_min_margin:
+                    choices[context.sample_id] = general_choice
+                    if routed_fallback_diagnostics is not None:
+                        routed_fallback_diagnostics.append(
+                            {
+                                "sample_id": context.sample_id,
+                                "dataset": context.dataset,
+                                "condition": context.condition,
+                                "runtime_bucket": context.runtime_bucket,
+                                "route": route,
+                                "fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
+                                "rejected_candidate": profile_choice,
+                                "replacement_candidate": general_choice,
+                                "profile_choice_score": profile_choice_score,
+                                "general_choice_profile_score": general_choice_profile_score,
+                                "profile_margin_vs_general": profile_margin_vs_general,
+                                "required_margin": profile_route_general_fallback_min_margin,
+                                "profile_fallback_used": bool(profile_fallback_used),
+                                "profile_fallback_reason": profile_fallback_reason,
+                                "general_fallback_used": bool(general_fallback_used),
+                                "general_fallback_reason": general_fallback_reason,
+                            }
+                        )
+                    continue
+
+            choices[context.sample_id] = profile_choice
+            continue
+
         scorer = profile if route == SCORER_POLICY_PROFILE and profile is not None else general
         if scorer is None:
             scorer = profile
-        context_rows = _context_rows_for_eval(context)
         scores = _score_context_rows(scorer, context_rows)
         choices[context.sample_id] = choose_scorer(
             context,
@@ -2111,14 +2187,7 @@ def installed_baseline_promotion_gates(
             if selected_regret >= installed_regret:
                 failed.append("transform_regret_v3_not_better_than_installed_current")
         else:
-            selected_failure = float(selected_metrics.get("failure_rate", 0.0) or 0.0)
-            installed_failure = float(installed_metrics.get("failure_rate", 0.0) or 0.0)
-            selected_mean = float(selected_metrics.get("mean_nme", 0.0) or 0.0)
-            installed_mean = float(installed_metrics.get("mean_nme", 0.0) or 0.0)
-            if selected_failure > installed_failure:
-                failed.append("failure_rate_regresses_vs_installed_current")
-            if selected_mean >= installed_mean:
-                failed.append("mean_nme_not_better_than_installed_current")
+            failed.append("missing_transform_eval_for_v3_promotion")
         gates[policy_name] = {
             "status": "pass" if not failed else "fail",
             "failed_gates": failed,
@@ -2587,6 +2656,16 @@ def evaluate_runtime_resolver_scorer(
         else best_single_report_summary
     )
     primary_scorer_policy = scorer_policy_key(scorer)
+    if not promotion_policy:
+        promotion_policy = primary_scorer_policy
+    elif promotion_policy != primary_scorer_policy:
+        raise ValueError(
+            "promotion_policy must match the evaluated primary_scorer_policy; "
+            f"got promotion_policy={promotion_policy!r} and "
+            f"primary_scorer_policy={primary_scorer_policy!r}. "
+            "Evaluate routed as the primary policy before promoting it."
+        )
+
     scorer_summary = policy_summary(
         contexts,
         scorer_choices,
@@ -2616,6 +2695,7 @@ def evaluate_runtime_resolver_scorer(
         except (OSError, ValueError, RuntimeError):
             pass
 
+    routed_fallback_diagnostics: list[dict[str, T.Any]] = []
     if SCORER_POLICY_GENERAL in scorers_by_policy and SCORER_POLICY_PROFILE in scorers_by_policy:
         routed_progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None
         if progress is not None:
@@ -2631,6 +2711,7 @@ def evaluate_runtime_resolver_scorer(
             scorers_by_policy,
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
             safe_fallback_min_delta=safe_fallback_min_delta,
+            routed_fallback_diagnostics=routed_fallback_diagnostics,
             progress=routed_progress,
         )
 
@@ -2874,44 +2955,25 @@ def evaluate_runtime_resolver_scorer(
             *production_failed_gates,
             *hard_bucket_failed_gates,
         ]
-    if not promotion_policy:
-        promotion_policy = primary_scorer_policy
+    # promotion_policy was normalized immediately after primary_scorer_policy
+    # was discovered. From this point on, promotion_policy == primary_scorer_policy.
 
-    selected_policy_metrics: dict[str, T.Mapping[str, T.Any]] = {}
-    if production_contexts and use_v3_transform_metrics:
-        selected_policy_metrics.update(
-            {
-                key: value
-                for key, value in production_reweighted_gt_policy_metrics["policies"].items()
-                if key in (*LEARNED_POLICIES, ROUTED_GENERAL_PROFILE_POLICY)
-                and isinstance(value, dict)
-            }
+    if use_v3_transform_metrics:
+        selected_primary_metrics = gt_hard_all_policy_metrics.get(
+            primary_scorer_policy,
+            scorer_summary,
         )
     elif production_contexts:
-        selected_policy_metrics.update(
-            {
-                key: value
-                for key, value in production_only_policy_metrics.items()
-                if key in (*LEARNED_POLICIES, ROUTED_GENERAL_PROFILE_POLICY)
-                and isinstance(value, dict)
-            }
+        selected_primary_metrics = production_only_policy_metrics.get(
+            primary_scorer_policy,
+            scorer_summary,
         )
     else:
-        selected_policy_metrics.update(
-            {
-                key: value
-                for key, value in {primary_scorer_policy: scorer_summary}.items()
-                if key in (*LEARNED_POLICIES, ROUTED_GENERAL_PROFILE_POLICY)
-                and isinstance(value, dict)
-                and value
-            }
-        )
-    selected_policy_metrics.setdefault(
-        primary_scorer_policy,
-        gt_hard_all_policy_metrics.get(primary_scorer_policy, scorer_summary)
-        if use_v3_transform_metrics
-        else scorer_summary,
-    )
+        selected_primary_metrics = scorer_summary
+
+    selected_policy_metrics: dict[str, T.Mapping[str, T.Any]] = {
+        primary_scorer_policy: selected_primary_metrics,
+    }
     installed_metrics = None
     installed_choices = installed_scorer_choices.get(installed_policy)
     if installed_choices:
@@ -2960,30 +3022,35 @@ def evaluate_runtime_resolver_scorer(
     requested_gate = installed_baseline_gates[promotion_policy]
     installed_failed_gates = list(requested_gate.get("failed_gates", []))
     installed_promotion_status = str(requested_gate.get("status") or "fail")
-    using_installed_promotion_gate = installed_promotion_status not in {
-        "",
-        "skipped_no_installed_baseline",
-        "skipped_missing_report_payload",
-    }
-    report_failed_gates = (
-        installed_failed_gates if using_installed_promotion_gate else failed_gates
-    )
-    report_status = "pass" if not report_failed_gates else "fail"
+    if installed_promotion_status == "pass":
+        report_failed_gates = []
+        report_status = "pass"
+    elif installed_promotion_status == "skipped_no_installed_baseline":
+        report_failed_gates = ["missing_installed_baseline"]
+        report_status = "fail"
+    else:
+        report_failed_gates = installed_failed_gates or [
+            f"installed_baseline_{installed_promotion_status}"
+        ]
+        report_status = "fail"
 
     report: dict[str, T.Any] = {
         "status": report_status,
         "promotion_status": report_status,
         "promotion_scope": promotion_scope,
         "promotion_policy": promotion_policy,
-        "promotion_gate_source": "installed_baseline"
-        if using_installed_promotion_gate
-        else "diagnostic",
+        "promotion_gate_source": "installed_baseline",
         "installed_scorer_dir": "" if installed_scorer_dir is None else str(installed_scorer_dir),
         "installed_scorer_status": installed_status,
         "installed_current_policy": installed_policy,
         "installed_baseline_promotion_status": installed_promotion_status,
         "installed_baseline_failed_gates": installed_failed_gates,
         "installed_baseline_promotion": installed_baseline_gates,
+        "promotion_policy_matches_primary": promotion_policy == primary_scorer_policy,
+        "promotion_gate_contract": (
+            "promotion_policy == primary_scorer_policy; installed-baseline gate is "
+            "the only promotion blocker; diagnostic gates are report-only"
+        ),
         "failed_gates": report_failed_gates,
         "diagnostic_failed_gates": failed_gates,
         "diagnostic_universal_failed_gates": universal_failed_gates,
@@ -3045,6 +3112,11 @@ def evaluate_runtime_resolver_scorer(
         "risk_floor_for_safe_fallback": risk_floor_for_safe_fallback,
         "safe_fallback_min_delta": safe_fallback_min_delta,
         "safe_fallback_tie_breaker": ["hrnet", "spiga", "orformer"],
+        "profile_route_general_fallback_enabled": PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED,
+        "profile_route_general_fallback_min_margin": PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN,
+        "profile_route_general_fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
+        "profile_route_general_fallback_count": len(routed_fallback_diagnostics),
+        "profile_route_general_fallbacks": routed_fallback_diagnostics[:worst_sample_count],
         "per_bucket": per_bucket(contexts, scorer_choices),
         "metrics_by_split": metrics_by_split,
         "region_reports": region_report_summary,
@@ -3127,6 +3199,9 @@ def evaluate_runtime_resolver_scorer(
 __all__ = [
     "DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK",
     "DEFAULT_SAFE_FALLBACK_MIN_DELTA",
+    "PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED",
+    "PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN",
+    "PROFILE_ROUTE_GENERAL_FALLBACK_REASON",
     "PROMOTION_SCOPES",
     "assert_lower_score_is_better",
     "evaluate_runtime_resolver_scorer",
