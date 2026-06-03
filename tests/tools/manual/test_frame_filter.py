@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+import numpy as np
 import pytest
 
 from tools.manual.frame_filter import (
@@ -284,15 +287,14 @@ def test_new_filter_modes_use_supplied_predicates() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _stable_landmarks() -> object:
+def _stable_landmarks() -> np.ndarray:
     """Return a realistic, roughly frontal 68-point landmark array."""
-    import numpy as np
 
     rng = np.random.default_rng(1234)
-    return (rng.random((68, 2)).astype("float32") * 120.0) + 40.0
+    return cast(np.ndarray, (rng.random((68, 2)).astype("float32") * 120.0) + 40.0)
 
 
-def _detected_face(landmarks: object) -> object:
+def _detected_face(landmarks: np.ndarray) -> object:
     """Build a manual-tool DetectedFace with its aligned face loaded, as the tool does."""
     from lib.align.detected_face import DetectedFace
 
@@ -370,11 +372,9 @@ def test_thumbnail_landmarks_match_displayed_face_crop() -> None:
     assert np.allclose(points, expected)
 
 
-def _realistic_face(jaw_drop: float = 0.0) -> object:
+def _realistic_face(jaw_drop: float = 0.0) -> np.ndarray:
     """Return a realistic 68-point face (mean inner-51 + synthesized jaw), optionally dropping
     the jaw line to simulate a blown-out detection whose landmarks leave the displayed crop."""
-    import numpy as np
-
     from lib.align.constants import MEAN_FACE, LandmarkType
 
     inner = np.asarray(MEAN_FACE[LandmarkType.LM_2D_51], dtype="float32")
@@ -387,7 +387,7 @@ def _realistic_face(jaw_drop: float = 0.0) -> object:
         )
         for i in range(17)
     ]
-    face = np.vstack([np.array(jaw, dtype="float32"), inner]).astype("float32")
+    face: np.ndarray = np.vstack([np.array(jaw, dtype="float32"), inner]).astype("float32")
     if jaw_drop:
         face[0:17, 1] += jaw_drop
         face[8, 1] += jaw_drop * 0.5
