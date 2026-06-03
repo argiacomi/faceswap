@@ -927,6 +927,7 @@ def train_runtime_resolver_scorer_suite(
     profile_specialist_entry: dict[str, T.Any] | None = None
     profile_specialist_status = "skipped_no_profile_rows"
     profile_specialist_mode = "none"
+    profile_specialist_attempts: list[str] = []
 
     if profile_train_rows and profile39_rows and mixed_profile:
         from lib.landmarks.ensemble.profile_mixed_training import (
@@ -945,6 +946,7 @@ def train_runtime_resolver_scorer_suite(
                 eval_fraction=profile39_eval_fraction,
                 split_seed=mixed_profile_split_seed,
                 profile39_query_weight=profile39_query_weight,
+                canonical_query_weight_fn=v3_lambdarank_query_weight,
                 learning_rate=learning_rate,
                 iterations=iterations,
                 num_leaves=num_leaves,
@@ -958,35 +960,9 @@ def train_runtime_resolver_scorer_suite(
             profile_specialist_status = "trained"
             profile_specialist_mode = "mixed_profile"
         except (ValueError, RuntimeError) as err:
-            profile_specialist_status = f"skipped_mixed_profile: {err}"
-    elif profile39_rows:
-        from lib.landmarks.ensemble.profile39_training import (
-            PROFILE39_SCORER_ARTIFACT,
-            train_profile39_specialist,
-        )
+            profile_specialist_attempts.append(f"mixed_profile_failed: {err}")
 
-        profile39_dir = output_dir / "v3_profile39"
-        try:
-            profile_metrics = train_profile39_specialist(
-                profile39_rows,
-                output_dir=profile39_dir,
-                candidates=candidates,
-                learning_rate=learning_rate,
-                iterations=iterations,
-                num_leaves=num_leaves,
-                split_seed=split_seed,
-            )
-            shutil.copy2(profile39_dir / PROFILE39_SCORER_ARTIFACT, canonical_v3_profile)
-            profile_specialist_entry = {
-                **profile_metrics,
-                "canonical_artifact": str(canonical_v3_profile),
-                "trained_from": "profile39_partial_schema",
-            }
-            profile_specialist_status = "trained"
-            profile_specialist_mode = "profile39"
-        except (ValueError, RuntimeError) as err:
-            profile_specialist_status = f"skipped_profile39: {err}"
-    elif profile_train_rows:
+    if profile_specialist_entry is None and profile_train_rows:
         profile_dir = output_dir / "v3_lambdarank_profile"
         try:
             profile_metrics = _train_v3_lambdarank_from_tagged_rows(
@@ -1012,7 +988,40 @@ def train_runtime_resolver_scorer_suite(
             profile_specialist_status = "trained"
             profile_specialist_mode = "canonical68_profile"
         except ValueError as err:
-            profile_specialist_status = f"skipped_insufficient_rankable_profile_rows: {err}"
+            profile_specialist_attempts.append(f"canonical68_profile_failed: {err}")
+
+    if profile_specialist_entry is None and profile39_rows:
+        from lib.landmarks.ensemble.profile39_training import (
+            PROFILE39_SCORER_ARTIFACT,
+            train_profile39_specialist,
+        )
+
+        profile39_dir = output_dir / "v3_profile39"
+        try:
+            profile_metrics = train_profile39_specialist(
+                profile39_rows,
+                output_dir=profile39_dir,
+                candidates=candidates,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                num_leaves=num_leaves,
+                split_seed=split_seed,
+            )
+            shutil.copy2(profile39_dir / PROFILE39_SCORER_ARTIFACT, canonical_v3_profile)
+            profile_specialist_entry = {
+                **profile_metrics,
+                "canonical_artifact": str(canonical_v3_profile),
+                "trained_from": "profile39_partial_schema",
+            }
+            profile_specialist_status = "trained"
+            profile_specialist_mode = "profile39"
+        except (ValueError, RuntimeError) as err:
+            profile_specialist_attempts.append(f"profile39_failed: {err}")
+
+    if profile_specialist_entry is not None and profile_specialist_attempts:
+        profile_specialist_entry["fallback_attempts"] = list(profile_specialist_attempts)
+    elif profile_specialist_entry is None and profile_specialist_attempts:
+        profile_specialist_status = "; ".join(profile_specialist_attempts)
 
     metrics: dict[str, T.Any] = {
         "artifact_schema_version": 1,
@@ -1046,13 +1055,31 @@ def train_runtime_resolver_scorer_suite(
         metrics["scorers"]["learned_quality_v3_profile"] = profile_specialist_entry
     metrics["profile_specialist_status"] = profile_specialist_status
     metrics["profile_specialist_mode"] = profile_specialist_mode
+    metrics["profile_specialist_attempts"] = list(profile_specialist_attempts)
     metrics["profile_specialist_row_counts"] = {
         "train_rows": len(profile_train_rows),
         "eval_rows": len(profile_eval_rows),
         "profile39_rows": len(profile39_rows),
     }
     if profile39_report is not None:
-        metrics["profile39"] = profile39_report
+        profile39_metrics_entry: dict[str, T.Any] = {
+            "report": profile39_report,
+            "row_count": len(profile39_rows),
+            "used_in_profile_specialist": profile_specialist_mode
+            in {"mixed_profile", "profile39"},
+            "profile_specialist_mode": profile_specialist_mode,
+        }
+        # Preserve the old top-level profile39 training-metrics shape in the
+        # profile39-only path, so downstream consumers looking for
+        # metrics["profile39"]["artifact"] / ["metrics_path"] keep working.
+        if profile_specialist_mode == "profile39" and profile_specialist_entry is not None:
+            profile39_metrics_entry = {
+                **profile_specialist_entry,
+                "report": profile39_report,
+                "row_count": len(profile39_rows),
+                "profile_specialist_mode": profile_specialist_mode,
+            }
+        metrics["profile39"] = profile39_metrics_entry
 
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)

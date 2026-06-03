@@ -98,6 +98,27 @@ def _canonical_row_and_source(
     return item, fallback_source
 
 
+def _canonical_group_source(
+    source: str,
+    *,
+    source_label: str = CANONICAL68_PROFILE_SOURCE,
+) -> str:
+    """Return a reporting/grouping source that preserves the canonical row source.
+
+    The source string is intentionally not added to runtime model features. It is
+    used only to prevent GT-hard and production rows with the same sample id from
+    being collapsed into one LambdaRank query and to keep source accounting
+    meaningful in mixed-profile reports.
+    """
+
+    normalized = str(source or "").strip()
+    if not normalized or normalized == source_label:
+        return source_label
+    if normalized.startswith(f"{source_label}:"):
+        return normalized
+    return f"{source_label}:{normalized}"
+
+
 def _group_has_regret_gap(rows: T.Sequence[MixedProfileRankRow]) -> bool:
     regrets = [float(row.regret) for row in rows if math.isfinite(float(row.regret))]
     if len(regrets) < 2:
@@ -105,13 +126,13 @@ def _group_has_regret_gap(rows: T.Sequence[MixedProfileRankRow]) -> bool:
     return max(regrets) - min(regrets) > MIN_MIXED_PROFILE_REGRET_GAP
 
 
-def _sorted_valid_group(rows: T.Sequence[MixedProfileRankRow]) -> tuple[MixedProfileRankRow, ...] | None:
+def _sorted_valid_group(
+    rows: T.Sequence[MixedProfileRankRow],
+) -> tuple[MixedProfileRankRow, ...] | None:
     valid = [
         row
         for row in rows
-        if bool(row.rankable)
-        and not bool(row.hard_invalid)
-        and math.isfinite(float(row.regret))
+        if bool(row.rankable) and not bool(row.hard_invalid) and math.isfinite(float(row.regret))
     ]
     if len(valid) < 2 or not _group_has_regret_gap(valid):
         return None
@@ -123,12 +144,17 @@ def canonical68_profile_groups_from_rows(
     *,
     source_label: str = CANONICAL68_PROFILE_SOURCE,
     query_weight: float = 1.0,
+    query_weight_fn: T.Callable[[CandidateQualityRow, str], float] | None = None,
 ) -> list[MixedProfileRankGroup]:
     """Convert canonical 68-point profile/occlusion rows into mixed rank groups.
 
     The input may be plain :class:`CandidateQualityRow` values or tagged
     ``(CandidateQualityRow, source)`` tuples. Source is retained only for grouping,
     accounting, and reporting. It is never added to the model feature map.
+
+    ``query_weight`` is a source-level multiplier. When ``query_weight_fn`` is
+    supplied, its per-query value is multiplied by ``query_weight`` so mixed
+    training can preserve the canonical v3 hard-slice weighting policy.
     """
 
     groups: dict[tuple[str, str, str, str], list[MixedProfileRankRow]] = {}
@@ -136,18 +162,22 @@ def canonical68_profile_groups_from_rows(
         row, source = _canonical_row_and_source(item, fallback_source=source_label)
         if not is_profile_or_occlusion_context(row):
             continue
-        del source
+        grouped_source = _canonical_group_source(source, source_label=source_label)
+        base_query_weight = (
+            float(query_weight_fn(row, source)) if query_weight_fn is not None else 1.0
+        )
+        row_query_weight = float(query_weight) * base_query_weight
         mixed = MixedProfileRankRow(
             sample_id=str(row.sample_id),
             dataset=str(row.dataset),
             condition=str(row.condition),
-            source=str(source_label),
+            source=grouped_source,
             candidate_name=str(row.candidate_name),
             feature_values=dict(row.feature_values),
             regret=float(row.transform_regret_v3),
             rankable=bool(row.rankable_v3),
             hard_invalid=bool(row.hard_invalid_v3),
-            weight=1.0,
+            weight=row_query_weight,
         )
         key = (mixed.source, mixed.dataset, mixed.condition, mixed.sample_id)
         groups.setdefault(key, []).append(mixed)
@@ -164,7 +194,7 @@ def canonical68_profile_groups_from_rows(
                 condition=condition,
                 source=source,
                 rows=grouped,
-                query_weight=float(query_weight),
+                query_weight=float(grouped[0].weight),
             )
         )
     return output
@@ -246,9 +276,7 @@ def split_profile39_groups(
         ordered = sorted(
             stratum_groups,
             key=lambda group: hashlib.sha256(
-                "|".join((str(seed), source, dataset, condition, group.sample_id)).encode(
-                    "utf-8"
-                )
+                "|".join((str(seed), source, dataset, condition, group.sample_id)).encode("utf-8")
             ).hexdigest(),
         )
         if eval_fraction <= 0.0 or len(ordered) <= 1:
@@ -347,7 +375,9 @@ def _write_mixed_rows_csv(
                         "hard_invalid": row.hard_invalid,
                         "row_weight": row.weight,
                         "query_weight": group.query_weight,
-                        "features_json": json.dumps(dict(sorted(row.feature_values.items())), sort_keys=True),
+                        "features_json": json.dumps(
+                            dict(sorted(row.feature_values.items())), sort_keys=True
+                        ),
                         **{feature: row.feature_values.get(feature, 0.0) for feature in features},
                     }
                 )
@@ -374,9 +404,16 @@ def _raw_profile39_group_count(rows: T.Sequence[Profile39Row]) -> int:
 def _raw_canonical_group_count(rows: T.Sequence[CanonicalInputRow]) -> int:
     keys: set[tuple[str, str, str, str]] = set()
     for item in rows:
-        row, _source = _canonical_row_and_source(item)
+        row, source = _canonical_row_and_source(item)
         if is_profile_or_occlusion_context(row):
-            keys.add((CANONICAL68_PROFILE_SOURCE, row.dataset, row.condition, row.sample_id))
+            keys.add(
+                (
+                    _canonical_group_source(source),
+                    row.dataset,
+                    row.condition,
+                    row.sample_id,
+                )
+            )
     return len(keys)
 
 
@@ -479,6 +516,7 @@ def train_mixed_profile_specialist(
     split_seed: str = "mixed_profile_v1",
     profile39_query_weight: float = 1.0,
     canonical_query_weight_multiplier: float = 1.0,
+    canonical_query_weight_fn: T.Callable[[CandidateQualityRow, str], float] | None = None,
     learning_rate: float = 0.03,
     iterations: int = 600,
     num_leaves: int = 31,
@@ -495,10 +533,12 @@ def train_mixed_profile_specialist(
     canonical_train_groups = canonical68_profile_groups_from_rows(
         canonical_train_rows,
         query_weight=canonical_query_weight_multiplier,
+        query_weight_fn=canonical_query_weight_fn,
     )
     canonical_eval_groups = canonical68_profile_groups_from_rows(
         canonical_eval_rows,
         query_weight=canonical_query_weight_multiplier,
+        query_weight_fn=canonical_query_weight_fn,
     )
     profile39_groups = profile39_groups_from_rows(
         profile39_rows,
@@ -524,7 +564,9 @@ def train_mixed_profile_specialist(
 
     grouped_train = _flatten_groups(train_groups)
     train_group_sizes = [len(group.rows) for group in train_groups]
-    features = tuple(feature_order or runtime_feature_order(row.feature_values for row in grouped_train))
+    features = tuple(
+        feature_order or runtime_feature_order(row.feature_values for row in grouped_train)
+    )
     x = feature_matrix([row.feature_values for row in grouped_train], features)
     y = np.asarray(
         [mixed_profile_lambdarank_label(row.regret) for row in grouped_train],
