@@ -123,6 +123,10 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
 
         self._train_loader = self._get_train_loader()
 
+        self._phase_scheduler = self._set_phase_scheduler()
+        self._phase_schedule_state: ScheduleState | None = None
+        self._phase_last_logged: str | None = None
+
         self._exit_early = self._handle_lr_finder()
         if self._exit_early:
             logger.debug("[Trainer] Exiting from LR Finder")
@@ -135,9 +139,6 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         self._tensorboard = self._set_tensorboard()
         self._faceqa_diagnostics = self._set_faceqa_diagnostics()
         self._faceqa_diagnostic_logs: dict[str, float] = {}
-        self._phase_scheduler = self._set_phase_scheduler()
-        self._phase_schedule_state: ScheduleState | None = None
-        self._phase_last_logged: str | None = None
         self._preview_diagnostics = self._set_preview_diagnostics()
         self._samples = Samples(
             self._model.coverage_ratio,
