@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import types
+from typing import cast
 
 import numpy as np
 
@@ -136,3 +137,39 @@ def test_provenance_and_features() -> None:
     assert features["profile_repair_visible_side_left"] == 1.0
     assert features["profile_repair_visible_side_right"] == 0.0
     assert features["profile_repair_source_rank"] == 2.0
+
+
+def test_candidate_table_exposes_repair_provenance_columns() -> None:
+    import types as _types
+
+    from lib.landmarks.ensemble import runtime_resolver_scorer_data as scorer_data
+
+    for column in (
+        "profile_repair_used",
+        "profile_repair_source_candidate",
+        "profile_repair_visible_side",
+        "profile_repair_method",
+        "profile_repair_reason",
+    ):
+        assert column in scorer_data.CANDIDATE_TABLE_COLUMNS
+
+    provenance = repair.profile_repair_provenance(
+        source_candidate="spiga",
+        visible_side="left",
+        reason="all_candidates_hard_invalid_v3",
+    )
+    context = _types.SimpleNamespace(profile_repair_provenance=provenance)
+    # Populated for the repair candidate.
+    repaired_cols = scorer_data._candidate_repair_provenance_columns(
+        cast("scorer_data.SampleCandidateContext", context),
+        repair.PROFILE_REPAIR_CANDIDATE_NAME,
+    )
+    assert repaired_cols["profile_repair_source_candidate"] == "spiga"
+    assert repaired_cols["profile_repair_reason"] == "all_candidates_hard_invalid_v3"
+    assert repaired_cols["profile_repair_used"] == 1
+    # Empty for ordinary candidates.
+    other_cols = scorer_data._candidate_repair_provenance_columns(
+        cast("scorer_data.SampleCandidateContext", context), "spiga"
+    )
+    assert other_cols["profile_repair_source_candidate"] == ""
+    assert other_cols["profile_repair_used"] == ""

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import csv
+import functools
+import heapq
 import json
 import logging
 import math
@@ -106,7 +108,7 @@ DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StoredRuntimeDiagnostics:
     """Runtime diagnostics already attached to a manifest sample."""
 
@@ -198,10 +200,15 @@ CANDIDATE_TABLE_COLUMNS: tuple[str, ...] = (
     "runtime_bucket_source",
     "selected_candidate_missing_from_eval",
     "geometry_veto_reasons",
+    "profile_repair_used",
+    "profile_repair_source_candidate",
+    "profile_repair_visible_side",
+    "profile_repair_method",
+    "profile_repair_reason",
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CandidateQualityRow:
     """One sample/candidate row for scorer training or policy evaluation."""
 
@@ -344,6 +351,41 @@ _V3_SOFT_SUSPECT_TOKENS: tuple[str, ...] = (
     "warning",
 )
 
+_HARD_BUCKETS: frozenset[str] = frozenset({"frontal", "intermediate", "no_pose"})
+_PRODUCTION_VALIDATED_SOURCE = "production_validated"
+_JAW_CROP_MASK_TOKENS: tuple[str, ...] = (
+    "jaw",
+    "mask",
+    "crop",
+    "bbox",
+    "outside",
+    "hull",
+    "cloud_area",
+)
+_EYES_IDENTITY_POSE_TOKENS: tuple[str, ...] = (
+    "eye",
+    "eyes",
+    "pose",
+    "yaw",
+    "roll",
+    "identity",
+)
+_MOUTH_EXPRESSION_TOKENS: tuple[str, ...] = (
+    "mouth",
+    "lip",
+    "expression",
+    "mouth_nose_jaw",
+)
+_OCCLUDED_SIDE_INFERENCE_TOKENS: tuple[str, ...] = (
+    "occlusion",
+    "occluded",
+    "profile",
+    "large_yaw",
+    "occluded_side",
+    "visible_side",
+    "side_conflict",
+)
+
 # Keep this aligned with runtime_resolver.DEFAULT_MAX_SHAPE_PLAUSIBILITY_SCORE
 # without importing runtime_resolver here and expanding scorer-data dependencies.
 DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 0.2
@@ -351,24 +393,18 @@ DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 0.2
 
 def _dedupe_reasons(reasons: T.Iterable[str]) -> tuple[str, ...]:
     """Return non-empty reason strings in stable order."""
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for reason in reasons:
-        text = str(reason or "").strip()
-        if not text or text in seen:
-            continue
-        ordered.append(text)
-        seen.add(text)
-    return tuple(ordered)
+    return _dedupe_stable(str(reason or "") for reason in reasons)
 
 
 def _v3_hard_invalid_reasons(metric: CandidateMetrics) -> tuple[str, ...]:
     """Return fatal geometry reasons that exclude a candidate from v3 ranking."""
     reasons: list[str] = []
-    for reason in (*metric.geometry_veto_reasons, *metric.shape_veto_reasons):
-        lowered = str(reason).lower()
-        if any(token in lowered for token in _V3_HARD_INVALID_TOKENS):
-            reasons.append(str(reason))
+    for reason_group in (metric.geometry_veto_reasons, metric.shape_veto_reasons):
+        for reason in reason_group:
+            text = str(reason)
+            lowered = text.lower()
+            if any(token in lowered for token in _V3_HARD_INVALID_TOKENS):
+                reasons.append(text)
     if metric.eye_mouth_order_valid_after_deroll is False:
         reasons.append("eye_mouth_flip")
     if int(metric.topology_violation_count or 0) > 0:
@@ -390,13 +426,14 @@ def _v3_soft_suspect_reasons(
         str(reason or "").strip() for reason in hard_invalid_reasons if str(reason or "").strip()
     }
     reasons: list[str] = []
-    for reason in (*metric.geometry_veto_reasons, *metric.shape_veto_reasons):
-        text = str(reason or "").strip()
-        if not text or text in hard_reason_set:
-            continue
-        lowered = text.lower()
-        if any(token in lowered for token in _V3_SOFT_SUSPECT_TOKENS):
-            reasons.append(text)
+    for reason_group in (metric.geometry_veto_reasons, metric.shape_veto_reasons):
+        for reason in reason_group:
+            text = str(reason or "").strip()
+            if not text or text in hard_reason_set:
+                continue
+            lowered = text.lower()
+            if any(token in lowered for token in _V3_SOFT_SUSPECT_TOKENS):
+                reasons.append(text)
     if (
         metric.shape_plausibility_score is not None
         and metric.shape_plausibility_score > DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE
@@ -449,6 +486,19 @@ def parse_candidates(
     return tuple(dict.fromkeys(ordered))
 
 
+def _dedupe_stable(items: T.Iterable[str]) -> tuple[str, ...]:
+    """Return unique non-empty strings in input order."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return tuple(ordered)
+
+
 def _is_adaptive_candidate(name: str) -> bool:
     """Return True for candidates appended after runtime bucket inference."""
     if name == "region_weighted":
@@ -459,6 +509,7 @@ def _is_adaptive_candidate(name: str) -> bool:
     return _is_strategy(base)
 
 
+@functools.lru_cache(maxsize=256)
 def _is_strategy(name: str) -> bool:
     try:
         canonical_strategy(name)
@@ -467,8 +518,22 @@ def _is_strategy(name: str) -> bool:
     return True
 
 
+def _requested_candidate_sets(
+    requested_candidates: T.Sequence[str],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Split requested names once so per-sample setup avoids repeated strategy lookups."""
+    requested_adaptive: set[str] = set()
+    single_models: set[str] = set()
+    for name in requested_candidates:
+        if _is_adaptive_candidate(name):
+            requested_adaptive.add(name)
+        elif not _is_strategy(name):
+            single_models.add(name)
+    return frozenset(requested_adaptive), frozenset(single_models)
+
+
 def _load_truth(sample: LandmarkSample) -> np.ndarray:
-    return np.load(sample.landmarks).astype("float32")  # type: ignore[no-any-return]
+    return np.load(sample.landmarks).astype(np.float32, copy=False)  # type: ignore[no-any-return]
 
 
 def _runtime_metadata(sample: LandmarkSample) -> dict[str, T.Any]:
@@ -533,20 +598,13 @@ def _stored_hard_case_tags(value: T.Any) -> tuple[str, ...]:
     else:
         raw_items = (value,)
 
-    tags: list[str] = []
-    for item in raw_items:
-        tag = str(item).strip()
-        if tag and tag not in tags:
-            tags.append(tag)
-    return tuple(tags)
+    return _dedupe_stable(str(item) for item in raw_items)
 
 
 def _normalize_stored_condition_tag(value: T.Any) -> str:
     """Return stored condition as a hard-case tag only when it is hard/occlusion-like."""
     tag = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    while "__" in tag:
-        tag = tag.replace("__", "_")
-    tag = tag.strip("_")
+    tag = "_".join(part for part in tag.split("_") if part)
     if not tag:
         return ""
     if tag in NEW_HARD_CONDITION_LABELS:
@@ -628,7 +686,10 @@ def ensemble_crop_roi(
     ctr_x = int(np.rint((bbox[0] + bbox[2]) * 0.5))
     ctr_y = int(np.rint((bbox[1] + bbox[3]) * 0.5))
     half = int(np.rint(max(float(width), float(height)) * float(crop_scale) * 0.5))
-    return np.asarray([ctr_x - half, ctr_y - half, ctr_x + half, ctr_y + half], dtype="int32")  # type: ignore[no-any-return]
+    return np.asarray(  # type: ignore[no-any-return]
+        [ctr_x - half, ctr_y - half, ctr_x + half, ctr_y + half],
+        dtype="int32",
+    )
 
 
 def crop_square_rgb(
@@ -651,6 +712,15 @@ def crop_square_rgb(
     height = bottom - top
     if width <= 0 or height <= 0 or width != height:
         raise ValueError(f"ROI must be positive square ltrb, got {list(roi)}")
+    if left >= 0 and top >= 0 and right <= image.shape[1] and bottom <= image.shape[0]:
+        crop = image[top:bottom, left:right, :3]
+        if width == crop_size:
+            return crop  # type: ignore[no-any-return]
+        return cv2.resize(  # type: ignore[no-any-return]
+            crop,
+            (crop_size, crop_size),
+            interpolation=cv2.INTER_LINEAR,
+        )
     canvas = np.zeros((height, width, 3), dtype=image.dtype)
     src_left = max(left, 0)
     src_top = max(top, 0)
@@ -665,9 +735,14 @@ def crop_square_rgb(
         ] = image[src_top:src_bottom, src_left:src_right, :3]
     if width == crop_size and height == crop_size:
         return canvas  # type: ignore[no-any-return]
-    return cv2.resize(canvas, (crop_size, crop_size), interpolation=cv2.INTER_LINEAR)  # type: ignore[no-any-return]
+    return cv2.resize(  # type: ignore[no-any-return]
+        canvas,
+        (crop_size, crop_size),
+        interpolation=cv2.INTER_LINEAR,
+    )
 
 
+@functools.lru_cache(maxsize=128)
 def load_image_rgb(path: str | Path) -> np.ndarray:
     """Load an RGB image for image-aware runtime bucket backfill."""
     try:
@@ -692,8 +767,22 @@ def image_aware_runtime_result(
 ) -> T.Any:
     """Run the runtime resolver with the production crop and image evidence."""
     image_rgb = load_image_rgb(sample.image)
-    roi = ensemble_crop_roi(detector_bbox, crop_scale=crop_scale)
-    crop = crop_square_rgb(image_rgb, roi, crop_size=crop_size).astype("float32") / 255.0  # type: ignore[arg-type]
+
+    roi_array = ensemble_crop_roi(detector_bbox, crop_scale=crop_scale)
+    roi: tuple[float, float, float, float] = (
+        float(roi_array[0]),
+        float(roi_array[1]),
+        float(roi_array[2]),
+        float(roi_array[3]),
+    )
+
+    crop: np.ndarray = crop_square_rgb(
+        image_rgb,
+        roi,
+        crop_size=crop_size,
+    ).astype(np.float32, copy=False)
+    crop *= np.float32(1.0 / 255.0)
+
     return resolve_runtime(
         predictions,
         config,
@@ -738,14 +827,14 @@ def _read_predictions(
     *,
     models: T.Iterable[str],
 ) -> list[ModelPrediction]:
+    model_set = set(models)
     available = set(cache.available_models(sample.sample_id))
-    missing = sorted(set(models) - available)
+    missing = sorted(model_set - available)
     if missing:
         logger.warning("sample %s missing cached models: %s", sample.sample_id, missing)
     return [
         ModelPrediction(model, cache.read(sample.sample_id, model).landmarks)
-        for model in sorted(set(models))
-        if model in available
+        for model in sorted(model_set & available)
     ]
 
 
@@ -784,12 +873,7 @@ def build_sample_context(
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
 ) -> SampleCandidateContext:
     """Build candidates, diagnostics, labels, and current-policy choice for one sample."""
-    requested_adaptive = {name for name in requested_candidates if _is_adaptive_candidate(name)}
-    single_models = {
-        name
-        for name in requested_candidates
-        if name not in requested_adaptive and not _is_strategy(name)
-    }
+    requested_adaptive, single_models = _requested_candidate_sets(requested_candidates)
     model_names = tuple(dict.fromkeys((*weights.keys(), *single_models)))
     predictions = _read_predictions(cache, sample, models=model_names)
     if not predictions:
@@ -826,7 +910,7 @@ def build_sample_context(
     max_disagreement_px = _max_landmark_consensus_px(candidates)
     face_index = int(sample.metadata.get("face_index", sample.metadata.get("face", 0)) or 0)
     metadata_key = _metadata_key(sample.sample_id, face_index)
-    stored_sidecar = (resolver_metadata or {}).get(metadata_key)
+    stored_sidecar = resolver_metadata.get(metadata_key) if resolver_metadata is not None else None
     if stored_sidecar is not None:
         stored_runtime = _stored_runtime_diagnostics_from_sidecar(
             stored_sidecar,
@@ -961,6 +1045,8 @@ def build_sample_context(
         yaw_estimate=yaw_estimate,
         roll_estimate=roll_estimate,
         reference_bbox=reference_bbox,
+        truth_landmarks=truth,
+        visibility=sample.visibility,
     )
 
     nme_by_candidate: dict[str, float] = {}
@@ -987,11 +1073,11 @@ def build_sample_context(
         )
         current_policy_choice = current.selected_candidate
     selected_candidate_missing_from_eval = current_policy_choice not in nme_by_candidate
-    hard_bucket = bucket_result.bucket not in {"frontal", "intermediate", "no_pose"}
-    vetoed = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
+    hard_bucket = bucket_result.bucket not in _HARD_BUCKETS
+    has_vetoed = any(metric.geometry_veto_reasons for metric in metrics.values())
     risk_route = (
         "high_risk"
-        if hard_bucket or max_disagreement_px > config.hard_disagreement_px or vetoed
+        if hard_bucket or max_disagreement_px > config.hard_disagreement_px or has_vetoed
         else "low_risk"
     )
     return SampleCandidateContext(
@@ -1012,7 +1098,10 @@ def build_sample_context(
         risk_route=risk_route,
         current_policy_choice=current_policy_choice,
         oracle=oracle,
-        model_predictions_available={prediction.model: True for prediction in predictions},
+        model_predictions_available=dict.fromkeys(
+            (prediction.model for prediction in predictions),
+            True,
+        ),
         roll_estimate=roll_estimate,
         yaw_estimate=yaw_estimate,
         candidate_yaw_disagreement=bucket_result.features.get("candidate_yaw_disagreement"),
@@ -1034,6 +1123,35 @@ def build_sample_context(
     )
 
 
+def _candidate_v3_hard_invalid(
+    candidate: CandidateRecord,
+    metric: CandidateMetrics,
+    *,
+    truth_landmarks: np.ndarray | None,
+    visibility: tuple[bool, ...] | None,
+) -> bool:
+    """Return ``True`` when a candidate is hard-invalid under the v3 transform cost.
+
+    Mirrors the row builder's v3 validity so the repair trigger keys off true
+    v3 all-invalid groups rather than only the geometry-veto proxy.
+    """
+    hard_invalid_reasons = _v3_hard_invalid_reasons(metric)
+    truth_for_v3 = truth_landmarks
+    if truth_for_v3 is None:
+        truth_for_v3 = candidate.landmarks
+        hard_invalid_reasons = ("missing_truth_landmarks", *hard_invalid_reasons)
+    cost = transform_cost_v3(
+        candidate.landmarks,
+        truth_for_v3,
+        visibility=visibility,
+        hard_invalid_reasons=hard_invalid_reasons,
+        soft_suspect_reasons=_v3_soft_suspect_reasons(
+            metric, hard_invalid_reasons=hard_invalid_reasons
+        ),
+    )
+    return bool(cost.hard_invalid)
+
+
 def _append_profile_repair_candidate(
     candidates: tuple[CandidateRecord, ...],
     metrics: dict[str, CandidateMetrics],
@@ -1044,6 +1162,8 @@ def _append_profile_repair_candidate(
     yaw_estimate: float | None,
     roll_estimate: float | None,
     reference_bbox: tuple[float, float, float, float] | None,
+    truth_landmarks: np.ndarray | None,
+    visibility: tuple[bool, ...] | None,
 ) -> tuple[tuple[CandidateRecord, ...], dict[str, T.Any] | None]:
     """Append a ``profile_visible_side_repaired`` candidate for all-invalid groups.
 
@@ -1057,15 +1177,26 @@ def _append_profile_repair_candidate(
     """
     if not is_profile_repair_context((runtime_bucket, condition)):
         return candidates, None
-    if not candidates or PROFILE_REPAIR_CANDIDATE_NAME in {c.name for c in candidates}:
+    if not candidates or any(c.name == PROFILE_REPAIR_CANDIDATE_NAME for c in candidates):
         return candidates, None
-    all_vetoed = all(
-        metrics.get(candidate.name) is not None
-        and bool(metrics[candidate.name].geometry_veto_reasons)
-        for candidate in candidates
+    sized = [candidate for candidate in candidates if candidate.name in metrics]
+    all_vetoed = bool(sized) and all(
+        bool(metrics[candidate.name].geometry_veto_reasons) for candidate in sized
     )
-    if not all_vetoed:
+    v3_all_invalid = bool(sized) and all(
+        _candidate_v3_hard_invalid(
+            candidate,
+            metrics[candidate.name],
+            truth_landmarks=truth_landmarks,
+            visibility=visibility,
+        )
+        for candidate in sized
+    )
+    if not (v3_all_invalid or all_vetoed):
         return candidates, None
+    repair_reason = (
+        "all_candidates_hard_invalid_v3" if v3_all_invalid else "all_candidates_geometry_vetoed"
+    )
     built = build_profile_repair_landmarks(
         candidates,
         metrics,
@@ -1118,7 +1249,7 @@ def _append_profile_repair_candidate(
     provenance = profile_repair_provenance(
         source_candidate=source_name,
         visible_side=visible_side,
-        reason="all_candidates_geometry_vetoed",
+        reason=repair_reason,
         compression=DEFAULT_REPAIR_COMPRESSION,
     )
     return extended, provenance
@@ -1192,34 +1323,17 @@ def downstream_weighted_alignment_cost(
     text = _proxy_text_for_downstream_cost(context=context, metric=metric)
 
     jaw_crop_mask_penalty = (
-        JAW_CROP_MASK_PENALTY
-        if _has_any_token(text, ("jaw", "mask", "crop", "bbox", "outside", "hull", "cloud_area"))
-        else 0.0
+        JAW_CROP_MASK_PENALTY if _has_any_token(text, _JAW_CROP_MASK_TOKENS) else 0.0
     )
     eyes_identity_pose_penalty = (
-        EYES_IDENTITY_POSE_PENALTY
-        if _has_any_token(text, ("eye", "eyes", "pose", "yaw", "roll", "identity"))
-        else 0.0
+        EYES_IDENTITY_POSE_PENALTY if _has_any_token(text, _EYES_IDENTITY_POSE_TOKENS) else 0.0
     )
     mouth_expression_penalty = (
-        MOUTH_EXPRESSION_PENALTY
-        if _has_any_token(text, ("mouth", "lip", "expression", "mouth_nose_jaw"))
-        else 0.0
+        MOUTH_EXPRESSION_PENALTY if _has_any_token(text, _MOUTH_EXPRESSION_TOKENS) else 0.0
     )
     occluded_side_inference_penalty = (
         OCCLUDED_SIDE_INFERENCE_PENALTY
-        if _has_any_token(
-            text,
-            (
-                "occlusion",
-                "occluded",
-                "profile",
-                "large_yaw",
-                "occluded_side",
-                "visible_side",
-                "side_conflict",
-            ),
-        )
+        if _has_any_token(text, _OCCLUDED_SIDE_INFERENCE_TOKENS)
         else 0.0
     )
 
@@ -1231,7 +1345,7 @@ def downstream_weighted_alignment_cost(
 
     production_failure_penalty = (
         PRODUCTION_FAILURE_PENALTY
-        if str(context.source or "").strip().lower() == "production_validated"
+        if str(context.source or "").strip().lower() == _PRODUCTION_VALIDATED_SOURCE
         and candidate_failure
         else 0.0
     )
@@ -1289,7 +1403,10 @@ def rows_for_context(
             key=lambda name: float(rankable_v3[name].total_cost),
         )
         transform_oracle_cost_v3 = float(rankable_v3[transform_oracle_candidate_v3].total_cost)
-        sorted_v3_costs = sorted(float(cost.total_cost) for cost in rankable_v3.values())
+        sorted_v3_costs = heapq.nsmallest(
+            2,
+            (float(cost.total_cost) for cost in rankable_v3.values()),
+        )
         transform_oracle_gap_v3 = (
             sorted_v3_costs[1] - sorted_v3_costs[0] if len(sorted_v3_costs) > 1 else 0.0
         )
@@ -1383,72 +1500,157 @@ def candidate_table_rows_for_context(
     context: SampleCandidateContext,
 ) -> list[dict[str, T.Any]]:
     """Expand a sample context into canonical candidate diagnostic table rows."""
-    rows: list[dict[str, T.Any]] = []
+    return list(iter_candidate_table_rows_for_context(context))
+
+
+def _candidate_repair_provenance_columns(
+    context: SampleCandidateContext, candidate_name: str
+) -> dict[str, T.Any]:
+    """Return repair provenance columns, populated only for the repair candidate."""
+    provenance = context.profile_repair_provenance
+    if provenance is None or candidate_name != PROFILE_REPAIR_CANDIDATE_NAME:
+        return {
+            "profile_repair_used": "",
+            "profile_repair_source_candidate": "",
+            "profile_repair_visible_side": "",
+            "profile_repair_method": "",
+            "profile_repair_reason": "",
+        }
+    return {
+        "profile_repair_used": int(bool(provenance.get("profile_repair_used"))),
+        "profile_repair_source_candidate": provenance.get("profile_repair_source_candidate", ""),
+        "profile_repair_visible_side": provenance.get("profile_repair_visible_side", ""),
+        "profile_repair_method": provenance.get("profile_repair_method", ""),
+        "profile_repair_reason": provenance.get("profile_repair_reason", ""),
+    }
+
+
+def iter_candidate_table_rows_for_context(
+    context: SampleCandidateContext,
+) -> T.Iterator[dict[str, T.Any]]:
+    """Yield canonical candidate diagnostic table rows for one sample context."""
     oracle_nme = context.nme_by_candidate[context.oracle]
     for candidate in context.candidates:
         metric = context.metrics[candidate.name]
         nme = context.nme_by_candidate[candidate.name]
-        rows.append(
-            {
-                "sample_id": context.sample_id,
-                "dataset": context.dataset,
-                "condition": context.condition,
-                "candidate": candidate.name,
-                "nme": nme,
-                "failure": int(context.failure_by_candidate[candidate.name]),
-                "is_oracle": int(candidate.name == context.oracle),
-                "gap_vs_oracle": nme - oracle_nme,
-                "cloud_area_ratio": metric.cloud_area_ratio,
-                "hull_area_ratio": metric.hull_area_ratio,
-                "points_outside_expanded_bbox_fraction": (
-                    metric.points_outside_expanded_bbox_fraction
-                ),
-                "eye_mouth_order_valid_after_deroll": (
-                    None
-                    if metric.eye_mouth_order_valid_after_deroll is None
-                    else int(metric.eye_mouth_order_valid_after_deroll)
-                ),
-                "roi_center_consensus_distance": metric.roi_center_consensus_distance,
-                "landmark_consensus_distance": metric.landmark_consensus_distance,
-                "shape_plausibility_score": metric.shape_plausibility_score,
-                "shape_veto_reasons": "|".join(metric.shape_veto_reasons),
-                "max_edge_length_ratio": metric.max_edge_length_ratio,
-                "mean_shape_fit_error": metric.mean_shape_fit_error,
-                "topology_violation_count": metric.topology_violation_count,
-                "roll": metric.roll_degrees,
-                "yaw": metric.yaw_degrees,
-                "roll_delta_to_consensus": (
-                    None
-                    if metric.roll_degrees is None or context.roll_estimate is None
-                    else abs(metric.roll_degrees - context.roll_estimate)
-                ),
-                "yaw_delta_to_consensus": (
-                    None
-                    if metric.yaw_degrees is None or context.yaw_estimate is None
-                    else abs(metric.yaw_degrees - context.yaw_estimate)
-                ),
-                "max_disagreement_px": context.max_disagreement_px,
-                "candidate_yaw_disagreement": context.candidate_yaw_disagreement,
-                "runtime_bucket": context.runtime_bucket,
-                "hard_case_tags": "|".join(context.hard_case_tags),
-                "runtime_bucket_source": context.runtime_bucket_source,
-                "selected_candidate_missing_from_eval": int(
-                    context.selected_candidate_missing_from_eval
-                ),
-                "geometry_veto_reasons": "|".join(metric.geometry_veto_reasons),
-            }
-        )
-    return rows
+        yield {
+            "sample_id": context.sample_id,
+            "dataset": context.dataset,
+            "condition": context.condition,
+            "candidate": candidate.name,
+            "nme": nme,
+            "failure": int(context.failure_by_candidate[candidate.name]),
+            "is_oracle": int(candidate.name == context.oracle),
+            "gap_vs_oracle": nme - oracle_nme,
+            "cloud_area_ratio": metric.cloud_area_ratio,
+            "hull_area_ratio": metric.hull_area_ratio,
+            "points_outside_expanded_bbox_fraction": (
+                metric.points_outside_expanded_bbox_fraction
+            ),
+            "eye_mouth_order_valid_after_deroll": (
+                None
+                if metric.eye_mouth_order_valid_after_deroll is None
+                else int(metric.eye_mouth_order_valid_after_deroll)
+            ),
+            "roi_center_consensus_distance": metric.roi_center_consensus_distance,
+            "landmark_consensus_distance": metric.landmark_consensus_distance,
+            "shape_plausibility_score": metric.shape_plausibility_score,
+            "shape_veto_reasons": "|".join(metric.shape_veto_reasons),
+            "max_edge_length_ratio": metric.max_edge_length_ratio,
+            "mean_shape_fit_error": metric.mean_shape_fit_error,
+            "topology_violation_count": metric.topology_violation_count,
+            "roll": metric.roll_degrees,
+            "yaw": metric.yaw_degrees,
+            "roll_delta_to_consensus": (
+                None
+                if metric.roll_degrees is None or context.roll_estimate is None
+                else abs(metric.roll_degrees - context.roll_estimate)
+            ),
+            "yaw_delta_to_consensus": (
+                None
+                if metric.yaw_degrees is None or context.yaw_estimate is None
+                else abs(metric.yaw_degrees - context.yaw_estimate)
+            ),
+            "max_disagreement_px": context.max_disagreement_px,
+            "candidate_yaw_disagreement": context.candidate_yaw_disagreement,
+            "runtime_bucket": context.runtime_bucket,
+            "hard_case_tags": "|".join(context.hard_case_tags),
+            "runtime_bucket_source": context.runtime_bucket_source,
+            "selected_candidate_missing_from_eval": int(
+                context.selected_candidate_missing_from_eval
+            ),
+            "geometry_veto_reasons": "|".join(metric.geometry_veto_reasons),
+            **_candidate_repair_provenance_columns(context, candidate.name),
+        }
+
+
+def iter_candidate_table_rows(
+    contexts: T.Iterable[SampleCandidateContext],
+) -> T.Iterator[dict[str, T.Any]]:
+    """Yield canonical diagnostic table rows for all sample contexts."""
+    for context in contexts:
+        yield from iter_candidate_table_rows_for_context(context)
 
 
 def candidate_table_rows(
-    contexts: T.Sequence[SampleCandidateContext],
+    contexts: T.Iterable[SampleCandidateContext],
 ) -> list[dict[str, T.Any]]:
     """Return canonical diagnostic table rows for all sample contexts."""
-    rows: list[dict[str, T.Any]] = []
-    for context in contexts:
-        rows.extend(candidate_table_rows_for_context(context))
-    return rows
+    return list(iter_candidate_table_rows(contexts))
+
+
+def iter_contexts(
+    *,
+    manifest_path: Path,
+    cache_dir: Path,
+    weights_path: Path,
+    candidates: T.Sequence[str] | None = None,
+    source: str = "",
+    resolver_metadata: T.Mapping[tuple[str, int], dict[str, T.Any]] | None = None,
+    failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
+    outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    allow_image_backfill: bool = False,
+    image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
+    image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    progress: ContextProgress | None = None,
+) -> T.Iterator[SampleCandidateContext]:
+    """Yield sample contexts for one manifest/cache pair without retaining all of them."""
+    weights = load_weights(weights_path)
+    bucket_weights, region_weights = load_optional_weight_blocks(weights_path)
+    explicit_candidates = bool(candidates)
+    include_adaptive_candidates = not explicit_candidates
+    requested = tuple(candidates or parse_candidates(None, weights))
+    cache = DiskPredictionCache(cache_dir)
+    samples = filter_canonical_68_samples(
+        load_manifest(manifest_path),
+        context="scorer dataset",
+        progress=progress,
+    )
+    iterator = (
+        progress(samples, f"Load contexts [{source or manifest_path.stem}]")
+        if progress is not None
+        else samples
+    )
+    for sample in iterator:
+        try:
+            yield build_sample_context(
+                sample,
+                cache=cache,
+                requested_candidates=requested,
+                weights=weights,
+                source=source,
+                resolver_metadata=resolver_metadata,
+                failure_threshold=failure_threshold,
+                outlier_threshold=outlier_threshold,
+                bucket_weights=bucket_weights,
+                region_weights=region_weights,
+                include_adaptive_candidates=include_adaptive_candidates,
+                allow_image_backfill=allow_image_backfill,
+                image_backfill_crop_scale=image_backfill_crop_scale,
+                image_backfill_crop_size=image_backfill_crop_size,
+            )
+        except (FileNotFoundError, ValueError) as err:
+            logger.warning("skipping sample %s: %s", sample.sample_id, err)
 
 
 def load_contexts(
@@ -1467,60 +1669,41 @@ def load_contexts(
     progress: ContextProgress | None = None,
 ) -> list[SampleCandidateContext]:
     """Load all sample contexts for one manifest/cache pair."""
-    weights = load_weights(weights_path)
-    bucket_weights, region_weights = load_optional_weight_blocks(weights_path)
-    explicit_candidates = bool(candidates)
-    include_adaptive_candidates = not explicit_candidates
-    requested = tuple(candidates or parse_candidates(None, weights))
-    cache = DiskPredictionCache(cache_dir)
-    contexts: list[SampleCandidateContext] = []
-    samples = filter_canonical_68_samples(
-        load_manifest(manifest_path),
-        context="scorer dataset",
-        progress=progress,
+    return list(
+        iter_contexts(
+            manifest_path=manifest_path,
+            cache_dir=cache_dir,
+            weights_path=weights_path,
+            candidates=candidates,
+            source=source,
+            resolver_metadata=resolver_metadata,
+            failure_threshold=failure_threshold,
+            outlier_threshold=outlier_threshold,
+            allow_image_backfill=allow_image_backfill,
+            image_backfill_crop_scale=image_backfill_crop_scale,
+            image_backfill_crop_size=image_backfill_crop_size,
+            progress=progress,
+        )
     )
-    iterator = (
-        progress(samples, f"Load contexts [{source or manifest_path.stem}]")
-        if progress is not None
-        else samples
-    )
-    for sample in iterator:
-        try:
-            contexts.append(
-                build_sample_context(
-                    sample,
-                    cache=cache,
-                    requested_candidates=requested,
-                    weights=weights,
-                    source=source,
-                    resolver_metadata=resolver_metadata,
-                    failure_threshold=failure_threshold,
-                    outlier_threshold=outlier_threshold,
-                    bucket_weights=bucket_weights,
-                    region_weights=region_weights,
-                    include_adaptive_candidates=include_adaptive_candidates,
-                    allow_image_backfill=allow_image_backfill,
-                    image_backfill_crop_scale=image_backfill_crop_scale,
-                    image_backfill_crop_size=image_backfill_crop_size,
-                )
-            )
-        except (FileNotFoundError, ValueError) as err:
-            logger.warning("skipping sample %s: %s", sample.sample_id, err)
-    return contexts
 
 
-def write_candidate_table_csv(rows: T.Sequence[dict[str, T.Any]], path: Path) -> Path:
+def _candidate_table_output_row(row: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
+    """Return a CSV/parquet-safe row with the canonical candidate table columns."""
+    return {name: row.get(name) for name in CANDIDATE_TABLE_COLUMNS}
+
+
+def write_candidate_table_csv(rows: T.Iterable[T.Mapping[str, T.Any]], path: Path) -> Path:
     """Write the canonical candidate diagnostic table to CSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(CANDIDATE_TABLE_COLUMNS))
         writer.writeheader()
         for row in rows:
-            writer.writerow({name: row.get(name) for name in CANDIDATE_TABLE_COLUMNS})
+            writer.writerow(_candidate_table_output_row(row))
     return path
 
 
-def write_candidate_table_parquet(rows: T.Sequence[dict[str, T.Any]], path: Path) -> Path:
+def write_candidate_table_parquet(rows: T.Iterable[T.Mapping[str, T.Any]], path: Path) -> Path:
     """Write the canonical candidate diagnostic table to parquet when available."""
     try:
         import pandas as pd  # type: ignore[import-untyped]
@@ -1530,8 +1713,8 @@ def write_candidate_table_parquet(rows: T.Sequence[dict[str, T.Any]], path: Path
             "use --output-csv in this environment or install the optional parquet stack"
         ) from err
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame = pd.DataFrame(
-        [{name: row.get(name) for name in CANDIDATE_TABLE_COLUMNS} for row in rows],
+    frame = pd.DataFrame.from_records(
+        (_candidate_table_output_row(row) for row in rows),
         columns=list(CANDIDATE_TABLE_COLUMNS),
     )
     frame.to_parquet(path, index=False)
@@ -1552,19 +1735,22 @@ def export_candidate_table(
     progress: ContextProgress | None = None,
 ) -> list[dict[str, T.Any]]:
     """Build the canonical candidate diagnostic table for one manifest/cache pair."""
-    contexts = load_contexts(
-        manifest_path=manifest_path,
-        cache_dir=cache_dir,
-        weights_path=weights_path,
-        candidates=candidates,
-        failure_threshold=failure_threshold,
-        outlier_threshold=outlier_threshold,
-        allow_image_backfill=allow_image_backfill,
-        image_backfill_crop_scale=image_backfill_crop_scale,
-        image_backfill_crop_size=image_backfill_crop_size,
-        progress=progress,
+    return list(
+        iter_candidate_table_rows(
+            iter_contexts(
+                manifest_path=manifest_path,
+                cache_dir=cache_dir,
+                weights_path=weights_path,
+                candidates=candidates,
+                failure_threshold=failure_threshold,
+                outlier_threshold=outlier_threshold,
+                allow_image_backfill=allow_image_backfill,
+                image_backfill_crop_scale=image_backfill_crop_scale,
+                image_backfill_crop_size=image_backfill_crop_size,
+                progress=progress,
+            )
+        )
     )
-    return candidate_table_rows(contexts)
 
 
 def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
@@ -1618,12 +1804,11 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow(
-                {
-                    **row.to_csv_row(),
-                    **{name: row.feature_values.get(name, 0.0) for name in feature_names},
-                }
-            )
+            output = row.to_csv_row()
+            feature_values = row.feature_values
+            for name in feature_names:
+                output[name] = feature_values.get(name, 0.0)
+            writer.writerow(output)
     return path
 
 
@@ -1638,6 +1823,9 @@ __all__ = [
     "candidate_table_rows",
     "candidate_table_rows_for_context",
     "export_candidate_table",
+    "iter_candidate_table_rows",
+    "iter_candidate_table_rows_for_context",
+    "iter_contexts",
     "load_contexts",
     "parse_candidates",
     "rows_for_context",

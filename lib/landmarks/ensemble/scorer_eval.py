@@ -637,7 +637,7 @@ def transform_policy_summary_v3(
 
 def _profile_report_bucket(context: T.Any) -> str:
     """Return the profile report bucket for one context."""
-    tags = _condition_tags(context)
+    tags = condition_tags(context)
     is_profile = any(
         "profile" in tag or "large_yaw" in tag or "yaw_" in tag or "rolled" in tag for tag in tags
     )
@@ -744,11 +744,6 @@ def per_bucket(
     return payload
 
 
-def _condition_tags(context: T.Any) -> set[str]:
-    """Return centralized profile-routing tags as a set for legacy report helpers."""
-    return set(condition_tags(context))
-
-
 def split_labels_for_context(
     context: T.Any,
     *,
@@ -756,7 +751,7 @@ def split_labels_for_context(
     source_by_sample_id: T.Mapping[str, str],
 ) -> tuple[str, ...]:
     """Return report split labels for one evaluated context."""
-    tags = _condition_tags(context)
+    tags = condition_tags(context)
     selected = choices.get(context.sample_id, "")
     labels: list[str] = []
     is_profile_like = any("profile" in tag or "large_yaw" in tag or "yaw_" in tag for tag in tags)
