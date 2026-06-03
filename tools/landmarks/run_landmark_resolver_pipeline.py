@@ -2394,8 +2394,10 @@ def _promoted_runtime_policy(
     requested = str(getattr(args, "promoted_scorer_version", "") or "")
     if requested:
         return requested
-    if paths is not None and paths.canonical_v3_profile_scorer_artifact.is_file():
-        return SCORER_VERSION_LEARNED_QUALITY_V3_ROUTED
+    # The evaluator gates exactly one primary promotion unit and now requires
+    # promotion_policy == primary_scorer_policy. Until routed can be evaluated as
+    # a first-class primary scorer artifact, the safe implicit default is the
+    # concrete general scorer passed to evaluate_runtime_resolver_scorer.py.
     return SCORER_VERSION_LEARNED_QUALITY_V3
 
 
@@ -3388,9 +3390,9 @@ def _parser() -> argparse.ArgumentParser:
         choices=("", *PROMOTED_POLICIES),
         default="",
         help=(
-            "Scorer policy/artifact to promote. Defaults to auto: "
-            "learned_quality_v3_routed when the profile scorer exists, otherwise "
-            "learned_quality_v3."
+            "Scorer policy/artifact to promote. Defaults to learned_quality_v3. "
+            "Select learned_quality_v3_routed only when routed is evaluated as "
+            "the primary promotion unit."
         ),
     )
     parser.add_argument(

@@ -3022,24 +3022,33 @@ def evaluate_runtime_resolver_scorer(
     requested_gate = installed_baseline_gates[promotion_policy]
     installed_failed_gates = list(requested_gate.get("failed_gates", []))
     installed_promotion_status = str(requested_gate.get("status") or "fail")
+    installed_baseline_configured = installed_scorer_dir is not None
     if installed_promotion_status == "pass":
         report_failed_gates = []
         report_status = "pass"
+        report_gate_source = "installed_baseline"
     elif installed_promotion_status == "skipped_no_installed_baseline":
-        report_failed_gates = ["missing_installed_baseline"]
-        report_status = "fail"
+        if installed_baseline_configured:
+            report_failed_gates = ["missing_installed_baseline"]
+            report_status = "fail"
+            report_gate_source = "installed_baseline"
+        else:
+            report_failed_gates = failed_gates
+            report_status = "pass" if not report_failed_gates else "fail"
+            report_gate_source = "diagnostic"
     else:
         report_failed_gates = installed_failed_gates or [
             f"installed_baseline_{installed_promotion_status}"
         ]
         report_status = "fail"
+        report_gate_source = "installed_baseline"
 
     report: dict[str, T.Any] = {
         "status": report_status,
         "promotion_status": report_status,
         "promotion_scope": promotion_scope,
         "promotion_policy": promotion_policy,
-        "promotion_gate_source": "installed_baseline",
+        "promotion_gate_source": report_gate_source,
         "installed_scorer_dir": "" if installed_scorer_dir is None else str(installed_scorer_dir),
         "installed_scorer_status": installed_status,
         "installed_current_policy": installed_policy,
@@ -3169,6 +3178,11 @@ def evaluate_runtime_resolver_scorer(
         "safe_fallback_count": safe_fallback_count,
         "hard_slice_fallback_count": hard_slice_fallback_count,
         "consensus_collapse_rejection_count": hard_slice_fallback_count,
+        "profile_route_general_fallback_enabled": PROFILE_ROUTE_GENERAL_FALLBACK_ENABLED,
+        "profile_route_general_fallback_count": len(routed_fallback_diagnostics),
+        "profile_route_general_fallback_reason": PROFILE_ROUTE_GENERAL_FALLBACK_REASON,
+        "profile_route_general_fallback_min_margin": PROFILE_ROUTE_GENERAL_FALLBACK_MIN_MARGIN,
+        "profile_route_general_fallbacks": routed_fallback_diagnostics[:worst_sample_count],
         "impact": fallback_impact_summary(fallback_impacts),
     }
     report["artifacts"] = {
