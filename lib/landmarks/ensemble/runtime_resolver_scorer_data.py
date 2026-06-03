@@ -1256,6 +1256,11 @@ def _append_profile_repair_candidate(
         contributing_models=(source_name,),
     )
     metric = _metric_for_candidate(record, reference_bbox=reference_bbox)
+    # Post-build safety net: an orformer-style source can carry an eye/mouth flip with empty
+    # veto fields, so the pre-selection filter cannot see it. Drop the repair if the built
+    # candidate's own visible core is flipped rather than appending a fatally-invalid repair.
+    if metric.eye_mouth_order_valid_after_deroll is False:
+        return candidates, None
     metric.geometry_veto_reasons = _shape_reasons(runtime_bucket, record.name, metric)
     metrics[record.name] = metric
     source_rank = next(

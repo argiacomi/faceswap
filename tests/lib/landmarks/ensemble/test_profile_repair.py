@@ -238,3 +238,53 @@ def test_repair_side_safeguard_overrides_wrong_yaw_label() -> None:
     as_left = repair.make_profile_visible_side_repair(face.copy(), visible_side="left")
     as_right = repair.make_profile_visible_side_repair(face.copy(), visible_side="right")
     assert np.allclose(as_left, as_right)
+
+
+# --- source filtering: exclude eye/mouth-flipped sources -----------------
+
+
+def _flipped_metric() -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        geometry_veto_reasons=(),
+        shape_veto_reasons=(),
+        shape_plausibility_score=0.1,
+        eye_mouth_order_valid_after_deroll=False,
+    )
+
+
+def test_source_has_fatal_visible_core_issue() -> None:
+    assert repair._source_has_fatal_visible_core_issue(_flipped_metric()) is True
+    assert (
+        repair._source_has_fatal_visible_core_issue(
+            types.SimpleNamespace(geometry_veto_reasons=("eye_mouth_flip",))
+        )
+        is True
+    )
+    assert (
+        repair._source_has_fatal_visible_core_issue(
+            types.SimpleNamespace(shape_veto_reasons=("jaw_flip",))
+        )
+        is True
+    )
+    assert repair._source_has_fatal_visible_core_issue(_metric()) is False
+
+
+def test_choose_source_skips_eye_mouth_flipped_source() -> None:
+    flipped = _candidate("orformer", _profile_face())
+    clean = _candidate("spiga", _profile_face())
+    metrics = {"orformer": _flipped_metric(), "spiga": _metric()}
+    extra = {
+        # Give the flipped source the better visible distance so only the flip filter
+        # can keep it from winning.
+        "orformer": {"visible_side_consensus_distance": 0.01},
+        "spiga": {"visible_side_consensus_distance": 0.5},
+    }
+    chosen = repair.choose_profile_repair_source([flipped, clean], metrics, extra)
+    assert chosen is not None
+    assert chosen.name == "spiga"
+
+
+def test_choose_source_none_when_all_sources_flipped() -> None:
+    flipped = _candidate("orformer", _profile_face())
+    metrics = {"orformer": _flipped_metric()}
+    assert repair.choose_profile_repair_source([flipped], metrics, {}) is None

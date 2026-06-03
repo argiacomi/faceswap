@@ -179,6 +179,23 @@ def _enforce_monotonic_jawline(repaired: np.ndarray) -> np.ndarray:
     return repaired
 
 
+def _source_has_fatal_visible_core_issue(metric: T.Any) -> bool:
+    """Return ``True`` when a source candidate has a fatal visible-core defect.
+
+    A repair keeps the source's visible-side eyes/brows/nose/mouth, so a source whose
+    visible core is eye/mouth-flipped or otherwise fatally broken must not seed a repair.
+    """
+    reasons = " ".join(
+        [
+            *getattr(metric, "geometry_veto_reasons", ()),
+            *getattr(metric, "shape_veto_reasons", ()),
+        ]
+    ).lower()
+    if getattr(metric, "eye_mouth_order_valid_after_deroll", None) is False:
+        return True
+    return bool("eye_mouth" in reasons or "flip" in reasons)
+
+
 def choose_profile_repair_source(
     candidates: T.Sequence[T.Any],
     metrics: T.Mapping[str, T.Any],
@@ -198,6 +215,8 @@ def choose_profile_repair_source(
         features = extra.get(name, {})
         visible_distance = float(features.get("visible_side_consensus_distance", 0.0) or 0.0)
         metric = metrics.get(name)
+        if metric is not None and _source_has_fatal_visible_core_issue(metric):
+            continue
         plausibility = float(getattr(metric, "shape_plausibility_score", 0.0) or 0.0)
         try:
             preference = PROFILE_REPAIR_SOURCE_PREFERENCE.index(name)
