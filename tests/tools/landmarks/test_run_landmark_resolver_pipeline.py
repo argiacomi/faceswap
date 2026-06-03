@@ -952,6 +952,10 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     assert train_command[train_command.index("--iterations") + 1] == str(args.scorer_iterations)
     assert train_command[train_command.index("--num-leaves") + 1] == str(args.scorer_num_leaves)
     assert train_command[train_command.index("--output-dir") + 1] == str(paths.scorer_train_dir)
+    # 39-point profile rows flow from the mined hard-source manifest/cache to the suite.
+    assert "--profile39-manifest" in train_command
+    assert "--profile39-cache-dir" in train_command
+    assert train_command[train_command.index("--profile39-cache-dir") + 1] == str(paths.run_cache)
     assert ("--" + "v2-scorer") not in eval_command
     forbidden = {
         "selection_" + "cost",

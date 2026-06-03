@@ -25,12 +25,13 @@ from lib.landmarks.ensemble.runtime_resolver_scorer import feature_matrix
 from lib.landmarks.ensemble.scorer_target_config import (
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     SCORE_SEMANTICS_PREDICTED_COST,
+    TARGET_PROFILE39_TRANSFORM_REGRET,
 )
 from lib.landmarks.pipeline_conventions import write_json
 
 PROFILE39_SCORER_ARTIFACT = "runtime_resolver_scorer_v3_profile39.json"
 PROFILE39_METRICS_JSON = "runtime_resolver_scorer_v3_profile39_metrics.json"
-PROFILE39_TARGET = "profile39_transform_regret"
+PROFILE39_TARGET = TARGET_PROFILE39_TRANSFORM_REGRET
 PROFILE39_OBJECTIVE = "lambdarank_profile39_transform_regret"
 SCORER_VERSION_LEARNED_QUALITY_V3_PROFILE = "learned_quality_v3_profile"
 

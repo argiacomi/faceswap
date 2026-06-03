@@ -129,9 +129,9 @@ def test_hard_negative_bucket_reads_metadata() -> None:
     assert hard_negative_bucket(_mined_sample("profile_occlusion")) == "profile_occlusion"
     assert hard_negative_bucket({"metadata": {"hard_negative_bucket": "BOGUS"}}) is None
     assert hard_negative_bucket({"sample_id": "x"}) is None
-    assert frozenset(
-        {"profile_occlusion", "profile", "occlusion", "anchor"}
-    ) == HARD_NEGATIVE_BUCKETS
+    assert (
+        frozenset({"profile_occlusion", "profile", "occlusion", "anchor"}) == HARD_NEGATIVE_BUCKETS
+    )
 
 
 def test_mined_samples_bypass_pose_slicing_without_pose_para() -> None:

@@ -21,6 +21,7 @@ from lib.landmarks.ensemble.runtime_features import (
 from lib.landmarks.ensemble.scorer_target_config import (
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     SCORE_SEMANTICS_PREDICTED_COST,
+    TARGET_PROFILE39_TRANSFORM_REGRET,
     TARGET_TRANSFORM_REGRET_V3,
 )
 
@@ -91,9 +92,16 @@ class RuntimeResolverLearnedScorer:
                 "runtime scorer loader only accepts learned_quality_v3 / "
                 "learned_quality_v3_profile artifacts"
             )
-        if self.target != TARGET_TRANSFORM_REGRET_V3:
+        accepted_targets = {TARGET_TRANSFORM_REGRET_V3}
+        if self.runtime_policy == "learned_quality_v3_profile":
+            # The profile specialist may be trained from canonical-68 profile rows
+            # (transform_alignment_regret_v3) or from partial-schema 39-point rows
+            # (profile39_transform_regret); both rank lower-cost candidates first.
+            accepted_targets.add(TARGET_PROFILE39_TRANSFORM_REGRET)
+        if self.target not in accepted_targets:
             raise ValueError(
-                "runtime scorer loader only accepts transform_alignment_regret_v3 artifacts"
+                "runtime scorer loader only accepts transform_alignment_regret_v3 "
+                "(or profile39_transform_regret for learned_quality_v3_profile) artifacts"
             )
         if self.score_semantics != SCORE_SEMANTICS_PREDICTED_COST:
             raise ValueError("LightGBM runtime scorer must expose predicted_cost semantics")

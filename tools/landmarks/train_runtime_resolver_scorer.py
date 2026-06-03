@@ -103,6 +103,22 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Frozen GT-hard resolver_metadata.jsonl sidecar keyed by sample_id and face_index.",
     )
+    parser.add_argument(
+        "--profile39-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Manifest with 39-point profile GT. When given with --profile39-cache-dir, the "
+            "profile specialist (learned_quality_v3_profile) is trained from the partial-schema "
+            "39-point rows. 39-point GT never enters the canonical-68 scorer target."
+        ),
+    )
+    parser.add_argument(
+        "--profile39-cache-dir",
+        type=Path,
+        default=None,
+        help="Prediction cache directory for the --profile39-manifest samples.",
+    )
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -133,6 +149,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         eval_fraction=args.eval_fraction,
         split_seed=args.split_seed,
         allow_image_backfill=args.allow_image_backfill,
+        profile39_manifest=args.profile39_manifest,
+        profile39_cache_dir=args.profile39_cache_dir,
         progress=_context_progress,
     )
     logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])

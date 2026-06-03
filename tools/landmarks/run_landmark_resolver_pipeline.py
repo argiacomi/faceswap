@@ -184,6 +184,7 @@ class PipelinePaths:
     scorer_dataset_manifest: Path = field(init=False)
     canonical_scorers_dir: Path = field(init=False)
     canonical_v3_scorer_artifact: Path = field(init=False)
+    canonical_v3_profile_scorer_artifact: Path = field(init=False)
     scorer_suite_metrics: Path = field(init=False)
     scorer_training_sentinel: Path = field(init=False)
     scorer_eval_dir: Path = field(init=False)
@@ -300,6 +301,11 @@ class PipelinePaths:
             self,
             "canonical_v3_scorer_artifact",
             self.canonical_scorers_dir / "learned_quality_v3.json",
+        )
+        object.__setattr__(
+            self,
+            "canonical_v3_profile_scorer_artifact",
+            self.canonical_scorers_dir / "learned_quality_v3_profile.json",
         )
         object.__setattr__(self, "scorer_artifact", self.canonical_v3_scorer_artifact)
 
@@ -1247,6 +1253,13 @@ def _command_scorer_suite_training(args: argparse.Namespace, paths: PipelinePath
         str(args.scorer_iterations),
         "--num-leaves",
         str(args.scorer_num_leaves),
+        # The mined hard-source manifest carries 39-point profile samples
+        # (--include-39pt-profile is default); route them to the partial-schema
+        # profile specialist. The suite skips gracefully when there are none.
+        "--profile39-manifest",
+        str(_effective_hard_source_manifest(args, paths)),
+        "--profile39-cache-dir",
+        str(paths.run_cache),
     ]
     if args.allow_image_backfill:
         argv.append("--allow-image-backfill")
@@ -2577,6 +2590,7 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
     """
     scorer_sources = {
         "learned_quality_v3": paths.canonical_v3_scorer_artifact,
+        "learned_quality_v3_profile": paths.canonical_v3_profile_scorer_artifact,
     }
     return install_production_bundle(
         setup_src=paths.best_setup,
