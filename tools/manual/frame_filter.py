@@ -411,4 +411,5 @@ def thumbnail_outlier_predicate_for_model(
 
     return _predicate
 
+
 __all__ = get_module_objects(__name__)

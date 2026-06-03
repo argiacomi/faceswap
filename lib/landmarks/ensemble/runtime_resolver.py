@@ -22,10 +22,18 @@ from lib.landmarks.core.fusion import normalize_weight_matrix, plain_average, st
 from lib.landmarks.core.rejection import weighted_median
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.hard_condition_taxonomy import applicable_weight_buckets
-from lib.landmarks.ensemble.production_artifacts import LEARNED_POLICIES
+from lib.landmarks.ensemble.production_artifacts import (
+    LEARNED_POLICIES,
+    ROUTED_GENERAL_PROFILE_POLICY,
+)
 from lib.landmarks.ensemble.profile_features import (
     profile_candidate_features,
     profile_side_from_context,
+)
+from lib.landmarks.ensemble.profile_routing import (
+    SCORER_POLICY_GENERAL,
+    SCORER_POLICY_PROFILE,
+    scorer_route_for_context,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     candidate_scores as score_runtime_candidates,
@@ -297,6 +305,7 @@ class RuntimeResolverConfig:
 
     policy: str = "roll_aware_veto"
     scorer_path: str = ""
+    scorer_paths: T.Mapping[str, str] = field(default_factory=dict)
     general_strategy: str = "static_weighted"
     hard_case_strategy: str = "static_weighted_downweight"
     secondary_hard_case_strategy: str = "static_weighted_hard_drop"
@@ -1928,7 +1937,7 @@ def resolve_runtime(
     preloaded_scorer: T.Any = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using runtime candidate diagnostics and policy selection."""
-    learned_policies = set(LEARNED_POLICIES)
+    learned_policies = set(LEARNED_POLICIES) | {ROUTED_GENERAL_PROFILE_POLICY}
     if config.policy not in {"roll_aware_veto", *learned_policies}:
         raise RuntimeResolverError(f"unsupported runtime resolver policy {config.policy!r}")
     logger.debug(
@@ -2091,34 +2100,83 @@ def resolve_runtime(
     hard_pose_plain_average_guard_used = False
     hard_pose_plain_average_rejected_candidate = ""
     scorer_metadata: dict[str, T.Any] = {}
+    routed_route_policy = ""
+    routed_route_source = ""
+    selected_scorer_path = str(config.scorer_path or "")
     if config.policy in learned_policies:
-        if preloaded_scorer is not None:
-            logger.debug(
-                "[RuntimeResolver] using preloaded scorer type=%s", type(preloaded_scorer).__name__
+        if config.policy == ROUTED_GENERAL_PROFILE_POLICY:
+            preloaded_mapping = preloaded_scorer if isinstance(preloaded_scorer, dict) else {}
+            routed_scorers: dict[str, T.Any] = {}
+
+            for policy_name in (SCORER_POLICY_GENERAL, SCORER_POLICY_PROFILE):
+                if policy_name in preloaded_mapping:
+                    routed_scorers[policy_name] = preloaded_mapping[policy_name]
+                    continue
+
+                scorer_path = str((config.scorer_paths or {}).get(policy_name, "") or "")
+                if not scorer_path:
+                    raise RuntimeResolverError(
+                        f"{ROUTED_GENERAL_PROFILE_POLICY} requires scorer_paths[{policy_name!r}]"
+                    )
+                logger.debug(
+                    "[RuntimeResolver] loading routed scorer policy=%s path=%s",
+                    policy_name,
+                    scorer_path,
+                )
+                routed_scorers[policy_name] = load_runtime_resolver_scorer(scorer_path)
+
+            route_context = {
+                "condition": bucket,
+                "runtime_bucket": bucket,
+                "hard_case_tags": (bucket,),
+            }
+            routed_route_policy = scorer_route_for_context(route_context)
+            routed_route_source = routed_route_policy
+            scorer = routed_scorers.get(routed_route_policy)
+            if scorer is None:
+                scorer = routed_scorers.get(SCORER_POLICY_GENERAL) or routed_scorers.get(
+                    SCORER_POLICY_PROFILE
+                )
+            if scorer is None:
+                raise RuntimeResolverError(
+                    f"{ROUTED_GENERAL_PROFILE_POLICY} could not load any scorer"
+                )
+            selected_scorer_path = str(
+                (config.scorer_paths or {}).get(routed_route_policy, "")
+                or (config.scorer_paths or {}).get(getattr(scorer, "runtime_policy", ""), "")
+                or ""
             )
-            scorer = preloaded_scorer
         else:
-            if not config.scorer_path:
-                raise RuntimeResolverError(f"{config.policy} requires resolver_scorer_path")
-            logger.debug("[RuntimeResolver] loading scorer path=%s", config.scorer_path)
-            scorer = load_runtime_resolver_scorer(config.scorer_path)
+            if preloaded_scorer is not None:
+                logger.debug(
+                    "[RuntimeResolver] using preloaded scorer type=%s",
+                    type(preloaded_scorer).__name__,
+                )
+                scorer = preloaded_scorer
+            else:
+                if not config.scorer_path:
+                    raise RuntimeResolverError(f"{config.policy} requires resolver_scorer_path")
+                logger.debug("[RuntimeResolver] loading scorer path=%s", config.scorer_path)
+                scorer = load_runtime_resolver_scorer(config.scorer_path)
+
         logger.debug(
-            "[RuntimeResolver] loaded scorer type=%s version=%s policy=%s",
+            "[RuntimeResolver] loaded scorer type=%s version=%s policy=%s routed_route=%s",
             type(scorer).__name__,
             getattr(scorer, "version", ""),
             getattr(scorer, "runtime_policy", ""),
+            routed_route_source,
         )
         scorer_policy = getattr(scorer, "runtime_policy", "")
-        if scorer_policy and scorer_policy != config.policy:
-            # The artifact was trained for a different runtime policy than the
-            # one currently configured. Refuse to proceed: the production
-            # bundle's manifest mapped this file under the wrong slot, or the
-            # operator pointed resolver_policy at a scorer it does not match.
-            # Either way, predictions would be silently mis-ranked.
+        expected_scorer_policy = (
+            routed_route_policy
+            if config.policy == ROUTED_GENERAL_PROFILE_POLICY
+            else config.policy
+        )
+        if scorer_policy and scorer_policy != expected_scorer_policy:
             raise RuntimeResolverError(
                 f"scorer runtime_policy={scorer_policy!r} does not match "
-                f"config policy={config.policy!r}; re-promote the artifact "
-                "or align resolver_policy with the installed scorer"
+                f"expected policy={expected_scorer_policy!r} for config policy={config.policy!r}; "
+                "re-promote the artifact or align resolver_policy with the installed scorer"
             )
         model_available = {prediction.model: True for prediction in predictions}
         logger.debug("[RuntimeResolver] scoring candidates count=%d", len(candidates))
@@ -2230,7 +2288,12 @@ def resolve_runtime(
             "candidate_scores": dict(sorted(scores.items())),
             "candidate_rank": candidate_rank,
             "candidate_risk_rank": candidate_rank,
-            "scorer_path": str(config.scorer_path),
+            "scorer_path": selected_scorer_path,
+            "scorer_paths": {
+                str(key): str(value) for key, value in (config.scorer_paths or {}).items()
+            },
+            "scorer_routed_policy": ROUTED_GENERAL_PROFILE_POLICY,
+            "scorer_routed_route_policy": routed_route_source,
             "scorer_version": scorer.version,
             "scorer_model_type": scorer.model_type,
             "scorer_score_semantics": scorer.score_semantics,

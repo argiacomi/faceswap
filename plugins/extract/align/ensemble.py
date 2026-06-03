@@ -35,6 +35,7 @@ from lib.landmarks.core.fusion import (
 from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.landmarks.ensemble.outliers import weighted_median
 from lib.landmarks.ensemble.production_artifacts import (
+    ROUTED_GENERAL_PROFILE_POLICY,
     ProductionBundle,
     ProductionBundleError,
     ProductionBundleMissing,
@@ -191,11 +192,21 @@ class Ensemble(ExtractPlugin):
         self._resolver_policy = (
             cfg.resolver_policy() if resolver_policy is None else resolver_policy
         )
+        self._resolver_scorer_paths: dict[str, str] = {}
         if resolver_scorer_path is not None:
-            self._resolver_scorer_path: str = str(resolver_scorer_path)
+            self._resolver_scorer_path = str(resolver_scorer_path)
         elif bundle is not None:
-            scorer_path = bundle.scorer_path_for(self._resolver_policy)
-            self._resolver_scorer_path = "" if scorer_path is None else str(scorer_path)
+            if self._resolver_policy == ROUTED_GENERAL_PROFILE_POLICY:
+                scorer_paths = bundle.scorer_paths_for(self._resolver_policy)
+                self._resolver_scorer_paths = {
+                    policy: str(path) for policy, path in scorer_paths.items()
+                }
+                self._resolver_scorer_path = self._resolver_scorer_paths.get(
+                    "learned_quality_v3", ""
+                )
+            else:
+                scorer_path = bundle.scorer_path_for(self._resolver_policy)
+                self._resolver_scorer_path = "" if scorer_path is None else str(scorer_path)
         else:
             self._resolver_scorer_path = ""
         self._secondary_hard_case = (
@@ -358,15 +369,35 @@ class Ensemble(ExtractPlugin):
         # front, then hand the preloaded scorer to resolve_runtime so the
         # live path skips re-construction.
         if self._use_resolver and self._resolver_policy.startswith("learned_quality"):
-            if not self._resolver_scorer_path:
-                raise ValueError(f"{self._resolver_policy} requires resolver_scorer_path")
-            self._runtime_scorer = load_runtime_resolver_scorer(self._resolver_scorer_path)
-            if hasattr(self._runtime_scorer, "_booster"):
+            if self._resolver_policy == ROUTED_GENERAL_PROFILE_POLICY:
+                if not self._resolver_scorer_paths:
+                    raise ValueError(
+                        f"{self._resolver_policy} requires resolver_scorer_paths from bundle"
+                    )
+                self._runtime_scorer = {}
+                for policy_name, scorer_path in self._resolver_scorer_paths.items():
+                    scorer = load_runtime_resolver_scorer(scorer_path)
+                    self._runtime_scorer[policy_name] = scorer
+                    if hasattr(scorer, "_booster"):
+                        logger.debug(
+                            "[Ensemble] warming routed runtime LightGBM scorer policy=%s",
+                            policy_name,
+                        )
+                        scorer._booster()
                 logger.debug(
-                    "[Ensemble] warming runtime LightGBM scorer before Torch/MPS adapters"
+                    "[Ensemble] warmed routed runtime scorers=%s",
+                    sorted(self._runtime_scorer),
                 )
-                self._runtime_scorer._booster()
-                logger.debug("[Ensemble] warmed runtime LightGBM scorer")
+            else:
+                if not self._resolver_scorer_path:
+                    raise ValueError(f"{self._resolver_policy} requires resolver_scorer_path")
+                self._runtime_scorer = load_runtime_resolver_scorer(self._resolver_scorer_path)
+                if hasattr(self._runtime_scorer, "_booster"):
+                    logger.debug(
+                        "[Ensemble] warming runtime LightGBM scorer before Torch/MPS adapters"
+                    )
+                    self._runtime_scorer._booster()
+                    logger.debug("[Ensemble] warmed runtime LightGBM scorer")
         adapters = (
             list(self._injected_adapters)
             if self._injected_adapters is not None
@@ -821,6 +852,7 @@ class Ensemble(ExtractPlugin):
             "detector_bbox": list(detector_bbox) if detector_bbox is not None else None,
             "resolver_policy": self._resolver_policy,
             "resolver_scorer_path": self._resolver_scorer_path,
+            "resolver_scorer_paths": dict(self._resolver_scorer_paths),
             "hard_case_strategy": self._resolver_hard_case,
             "secondary_hard_case_strategy": self._secondary_hard_case,
             "fallback_model": self._fallback_model,
@@ -894,6 +926,7 @@ class Ensemble(ExtractPlugin):
         resolver_config = RuntimeResolverConfig(
             policy=self._resolver_policy,
             scorer_path=str(self._resolver_scorer_path or ""),
+            scorer_paths=dict(self._resolver_scorer_paths),
             general_strategy=self._strategy,
             hard_case_strategy=canonical_strategy(self._resolver_hard_case),
             secondary_hard_case_strategy=canonical_strategy(self._secondary_hard_case),

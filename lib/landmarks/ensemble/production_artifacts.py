@@ -102,6 +102,9 @@ priority/veto resolution without a learned scorer.
 
 ROLL_AWARE_VETO_POLICY = "roll_aware_veto"
 
+ROUTED_GENERAL_PROFILE_POLICY = "learned_quality_v3_routed"
+"""Resolver policy that routes each face to general or profile scorer."""
+
 
 class ProductionBundleError(RuntimeError):
     """Base class for production bundle errors."""
@@ -145,18 +148,17 @@ class ProductionBundle:
     def scorer_path_for(self, policy: str) -> Path | None:
         """Return the scorer artifact path for ``policy``.
 
-        ``roll_aware_veto`` returns ``None`` (the runtime resolver does
-        not need a scorer for that path). A configured learned policy
-        with no installed scorer raises ``ProductionBundleInvalid`` —
-        config asked for a learned policy but the bundle was built
-        without that scorer version.
+        ``roll_aware_veto`` returns ``None`` because it does not need a
+        scorer. ``learned_quality_v3_routed`` also returns ``None`` here:
+        the live runtime loads both concrete scorer artifacts via
+        :meth:`scorer_paths_for` and chooses one per face.
         """
-        if policy == ROLL_AWARE_VETO_POLICY:
+        if policy in {ROLL_AWARE_VETO_POLICY, ROUTED_GENERAL_PROFILE_POLICY}:
             return None
         if policy not in LEARNED_POLICIES:
             raise ProductionBundleInvalid(
                 f"unsupported resolver_policy {policy!r}; expected one of "
-                f"{(ROLL_AWARE_VETO_POLICY, *LEARNED_POLICIES)}"
+                f"{(ROLL_AWARE_VETO_POLICY, ROUTED_GENERAL_PROFILE_POLICY, *LEARNED_POLICIES)}"
             )
         path = self.scorers.get(policy)
         if path is None:
@@ -165,6 +167,28 @@ class ProductionBundle:
                 f"resolver_policy={policy!r}; available scorers: {sorted(self.scorers)}"
             )
         return path
+
+    def scorer_paths_for(self, policy: str) -> dict[str, Path]:
+        """Return concrete scorer paths needed for ``policy``.
+
+        For routed runtime, both general and profile scorer artifacts must be
+        installed. For single-scorer learned policies, the returned mapping has
+        just that policy.
+        """
+        if policy == ROLL_AWARE_VETO_POLICY:
+            return {}
+        if policy == ROUTED_GENERAL_PROFILE_POLICY:
+            required = ("learned_quality_v3", "learned_quality_v3_profile")
+            missing = [name for name in required if name not in self.scorers]
+            if missing:
+                raise ProductionBundleInvalid(
+                    f"production bundle at {self.bundle_dir} cannot run "
+                    f"{ROUTED_GENERAL_PROFILE_POLICY!r}; missing scorers: {missing}; "
+                    f"available scorers: {sorted(self.scorers)}"
+                )
+            return {name: self.scorers[name] for name in required}
+        path = self.scorer_path_for(policy)
+        return {} if path is None else {policy: path}
 
 
 def load_production_bundle() -> ProductionBundle:
@@ -269,7 +293,11 @@ def install_production_bundle(
     ``dest`` defaults to ``bundle_dir()`` so callers don't have to thread
     the env override through; pass an explicit path in tests.
     """
-    if active_policy not in (ROLL_AWARE_VETO_POLICY, *LEARNED_POLICIES):
+    if active_policy not in (
+        ROLL_AWARE_VETO_POLICY,
+        ROUTED_GENERAL_PROFILE_POLICY,
+        *LEARNED_POLICIES,
+    ):
         raise ValueError(f"active_policy {active_policy!r} is not a supported resolver policy")
     unknown = sorted(set(scorer_sources) - set(LEARNED_POLICIES))
     if unknown:
@@ -309,6 +337,17 @@ def install_production_bundle(
             f"active_policy={active_policy!r} but no scorer was installed for it; "
             f"scorer_sources={sorted(scorer_sources)}"
         )
+    if active_policy == ROUTED_GENERAL_PROFILE_POLICY:
+        missing = [
+            policy
+            for policy in ("learned_quality_v3", "learned_quality_v3_profile")
+            if policy not in scorer_manifest
+        ]
+        if missing:
+            raise ValueError(
+                f"active_policy={active_policy!r} requires both general/profile scorers; "
+                f"missing={missing}; scorer_sources={sorted(scorer_sources)}"
+            )
 
     manifest_payload: dict[str, T.Any] = {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -343,6 +382,7 @@ __all__ = [
     "LEARNED_POLICIES",
     "MANIFEST_FILENAME",
     "ROLL_AWARE_VETO_POLICY",
+    "ROUTED_GENERAL_PROFILE_POLICY",
     "SCORERS_SUBDIR",
     "SETUP_FILENAME",
     "WEIGHTS_FILENAME",
