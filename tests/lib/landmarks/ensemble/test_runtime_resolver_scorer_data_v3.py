@@ -424,3 +424,32 @@ def test_v3_item_weights_repeat_query_weight_for_whole_group() -> None:
     weights = _v3_lambdarank_item_weights(query_weights, [len(groups[0])])
 
     assert weights.tolist() == pytest.approx([query_weights[0]] * 2)
+
+
+def test_self_intersection_hard_by_default_soft_for_repair() -> None:
+    metric = _metric(geometry_veto_reasons=("self_intersection",))
+    assert any("self_intersection" in r for r in _v3_hard_invalid_reasons(metric))
+    soft_hard = _v3_hard_invalid_reasons(metric, profile_soft_topology=True)
+    assert not any("self_intersection" in r for r in soft_hard)
+    soft = _v3_soft_suspect_reasons(
+        metric, hard_invalid_reasons=soft_hard, profile_soft_topology=True
+    )
+    assert any("self_intersection" in r for r in soft)
+
+
+def test_eye_mouth_flip_stays_hard_under_profile_soft_topology() -> None:
+    metric = _metric(
+        eye_mouth_order_valid_after_deroll=False,
+        geometry_veto_reasons=("self_intersection",),
+    )
+    hard = _v3_hard_invalid_reasons(metric, profile_soft_topology=True)
+    assert "eye_mouth_flip" in hard
+    assert not any("self_intersection" in r for r in hard)
+
+
+def test_topology_violation_demoted_to_soft_for_repair() -> None:
+    metric = _metric(topology_violation_count=2)
+    assert "topology_violation" in _v3_hard_invalid_reasons(metric)
+    soft_hard = _v3_hard_invalid_reasons(metric, profile_soft_topology=True)
+    assert "topology_violation" not in soft_hard
+    assert "topology_violation" in _v3_soft_suspect_reasons(metric, profile_soft_topology=True)

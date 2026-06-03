@@ -72,6 +72,7 @@ from lib.landmarks.ensemble.weights import load_optional_weight_blocks, load_wei
 from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
 from lib.landmarks.evaluation.transform_alignment_cost import (
     TransformCostV3,
+    can_fit_visible_subset_transform,
     transform_cost_v3,
 )
 
@@ -351,6 +352,18 @@ _V3_SOFT_SUSPECT_TOKENS: tuple[str, ...] = (
     "warning",
 )
 
+# Occluded-side topology artifacts that are fatal for ordinary candidates but only a
+# soft penalty for the profile repair candidate, whose occluded side is synthetic.
+_V3_PROFILE_SOFT_TOPOLOGY_TOKENS: tuple[str, ...] = (
+    "self_intersection",
+    "self-intersection",
+    "topology",
+)
+_V3_HARD_INVALID_TOKENS_PROFILE_SOFT: tuple[str, ...] = tuple(
+    token for token in _V3_HARD_INVALID_TOKENS if token not in _V3_PROFILE_SOFT_TOPOLOGY_TOKENS
+)
+
+
 _HARD_BUCKETS: frozenset[str] = frozenset({"frontal", "intermediate", "no_pose"})
 _PRODUCTION_VALIDATED_SOURCE = "production_validated"
 _JAW_CROP_MASK_TOKENS: tuple[str, ...] = (
@@ -396,18 +409,29 @@ def _dedupe_reasons(reasons: T.Iterable[str]) -> tuple[str, ...]:
     return _dedupe_stable(str(reason or "") for reason in reasons)
 
 
-def _v3_hard_invalid_reasons(metric: CandidateMetrics) -> tuple[str, ...]:
-    """Return fatal geometry reasons that exclude a candidate from v3 ranking."""
+def _v3_hard_invalid_reasons(
+    metric: CandidateMetrics, *, profile_soft_topology: bool = False
+) -> tuple[str, ...]:
+    """Return fatal geometry reasons that exclude a candidate from v3 ranking.
+
+    ``profile_soft_topology`` demotes occluded-side self-intersection / topology
+    artifacts to soft penalties for the profile repair candidate (whose occluded side
+    is synthesized). Visible-side core failures - eye/mouth flip, fatal/impossible
+    geometry, and inability to fit the visible-subset transform - stay fatal.
+    """
+    hard_tokens = (
+        _V3_HARD_INVALID_TOKENS_PROFILE_SOFT if profile_soft_topology else _V3_HARD_INVALID_TOKENS
+    )
     reasons: list[str] = []
     for reason_group in (metric.geometry_veto_reasons, metric.shape_veto_reasons):
         for reason in reason_group:
             text = str(reason)
             lowered = text.lower()
-            if any(token in lowered for token in _V3_HARD_INVALID_TOKENS):
+            if any(token in lowered for token in hard_tokens):
                 reasons.append(text)
     if metric.eye_mouth_order_valid_after_deroll is False:
         reasons.append("eye_mouth_flip")
-    if int(metric.topology_violation_count or 0) > 0:
+    if not profile_soft_topology and int(metric.topology_violation_count or 0) > 0:
         reasons.append("topology_violation")
     return _dedupe_reasons(reasons)
 
@@ -416,6 +440,7 @@ def _v3_soft_suspect_reasons(
     metric: CandidateMetrics,
     *,
     hard_invalid_reasons: T.Sequence[str] = (),
+    profile_soft_topology: bool = False,
 ) -> tuple[str, ...]:
     """Return soft geometry warnings that remain finite v3 cost penalties.
 
@@ -432,8 +457,13 @@ def _v3_soft_suspect_reasons(
             if not text or text in hard_reason_set:
                 continue
             lowered = text.lower()
-            if any(token in lowered for token in _V3_SOFT_SUSPECT_TOKENS):
+            if any(token in lowered for token in _V3_SOFT_SUSPECT_TOKENS) or (
+                profile_soft_topology
+                and any(token in lowered for token in _V3_PROFILE_SOFT_TOPOLOGY_TOKENS)
+            ):
                 reasons.append(text)
+    if profile_soft_topology and int(metric.topology_violation_count or 0) > 0:
+        reasons.append("topology_violation")
     if (
         metric.shape_plausibility_score is not None
         and metric.shape_plausibility_score > DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE
@@ -1135,7 +1165,10 @@ def _candidate_v3_hard_invalid(
     Mirrors the row builder's v3 validity so the repair trigger keys off true
     v3 all-invalid groups rather than only the geometry-veto proxy.
     """
-    hard_invalid_reasons = _v3_hard_invalid_reasons(metric)
+    profile_soft_topology = candidate.name == PROFILE_REPAIR_CANDIDATE_NAME
+    hard_invalid_reasons = _v3_hard_invalid_reasons(
+        metric, profile_soft_topology=profile_soft_topology
+    )
     truth_for_v3 = truth_landmarks
     if truth_for_v3 is None:
         truth_for_v3 = candidate.landmarks
@@ -1146,7 +1179,9 @@ def _candidate_v3_hard_invalid(
         visibility=visibility,
         hard_invalid_reasons=hard_invalid_reasons,
         soft_suspect_reasons=_v3_soft_suspect_reasons(
-            metric, hard_invalid_reasons=hard_invalid_reasons
+            metric,
+            hard_invalid_reasons=hard_invalid_reasons,
+            profile_soft_topology=profile_soft_topology,
         ),
     )
     return bool(cost.hard_invalid)
@@ -1178,6 +1213,12 @@ def _append_profile_repair_candidate(
     if not is_profile_repair_context((runtime_bucket, condition)):
         return candidates, None
     if not candidates or any(c.name == PROFILE_REPAIR_CANDIDATE_NAME for c in candidates):
+        return candidates, None
+    # A repaired candidate is scored with the same visibility-gated v3 transform as every
+    # other candidate. When too few visible core landmarks exist to fit that transform
+    # (0/4/5/6/7 visible core), any repair would be instantly hard-invalid with
+    # ``unable_to_fit_visible_subset_transform``, so skip it before candidate creation.
+    if not can_fit_visible_subset_transform(visibility):
         return candidates, None
     sized = [candidate for candidate in candidates if candidate.name in metrics]
     all_vetoed = bool(sized) and all(
@@ -1378,7 +1419,10 @@ def rows_for_context(
     truth_landmarks = context.truth_landmarks
     for candidate in context.candidates:
         metric = context.metrics[candidate.name]
-        hard_invalid_reasons = _v3_hard_invalid_reasons(metric)
+        profile_soft_topology = candidate.name == PROFILE_REPAIR_CANDIDATE_NAME
+        hard_invalid_reasons = _v3_hard_invalid_reasons(
+            metric, profile_soft_topology=profile_soft_topology
+        )
         truth_for_v3 = truth_landmarks
         if truth_for_v3 is None:
             truth_for_v3 = candidate.landmarks
@@ -1391,6 +1435,7 @@ def rows_for_context(
             soft_suspect_reasons=_v3_soft_suspect_reasons(
                 metric,
                 hard_invalid_reasons=hard_invalid_reasons,
+                profile_soft_topology=profile_soft_topology,
             ),
         )
 

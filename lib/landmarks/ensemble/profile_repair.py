@@ -23,7 +23,10 @@ import typing as T
 import numpy as np
 
 from lib.landmarks.ensemble.profile_features import profile_side_from_context
-from lib.landmarks.ensemble.profile_routing import is_profile_or_occlusion_context
+from lib.landmarks.ensemble.profile_routing import (
+    condition_tags,
+    is_profile_or_occlusion_context,
+)
 
 PROFILE_REPAIR_CANDIDATE_NAME = "profile_visible_side_repaired"
 PROFILE_REPAIR_METHOD = "compressed_mirror_v1"
@@ -55,7 +58,15 @@ _JAW_MIRROR_PAIRS: tuple[tuple[int, int], ...] = (
 
 
 def is_profile_repair_context(context_or_bucket: T.Any) -> bool:
-    """Return ``True`` when a context is eligible for profile repair generation."""
+    """Return ``True`` when a context is eligible for profile repair generation.
+
+    Eligibility requires a profile/large-yaw/occlusion route and explicitly excludes
+    ``anchor`` contexts.  Anchor is the mined hard-negative bucket for clean frontal
+    reference faces (and a report bucket); a repair candidate should never be generated
+    for one even if a runtime bucket was mislabelled with a profile hint.
+    """
+    if any(tag == "anchor" for tag in condition_tags(context_or_bucket)):
+        return False
     return is_profile_or_occlusion_context(context_or_bucket)
 
 
@@ -82,10 +93,13 @@ def make_profile_visible_side_repair(
 ) -> np.ndarray:
     """Return repaired 68x2 landmarks for ``visible_side`` (``'left'``/``'right'``).
 
-    The visible-side jaw is mirrored across the nose midline and compressed
-    toward the profile contour to fill the occluded-side jaw; non-jaw landmarks
-    are kept from the source candidate. Returns the source landmarks unchanged
-    for an unknown side.
+    The occluded-side jaw is synthesized by reflecting the visible-side jaw across the
+    chin's vertical axis (landmark 8, the jaw vertex) and compressing it toward that
+    axis, then forcing the full jaw contour to be strictly x-monotonic. A strictly
+    x-monotonic open jaw polyline is a function graph and therefore cannot
+    self-intersect, which is the topology check the repair previously failed. Non-jaw
+    landmarks (eyes, brows, nose, mouth) are kept from the source candidate. Returns the
+    source landmarks unchanged for an unknown side.
     """
     repaired = _as_68(source_landmarks)
     if repaired is None:
@@ -93,7 +107,14 @@ def make_profile_visible_side_repair(
     if visible_side not in {"left", "right"}:
         return repaired
 
-    nose_x = float(repaired[NOSE_TIP_68, 0])
+    # Trust the source geometry over a possibly mis-inferred yaw sign: mirror the half
+    # that is actually wider (the real visible jaw), not the half the label points at.
+    visible_side = _resolve_visible_side(repaired, visible_side)
+
+    # Reflect about the chin (jaw vertex) so the two jaw halves straddle the chin and
+    # stay monotonic; reflecting about the nose tip (offset on a profile) is what pushed
+    # occluded points to the wrong side and produced crossing contours.
+    chin_x = float(repaired[8, 0])
     if visible_side == "left":
         # subject-left visible (jaw 9-16), subject-right occluded (jaw 0-7).
         pairs = _JAW_MIRROR_PAIRS
@@ -103,20 +124,58 @@ def make_profile_visible_side_repair(
 
     for src_idx, dst_idx in pairs:
         src = repaired[src_idx].copy()
-        repaired[dst_idx, 0] = nose_x - (float(src[0]) - nose_x) * compression
-        repaired[dst_idx, 1] = src[1]
+        repaired[dst_idx, 0] = chin_x - (float(src[0]) - chin_x) * compression
+        repaired[dst_idx, 1] = float(src[1])
 
-    return _smooth_repaired_jawline(repaired, visible_side=visible_side)
+    _clamp_occluded_jaw_band(repaired, pairs)
+    return _enforce_monotonic_jawline(repaired)
 
 
-def _smooth_repaired_jawline(repaired: np.ndarray, *, visible_side: str) -> np.ndarray:
-    """Enforce monotonic x ordering across the jaw so the silhouette stays valid."""
-    del visible_side  # ordering direction is inferred from the endpoints
-    xs = repaired[0:17, 0].copy()
-    if xs[0] <= xs[-1]:
-        repaired[0:17, 0] = np.maximum.accumulate(xs)
-    else:
-        repaired[0:17, 0] = np.minimum.accumulate(xs)
+def _resolve_visible_side(repaired: np.ndarray, visible_side: str) -> str:
+    """Return the visible side implied by jaw geometry, overriding a wrong label.
+
+    The visible jaw half spans farther from the chin than the collapsed occluded half.
+    When the source geometry clearly contradicts the passed ``visible_side`` (a wrong
+    yaw-sign inference), trust the geometry; otherwise keep the label.
+    """
+    chin_x = float(repaired[8, 0])
+    left_spread = float(np.mean(np.abs(repaired[9:17, 0] - chin_x)))
+    right_spread = float(np.mean(np.abs(repaired[0:8, 0] - chin_x)))
+    larger = max(left_spread, right_spread)
+    smaller = min(left_spread, right_spread)
+    if larger <= 1e-6 or smaller >= 0.85 * larger:
+        # Ambiguous (near-symmetric) source: keep the caller's side.
+        return visible_side
+    return "left" if left_spread >= right_spread else "right"
+
+
+def _clamp_occluded_jaw_band(repaired: np.ndarray, pairs: tuple[tuple[int, int], ...]) -> None:
+    """Keep synthesized occluded jaw points within the lower-face y band.
+
+    The occluded y is copied from the mirrored visible point so it already sits in the
+    jaw band; this clamps any stragglers to ``[min visible jaw y, chin y]`` so the
+    synthesized contour cannot rise into the eye/nose region.
+    """
+    visible_indices = [src for src, _dst in pairs]
+    visible_ys = repaired[visible_indices, 1]
+    top = float(np.min(visible_ys))
+    bottom = float(repaired[8, 1])
+    lo, hi = (top, bottom) if top <= bottom else (bottom, top)
+    for _src_idx, dst_idx in pairs:
+        repaired[dst_idx, 1] = float(np.clip(repaired[dst_idx, 1], lo, hi))
+
+
+def _enforce_monotonic_jawline(repaired: np.ndarray) -> np.ndarray:
+    """Force the jaw (0..16) to be strictly x-monotonic so it cannot self-intersect."""
+    xs = repaired[0:17, 0].astype(np.float64).copy()
+    span = abs(float(xs[-1] - xs[0]))
+    eps = max(span, 1.0) * 1e-3
+    increasing = xs[-1] >= xs[0]
+    work = xs if increasing else xs[::-1].copy()
+    for idx in range(1, work.shape[0]):
+        if work[idx] <= work[idx - 1]:
+            work[idx] = work[idx - 1] + eps
+    repaired[0:17, 0] = work if increasing else work[::-1]
     return repaired
 
 

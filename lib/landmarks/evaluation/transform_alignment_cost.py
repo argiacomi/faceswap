@@ -406,6 +406,28 @@ def _crop_corner_rms_delta(
     return rms_pixels / float(size)
 
 
+def can_fit_visible_subset_transform(
+    visibility: T.Sequence[bool] | None,
+    *,
+    min_visible_points: int = _DEFAULT_MIN_VISIBLE_POINTS,
+) -> bool:
+    """Return ``True`` when enough visible core landmarks exist to fit the transform.
+
+    The visible-subset Umeyama fit needs at least ``min_visible_points`` visible core
+    (17..67) landmarks.  Callers use this to avoid generating candidates that would be
+    immediately hard-invalid with ``unable_to_fit_visible_subset_transform`` (e.g. only
+    0/4/5/6/7 visible core points).
+    """
+    try:
+        _fit_indices_from_visible_indices(
+            visible_landmark_indices(visibility),
+            min_visible_points=min_visible_points,
+        )
+    except ValueError:
+        return False
+    return True
+
+
 def visible_subset_alignment_summary(
     landmarks: np.ndarray,
     visibility: T.Sequence[bool] | None = None,
@@ -583,6 +605,7 @@ __all__ = [
     "VisibleAlignmentSummary",
     "structural_validity_v3",
     "transform_cost_v3",
+    "can_fit_visible_subset_transform",
     "visible_landmark_indices",
     "visible_subset_alignment_summary",
 ]

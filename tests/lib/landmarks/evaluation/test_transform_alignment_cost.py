@@ -12,6 +12,7 @@ import pytest
 from lib.landmarks.evaluation.transform_alignment_cost import (
     DEFAULT_SOFT_STRUCTURAL_PENALTY_V3,
     TransformCostWeightsV3,
+    can_fit_visible_subset_transform,
     structural_validity_v3,
     transform_cost_v3,
     visible_landmark_indices,
@@ -316,3 +317,20 @@ def test_hard_invalid_can_still_report_soft_suspect_diagnostics() -> None:
     assert cost.total_cost == pytest.approx(0.0)
     assert cost.soft_structural_penalty == pytest.approx(DEFAULT_SOFT_STRUCTURAL_PENALTY_V3)
     assert cost.soft_suspect_reasons == ("borderline_hull_warning",)
+
+
+def test_can_fit_visible_subset_transform_requires_enough_visible_core() -> None:
+    assert can_fit_visible_subset_transform(None) is True
+    assert can_fit_visible_subset_transform([True] * 68) is True
+    # All core landmarks (17..67) occluded -> cannot fit.
+    assert can_fit_visible_subset_transform([True] * 17 + [False] * 51) is False
+    # Only 7 visible core landmarks (61..67) -> below the 8-point minimum.
+    seven = [True] * 68
+    for index in range(17, 61):
+        seven[index] = False
+    assert can_fit_visible_subset_transform(seven) is False
+    # Exactly 8 visible core landmarks (60..67) -> can fit.
+    eight = [True] * 68
+    for index in range(17, 60):
+        eight[index] = False
+    assert can_fit_visible_subset_transform(eight) is True
