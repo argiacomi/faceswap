@@ -36,6 +36,13 @@ def _truth_face() -> np.ndarray:
     return points
 
 
+def _truth_profile39() -> np.ndarray:
+    return np.stack(
+        [np.linspace(40, 160, 39), np.linspace(60, 150, 39)],
+        axis=1,
+    ).astype("float32")
+
+
 def _yaw_sample(sid: str, yaw_radians: float | None) -> dict:
     payload = {
         "sample_id": sid,
@@ -57,6 +64,22 @@ def _yaw_sample(sid: str, yaw_radians: float | None) -> dict:
     return payload
 
 
+def _profile39_sample() -> dict:
+    return {
+        "sample_id": "profile39",
+        "dataset": "multipie",
+        "image": "image.png",
+        "landmarks": "truth39.npy",
+        "source_schema": "2d_39",
+        "metadata": {
+            "face_bbox": [40.0, 60.0, 160.0, 150.0],
+            "source_schema": "2d_39",
+            "hard_negative_bucket": "profile",
+            "yaw_side": "left",
+        },
+    }
+
+
 def _build_fixture(tmp_path: Path) -> Path:
     dataset_dir = tmp_path / "dataset"
     dataset_dir.mkdir()
@@ -68,6 +91,20 @@ def _build_fixture(tmp_path: Path) -> Path:
         _yaw_sample("profile_r", math.radians(35.0)),
         _yaw_sample("extreme", math.radians(70.0)),
         _yaw_sample("unposed", None),
+    ]
+    manifest_path.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+    return manifest_path
+
+
+def _build_mixed_schema_fixture(tmp_path: Path) -> Path:
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    np.save(str(dataset_dir / "truth.npy"), _truth_face())
+    np.save(str(dataset_dir / "truth39.npy"), _truth_profile39())
+    manifest_path = dataset_dir / "manifest.json"
+    samples = [
+        _yaw_sample("profile_r", math.radians(35.0)),
+        _profile39_sample(),
     ]
     manifest_path.write_text(json.dumps({"samples": samples}), encoding="utf-8")
     return manifest_path
@@ -100,6 +137,37 @@ def test_build_hard_manifest_keeps_only_hard_samples(tmp_path: Path) -> None:
     assert summary["source_sample_count"] == 5
     assert summary["bucket_counts"]["frontal"] == 1
     assert summary["bucket_counts"]["no_pose"] == 1
+
+
+def test_build_hard_manifest_filters_profile39_before_geometry_eval(tmp_path: Path) -> None:
+    """Partial-schema profile rows stay out of canonical GT-hard geometry eval."""
+    manifest = _build_mixed_schema_fixture(tmp_path)
+    cache = _populate_cache(tmp_path, manifest)
+    out_dir = tmp_path / "out"
+
+    assert (
+        build_main(
+            [
+                "--manifest",
+                str(manifest),
+                "--output-dir",
+                str(out_dir),
+                "--cache-dir",
+                str(cache),
+                "--models",
+                "hrnet,spiga",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert [item["sample_id"] for item in payload["samples"]] == ["profile_r"]
+    summary = json.loads((out_dir / "hard_slice_summary.json").read_text(encoding="utf-8"))
+    assert summary["source_sample_count"] == 2
+    assert summary["canonical_68_sample_count"] == 1
+    assert summary["skipped_noncanonical_sample_count"] == 1
+    metrics = json.loads((out_dir / "geometry_metrics.json").read_text(encoding="utf-8"))
+    assert metrics["aggregates"]["hrnet"]["sample_count"] == 1
 
 
 def test_build_hard_manifest_tags_each_sample_with_bucket(tmp_path: Path) -> None:

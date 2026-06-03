@@ -24,7 +24,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.landmarks.evaluation.hard_slices import (
+from lib.landmarks.datasets.manifest_io import (  # noqa:E402
+    filter_canonical_68_samples,
+)
+from lib.landmarks.datasets.manifest_io import (
+    load_manifest as load_landmark_manifest,
+)
+from lib.landmarks.evaluation.hard_slices import (  # noqa:E402
     DEFAULT_EXTREME_ROLL_DEGREES,
     DEFAULT_FRONTAL_YAW_DEGREES,
     DEFAULT_PROFILE_MAX_DEGREES,
@@ -33,7 +39,7 @@ from lib.landmarks.evaluation.hard_slices import (
     HardSliceThresholds,
     slice_manifest_samples,
 )
-from tools.landmarks.run_landmark_resolver_pipeline import DEFAULT_MODELS
+from tools.landmarks.run_landmark_resolver_pipeline import DEFAULT_MODELS  # noqa:E402
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,34 @@ def _load_manifest(path: Path) -> tuple[dict, list[dict]]:
     if not isinstance(samples, list):
         raise ValueError(f"manifest {path} has no 'samples' (or 'scenarios') list")
     return payload, samples
+
+
+def _sample_key(sample: dict) -> str:
+    return str(sample.get("sample_id") or sample.get("id") or sample.get("name"))
+
+
+def _filter_canonical_hard_validation_samples(
+    manifest_path: Path,
+    samples: list[dict],
+) -> tuple[list[dict], int]:
+    """Keep only GT samples that canonical-68 geometry validation can score.
+
+    The mined hard-source manifest can contain partial-schema profile rows
+    (currently 39-point Menpo/MultiPIE style landmarks). Those rows are useful
+    later for ``learned_quality_v3_profile`` profile39 training, but this stage
+    writes the canonical GT-hard validation manifest and immediately invokes
+    ``evaluate_alignment_geometry.py``, whose metrics require 68/98-point GT.
+    """
+
+    canonical_ids = {
+        sample.sample_id
+        for sample in filter_canonical_68_samples(
+            load_landmark_manifest(manifest_path),
+            context="hard alignment validation",
+        )
+    }
+    kept = [sample for sample in samples if _sample_key(sample) in canonical_ids]
+    return kept, len(samples) - len(kept)
 
 
 def _resolve_sample_paths(samples: list[dict], base_dir: Path) -> list[dict]:
@@ -87,8 +121,12 @@ def build_hard_manifest(
 ) -> dict[str, object]:
     """Filter ``manifest_path`` into a hard-case manifest under ``output_dir``."""
     payload, samples = _load_manifest(manifest_path)
+    canonical_samples, skipped_noncanonical = _filter_canonical_hard_validation_samples(
+        manifest_path,
+        [sample for sample in samples if isinstance(sample, dict)],
+    )
     sliced, counts = slice_manifest_samples(
-        samples,
+        canonical_samples,
         thresholds=thresholds,
         include_unposed=include_unposed,
         hard_only=hard_only,
@@ -108,6 +146,8 @@ def build_hard_manifest(
         },
         "selected_sample_count": len(sliced),
         "source_sample_count": len(samples),
+        "canonical_68_sample_count": len(canonical_samples),
+        "skipped_noncanonical_sample_count": skipped_noncanonical,
         "bucket_counts": dict(counts),
         "hard_only": hard_only,
         "include_unposed": include_unposed,
