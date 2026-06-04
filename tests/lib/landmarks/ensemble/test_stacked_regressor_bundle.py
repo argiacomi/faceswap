@@ -96,10 +96,10 @@ def test_install_skips_missing_regressor_source(
     assert "stacked_regressors" not in manifest
 
 
-def test_load_rejects_missing_referenced_regressor(
+def test_load_skips_missing_referenced_regressor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A manifest that references a regressor file that is absent is invalid."""
+    """Dangling optional stacked-regressor entries do not break non-stacked runs."""
     sources = _seed_sources(tmp_path / "src")
     bundle = tmp_path / "bundle"
     monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(bundle))
@@ -114,5 +114,8 @@ def test_load_rejects_missing_referenced_regressor(
     )
     # Remove the installed regressor file so the manifest dangles.
     (bundle / pa.STACKED_REGRESSORS_SUBDIR / "stacked_residual_v1.json").unlink()
-    with pytest.raises(pa.ProductionBundleInvalid):
-        pa.load_production_bundle()
+
+    loaded = pa.load_production_bundle()
+
+    assert loaded.stacked_regressors == {}
+    assert loaded.stacked_regressor_path_for("stacked_residual_v1") is None

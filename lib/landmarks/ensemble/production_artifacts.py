@@ -285,9 +285,12 @@ def load_production_bundle() -> ProductionBundle:
             )
         regressor_file = (target / rel).resolve()
         if not regressor_file.is_file():
-            raise ProductionBundleInvalid(
-                f"production bundle stacked regressor {name!r} is missing: {regressor_file}"
+            logger.warning(
+                "[ProductionBundle] ignoring missing optional stacked regressor %s at %s",
+                name,
+                regressor_file,
             )
+            continue
         stacked_regressors[str(name)] = regressor_file
     active_policy = str(manifest.get("active_policy") or "")
     return ProductionBundle(

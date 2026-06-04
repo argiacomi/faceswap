@@ -145,9 +145,15 @@ class Ensemble(ExtractPlugin):
             if use_alignment_resolver is None
             else use_alignment_resolver
         )
+        effective_use_stacked_regressor = bool(
+            cfg.use_stacked_landmark_regressor()
+            if use_stacked_landmark_regressor is None
+            else use_stacked_landmark_regressor
+        )
         bundle = self._load_bundle_or_none(
             need_setup=setup_path is None,
             need_scorer=resolver_scorer_path is None,
+            need_stacked_regressor=effective_use_stacked_regressor,
         )
         # If the resolver is enabled in config but no path kwargs were
         # supplied and no bundle is installed, the deployment is broken —
@@ -230,11 +236,7 @@ class Ensemble(ExtractPlugin):
         self._hard_roll_degrees = float(
             cfg.hard_roll_degrees() if hard_roll_degrees is None else hard_roll_degrees
         )
-        self._use_stacked_regressor = bool(
-            cfg.use_stacked_landmark_regressor()
-            if use_stacked_landmark_regressor is None
-            else use_stacked_landmark_regressor
-        )
+        self._use_stacked_regressor = effective_use_stacked_regressor
         self._stacked_regressor_policy = (
             cfg.stacked_landmark_regressor_policy()
             if stacked_landmark_regressor_policy is None
@@ -246,16 +248,21 @@ class Ensemble(ExtractPlugin):
             else stacked_landmark_regressor_max_residual
         )
         self._stacked_regressor_path = ""
-        if self._use_stacked_regressor and bundle is not None:
-            regressor_path = bundle.stacked_regressor_path_for(self._stacked_regressor_policy)
-            self._stacked_regressor_path = "" if regressor_path is None else str(regressor_path)
-            if not self._stacked_regressor_path:
-                logger.warning(
-                    "[Ensemble] use_stacked_landmark_regressor=True but no stacked regressor "
-                    "%r is installed in the production bundle; the stacked candidate will be "
-                    "skipped. Train and install one, or disable the option.",
-                    self._stacked_regressor_policy,
+        if self._use_stacked_regressor:
+            if bundle is None:
+                raise ProductionBundleMissing(
+                    "use_stacked_landmark_regressor=True requires an installed production "
+                    "landmark-ensemble bundle with a stacked_regressors manifest entry. "
+                    "Train and install a stacked regressor, or disable the option."
                 )
+            regressor_path = bundle.stacked_regressor_path_for(self._stacked_regressor_policy)
+            if regressor_path is None:
+                raise ProductionBundleMissing(
+                    "use_stacked_landmark_regressor=True but no stacked regressor "
+                    f"{self._stacked_regressor_policy!r} is installed in the production bundle. "
+                    "Train and install one, or disable the option."
+                )
+            self._stacked_regressor_path = str(regressor_path)
         self._stacked_regressor: RuntimeStackedLandmarkRegressor | None = None
         self._promoted: PromotedSetup | None = None
         self._promoted_failure: str = ""
@@ -311,15 +318,20 @@ class Ensemble(ExtractPlugin):
         )
 
     @staticmethod
-    def _load_bundle_or_none(*, need_setup: bool, need_scorer: bool) -> ProductionBundle | None:
+    def _load_bundle_or_none(
+        *,
+        need_setup: bool,
+        need_scorer: bool,
+        need_stacked_regressor: bool = False,
+    ) -> ProductionBundle | None:
         """Return the installed production bundle, or None if not needed/installed.
 
-        Returns ``None`` when callers supplied both ``setup_path`` and
-        ``resolver_scorer_path`` kwargs (nothing to look up), or when no
-        bundle is installed. ``ProductionBundleInvalid`` from a malformed
-        bundle propagates — that is a config error worth surfacing loudly.
+        Returns ``None`` when callers supplied all required paths as kwargs
+        and no optional bundle artifact is requested, or when no bundle is installed.
+        ``ProductionBundleInvalid`` from a malformed bundle propagates — that is
+        a config error worth surfacing loudly.
         """
-        if not need_setup and not need_scorer:
+        if not need_setup and not need_scorer and not need_stacked_regressor:
             return None
         try:
             return load_production_bundle()
