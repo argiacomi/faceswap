@@ -10,6 +10,7 @@ vetoes, and returns both the selected landmarks and serializable debug metadata.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import typing as T
@@ -41,11 +42,18 @@ from lib.landmarks.ensemble.profile_routing import (
     SCORER_POLICY_PROFILE,
     scorer_route_for_context,
 )
+from lib.landmarks.ensemble.runtime_features import stacked_regression_feature_map
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     candidate_scores as score_runtime_candidates,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     load_runtime_resolver_scorer,
+)
+from lib.landmarks.ensemble.stacked_regressor import (
+    DEFAULT_STACKED_CANDIDATE_NAME,
+    RuntimeStackedLandmarkRegressor,
+    StackedRegressorError,
+    apply_residual,
 )
 from lib.landmarks.ensemble.strategies import (
     canonical_strategy,
@@ -328,6 +336,8 @@ class RuntimeResolverConfig:
     risk_floor_for_safe_fallback: float = 0.50
     safe_fallback_min_delta: float = DEFAULT_SAFE_FALLBACK_MIN_DELTA
     strict: bool = False
+    use_stacked_regressor: bool = False
+    stacked_regressor_max_residual: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1267,6 +1277,168 @@ def append_profile_repair_candidate(
     return dict(provenance), feature_values
 
 
+def _select_stacked_base_candidate(
+    candidates: T.Sequence[CandidateRecord],
+    config: RuntimeResolverConfig,
+    *,
+    policy: str,
+) -> CandidateRecord | None:
+    """Pick a safe, finite base candidate for the stacked residual correction.
+
+    Preference order: the regressor's configured base policy, ``static_weighted``,
+    the active hard-case strategy, any per-bucket ``static_weighted@…`` variant,
+    then any remaining fusion candidate, then any finite candidate.
+    """
+    finite = {
+        candidate.name: candidate
+        for candidate in candidates
+        if np.all(np.isfinite(np.asarray(candidate.landmarks, dtype="float64")))
+    }
+    if not finite:
+        return None
+    preferred: list[str] = []
+    if policy:
+        preferred.append(policy)
+    preferred.append("static_weighted")
+    with contextlib.suppress(KeyError, ValueError):
+        preferred.append(canonical_strategy(config.hard_case_strategy))
+    preferred.extend(
+        name for name in finite if name.startswith("static_weighted" + BUCKET_CANDIDATE_SEPARATOR)
+    )
+    for name in preferred:
+        if name in finite:
+            return finite[name]
+    for candidate in candidates:
+        if candidate.name in finite and candidate.is_fusion:
+            return finite[candidate.name]
+    return next(iter(finite.values()), None)
+
+
+def _stacked_regressor_candidate(
+    candidates: list[CandidateRecord],
+    *,
+    metrics: T.MutableMapping[str, CandidateMetrics],
+    config: RuntimeResolverConfig,
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None,
+    predictions: T.Sequence[ModelPrediction],
+    runtime_bucket: str,
+    reference_bbox: tuple[float, float, float, float] | None,
+    roll_estimate: float | None,
+    yaw_estimate: float | None,
+    candidate_yaw_disagreement: float | None,
+    max_disagreement_px: float,
+) -> tuple[dict[str, T.Any], dict[str, float], str] | None:
+    """Append the ``stacked_residual`` candidate in place when enabled (#223).
+
+    No-op unless ``config.use_stacked_regressor`` is set and a regressor is
+    available. The corrected candidate is built from a safe base candidate plus a
+    clipped residual, then computes its own metrics, consensus geometry, and shape
+    vetoes so it flows through the existing scorer/veto/fallback path like any
+    other candidate. It cannot bypass safety: a non-finite or vetoed correction is
+    simply ranked/rejected downstream.
+    """
+    if not config.use_stacked_regressor or stacked_regressor is None:
+        return None
+    candidate_name = stacked_regressor.candidate_name or DEFAULT_STACKED_CANDIDATE_NAME
+    if any(candidate.name == candidate_name for candidate in candidates):
+        return None
+    base = _select_stacked_base_candidate(
+        candidates, config, policy=stacked_regressor.base_candidate_policy
+    )
+    if base is None:
+        return None
+
+    model_landmarks = {
+        prediction.model: np.asarray(prediction.landmarks, dtype="float64")
+        for prediction in predictions
+    }
+    # Normalize stacked features and the residual by the base candidate's own
+    # landmark extent (not the detector bbox) so the runtime feature vector and
+    # residual scaling match exactly what the offline training path produced,
+    # which has no detector bbox available.
+    features = stacked_regression_feature_map(
+        base_landmarks=base.landmarks,
+        model_landmarks=model_landmarks,
+        reference_bbox=None,
+        runtime_bucket=runtime_bucket,
+        roll_estimate=roll_estimate,
+        yaw_estimate=yaw_estimate,
+        candidate_yaw_disagreement=candidate_yaw_disagreement,
+        max_disagreement_px=max_disagreement_px,
+        hard_case_tags=(runtime_bucket,) if runtime_bucket else (),
+        model_predictions_available={prediction.model: True for prediction in predictions},
+    )
+
+    artifact_clip = float(stacked_regressor.residual_clip_fraction)
+    configured_clip = float(config.stacked_regressor_max_residual)
+    clip_fraction = min(artifact_clip, configured_clip) if configured_clip > 0 else artifact_clip
+
+    try:
+        raw_output = stacked_regressor.predict(features)
+        result = apply_residual(
+            base.landmarks,
+            raw_output,
+            output_mode=stacked_regressor.output_mode,
+            clip_fraction=clip_fraction,
+            bbox_diagonal=None,
+        )
+    except StackedRegressorError as err:
+        if config.strict:
+            raise RuntimeResolverError(f"stacked regressor candidate failed: {err}") from err
+        logger.debug("[RuntimeResolver] skipping stacked regressor candidate: %s", err)
+        return None
+    except Exception as err:  # noqa: BLE001 - defensive: never break resolve on regressor
+        if config.strict:
+            raise RuntimeResolverError(f"stacked regressor candidate crashed: {err}") from err
+        logger.debug("[RuntimeResolver] stacked regressor candidate crashed: %s", err)
+        return None
+
+    corrected = np.asarray(result.landmarks, dtype="float64")
+    if not np.all(np.isfinite(corrected)):
+        logger.debug("[RuntimeResolver] dropped stacked candidate: non-finite correction")
+        return None
+
+    base_candidates = list(candidates)
+    record = CandidateRecord(
+        name=candidate_name,
+        landmarks=np.asarray(result.landmarks, dtype="float32"),
+        is_fusion=True,
+        contributing_models=base.contributing_models,
+    )
+    candidates.append(record)
+    metric = _metric_for_candidate(record, reference_bbox=reference_bbox)
+    metrics[record.name] = metric
+    _apply_consensus_geometry(
+        [record],
+        metrics,
+        consensus_candidates=base_candidates,
+        reference_bbox=reference_bbox,
+    )
+    metric.geometry_veto_reasons = _shape_reasons(runtime_bucket, record.name, metric)
+
+    feature_values: dict[str, float] = {
+        "candidate_is_stacked_residual": 1.0,
+        **result.feature_values(),
+    }
+    metadata: dict[str, T.Any] = {
+        "stacked_regressor_name": candidate_name,
+        "stacked_output_mode": stacked_regressor.output_mode,
+        "stacked_base_candidate": base.name,
+        "stacked_residual_norm_max": result.residual_norm_max,
+        "stacked_residual_norm_mean": result.residual_norm_mean,
+        "stacked_clip_applied": result.clip_applied,
+    }
+    logger.debug(
+        "[RuntimeResolver] appended %s base=%s output_mode=%s residual_norm_max=%.4f clip=%s",
+        candidate_name,
+        base.name,
+        stacked_regressor.output_mode,
+        result.residual_norm_max,
+        result.clip_applied,
+    )
+    return metadata, feature_values, candidate_name
+
+
 def _priority_for_bucket(bucket: str, available: T.AbstractSet[str]) -> list[str]:
     priority = list(BUCKET_PRIORITIES.get(bucket, DEFAULT_PRIORITY))
     priority.extend(name for name in DEFAULT_PRIORITY if name not in priority)
@@ -2113,6 +2285,7 @@ def resolve_runtime(
     image_crop: np.ndarray | None = None,
     crop_to_frame_matrix: np.ndarray | None = None,
     preloaded_scorer: T.Any = None,
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using runtime candidate diagnostics and policy selection."""
     learned_policies = set(LEARNED_POLICIES) | {ROUTED_GENERAL_PROFILE_POLICY}
@@ -2242,6 +2415,40 @@ def resolve_runtime(
         candidate_extra_features.setdefault(PROFILE_REPAIR_CANDIDATE_NAME, {}).update(
             profile_repair_feature_values
         )
+
+    stacked_regressor_metadata: dict[str, T.Any] = {}
+    stacked_regressor_result = _stacked_regressor_candidate(
+        candidates,
+        metrics=metrics,
+        config=config,
+        stacked_regressor=stacked_regressor,
+        predictions=predictions,
+        runtime_bucket=bucket,
+        reference_bbox=reference_bbox,
+        roll_estimate=roll_estimate,
+        yaw_estimate=yaw_estimate,
+        candidate_yaw_disagreement=runtime_bucket.features.get("candidate_yaw_disagreement"),
+        max_disagreement_px=max_disagreement_px,
+    )
+    if stacked_regressor_result is not None:
+        stacked_regressor_metadata, stacked_feature_values, stacked_name = stacked_regressor_result
+        candidate_extra_features = _candidate_extra_features(
+            candidates,
+            metrics,
+            reference_bbox=reference_bbox,
+            condition=bucket,
+            runtime_bucket=bucket,
+            runtime_bucket_source=runtime_bucket_source,
+            yaw_estimate=yaw_estimate,
+            roll_estimate=roll_estimate,
+        )
+        # _candidate_extra_features rebuilds from candidates/metrics, so re-apply
+        # the special per-candidate feature payloads it does not know about.
+        if profile_repair_feature_values:
+            candidate_extra_features.setdefault(PROFILE_REPAIR_CANDIDATE_NAME, {}).update(
+                profile_repair_feature_values
+            )
+        candidate_extra_features.setdefault(stacked_name, {}).update(stacked_feature_values)
 
     available = {candidate.name for candidate in candidates}
     priority = _priority_for_bucket(bucket, available)
@@ -2603,6 +2810,8 @@ def resolve_runtime(
         "model_predictions_available": {prediction.model: True for prediction in predictions},
         "profile_repair_candidate_appended": bool(profile_repair_metadata),
         "profile_repair": profile_repair_metadata,
+        "stacked_regressor_candidate_appended": bool(stacked_regressor_metadata),
+        "stacked_regressor": stacked_regressor_metadata,
         "roll_vetoed": sorted(roll_vetoed & available),
         "geometry_vetoed": sorted(geometry_vetoed & available),
         "rolls": _metrics_payload(metrics, "roll_degrees"),

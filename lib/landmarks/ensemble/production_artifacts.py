@@ -63,7 +63,7 @@ import logging
 import os
 import shutil
 import typing as T
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from lib.utils import PROJECT_ROOT
@@ -92,6 +92,8 @@ MANIFEST_FILENAME = "manifest.json"
 SETUP_FILENAME = "best_setup.json"
 WEIGHTS_FILENAME = "best_weights.json"
 SCORERS_SUBDIR = "scorers"
+STACKED_REGRESSORS_SUBDIR = "regressors"
+"""Subdirectory holding optional stacked residual regressor artifacts (#223)."""
 
 LEARNED_POLICIES: tuple[str, ...] = ("learned_quality_v3", "learned_quality_v3_profile")
 """Resolver policies that consume a scorer artifact.
@@ -144,6 +146,16 @@ class ProductionBundle:
     scorers: T.Mapping[str, Path]
     active_policy: str
     manifest: T.Mapping[str, T.Any]
+    stacked_regressors: T.Mapping[str, Path] = field(default_factory=dict)
+
+    def stacked_regressor_path_for(self, name: str) -> Path | None:
+        """Return the installed stacked regressor artifact path for ``name``.
+
+        Returns ``None`` when no regressor with that name is installed. Stacked
+        regressors are optional, so a missing entry is non-fatal — callers only
+        require one when ``use_stacked_landmark_regressor`` is enabled.
+        """
+        return self.stacked_regressors.get(name)
 
     def scorer_path_for(self, policy: str) -> Path | None:
         """Return the scorer artifact path for ``policy``.
@@ -259,6 +271,24 @@ def load_production_bundle() -> ProductionBundle:
                 f"production bundle scorer for policy {policy!r} is missing: {scorer_file}"
             )
         scorers[policy] = scorer_file
+    raw_regressors = manifest.get("stacked_regressors", {})
+    if not isinstance(raw_regressors, dict):
+        raise ProductionBundleInvalid(
+            f"production bundle manifest at {manifest_file} has non-dict 'stacked_regressors'"
+        )
+    stacked_regressors: dict[str, Path] = {}
+    for name, rel in raw_regressors.items():
+        if not isinstance(rel, str) or not rel:
+            raise ProductionBundleInvalid(
+                f"production bundle manifest at {manifest_file} has invalid path for "
+                f"stacked regressor {name!r}"
+            )
+        regressor_file = (target / rel).resolve()
+        if not regressor_file.is_file():
+            raise ProductionBundleInvalid(
+                f"production bundle stacked regressor {name!r} is missing: {regressor_file}"
+            )
+        stacked_regressors[str(name)] = regressor_file
     active_policy = str(manifest.get("active_policy") or "")
     return ProductionBundle(
         bundle_dir=target,
@@ -266,6 +296,7 @@ def load_production_bundle() -> ProductionBundle:
         scorers=scorers,
         active_policy=active_policy,
         manifest=manifest,
+        stacked_regressors=stacked_regressors,
     )
 
 
@@ -275,6 +306,7 @@ def install_production_bundle(
     weights_src: Path,
     scorer_sources: T.Mapping[str, Path],
     active_policy: str,
+    stacked_regressor_sources: T.Mapping[str, Path] | None = None,
     source_output_root: Path | None = None,
     created_by: str = "run_landmark_resolver_pipeline.py",
     dest: Path | None = None,
@@ -349,6 +381,23 @@ def install_production_bundle(
                 f"missing={missing}; scorer_sources={sorted(scorer_sources)}"
             )
 
+    regressor_manifest: dict[str, str] = {}
+    if stacked_regressor_sources:
+        regressors_dir = target / STACKED_REGRESSORS_SUBDIR
+        regressors_dir.mkdir(parents=True, exist_ok=True)
+        for name in sorted(stacked_regressor_sources):
+            source_path = Path(stacked_regressor_sources[name])
+            if not source_path.is_file():
+                logger.debug(
+                    "[ProductionBundle] skipping stacked regressor %s — source missing: %s",
+                    name,
+                    source_path,
+                )
+                continue
+            dst_rel = f"{STACKED_REGRESSORS_SUBDIR}/{name}.json"
+            shutil.copyfile(source_path, target / dst_rel)
+            regressor_manifest[name] = dst_rel
+
     manifest_payload: dict[str, T.Any] = {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "active_policy": active_policy,
@@ -356,6 +405,8 @@ def install_production_bundle(
         "scorers": scorer_manifest,
         "created_by": created_by,
     }
+    if regressor_manifest:
+        manifest_payload["stacked_regressors"] = regressor_manifest
     if source_output_root is not None:
         manifest_payload["source_output_root"] = str(source_output_root)
 
@@ -367,10 +418,11 @@ def install_production_bundle(
     )
     os.replace(tmp_file, manifest_file)
     logger.info(
-        "[ProductionBundle] installed at %s active_policy=%s scorers=%s",
+        "[ProductionBundle] installed at %s active_policy=%s scorers=%s stacked_regressors=%s",
         target,
         active_policy,
         sorted(scorer_manifest),
+        sorted(regressor_manifest),
     )
     return manifest_file
 
@@ -384,6 +436,7 @@ __all__ = [
     "ROLL_AWARE_VETO_POLICY",
     "ROUTED_GENERAL_PROFILE_POLICY",
     "SCORERS_SUBDIR",
+    "STACKED_REGRESSORS_SUBDIR",
     "SETUP_FILENAME",
     "WEIGHTS_FILENAME",
     "ProductionBundle",

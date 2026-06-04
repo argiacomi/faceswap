@@ -55,6 +55,11 @@ from lib.landmarks.ensemble.runtime_resolver import (
     resolve_runtime,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
+from lib.landmarks.ensemble.stacked_regressor import (
+    RuntimeStackedLandmarkRegressor,
+    StackedRegressorError,
+    load_stacked_regressor,
+)
 from lib.landmarks.ensemble.strategies import (
     CANONICAL_STRATEGIES,
     canonical_strategy,
@@ -110,6 +115,9 @@ class Ensemble(ExtractPlugin):
         strict: bool | None = None,
         roll_veto_degrees: float | None = None,
         hard_roll_degrees: float | None = None,
+        use_stacked_landmark_regressor: bool | None = None,
+        stacked_landmark_regressor_policy: str | None = None,
+        stacked_landmark_regressor_max_residual: float | None = None,
     ) -> None:
         super().__init__(
             input_size=256,
@@ -222,6 +230,33 @@ class Ensemble(ExtractPlugin):
         self._hard_roll_degrees = float(
             cfg.hard_roll_degrees() if hard_roll_degrees is None else hard_roll_degrees
         )
+        self._use_stacked_regressor = bool(
+            cfg.use_stacked_landmark_regressor()
+            if use_stacked_landmark_regressor is None
+            else use_stacked_landmark_regressor
+        )
+        self._stacked_regressor_policy = (
+            cfg.stacked_landmark_regressor_policy()
+            if stacked_landmark_regressor_policy is None
+            else stacked_landmark_regressor_policy
+        )
+        self._stacked_regressor_max_residual = float(
+            cfg.stacked_landmark_regressor_max_residual()
+            if stacked_landmark_regressor_max_residual is None
+            else stacked_landmark_regressor_max_residual
+        )
+        self._stacked_regressor_path = ""
+        if self._use_stacked_regressor and bundle is not None:
+            regressor_path = bundle.stacked_regressor_path_for(self._stacked_regressor_policy)
+            self._stacked_regressor_path = "" if regressor_path is None else str(regressor_path)
+            if not self._stacked_regressor_path:
+                logger.warning(
+                    "[Ensemble] use_stacked_landmark_regressor=True but no stacked regressor "
+                    "%r is installed in the production bundle; the stacked candidate will be "
+                    "skipped. Train and install one, or disable the option.",
+                    self._stacked_regressor_policy,
+                )
+        self._stacked_regressor: RuntimeStackedLandmarkRegressor | None = None
         self._promoted: PromotedSetup | None = None
         self._promoted_failure: str = ""
         if self._setup_mode != "off":
@@ -398,6 +433,27 @@ class Ensemble(ExtractPlugin):
                     )
                     self._runtime_scorer._booster()
                     logger.debug("[Ensemble] warmed runtime LightGBM scorer")
+        # Initialize the optional stacked residual regressor (#223) up front so
+        # the live resolve path uses the preloaded artifact. The regressor is a
+        # small numpy model, so this has no OpenMP/Torch ordering concerns; a
+        # bad artifact disables the feature rather than failing extraction.
+        if self._use_resolver and self._use_stacked_regressor and self._stacked_regressor_path:
+            try:
+                self._stacked_regressor = load_stacked_regressor(self._stacked_regressor_path)
+                logger.debug(
+                    "[Ensemble] loaded stacked regressor name=%s output_mode=%s clip=%s",
+                    self._stacked_regressor.candidate_name,
+                    self._stacked_regressor.output_mode,
+                    self._stacked_regressor.residual_clip_fraction,
+                )
+            except StackedRegressorError as err:
+                logger.warning(
+                    "[Ensemble] failed to load stacked regressor %s: %s; disabling stacked "
+                    "candidate for this run",
+                    self._stacked_regressor_path,
+                    err,
+                )
+                self._stacked_regressor = None
         adapters = (
             list(self._injected_adapters)
             if self._injected_adapters is not None
@@ -853,6 +909,9 @@ class Ensemble(ExtractPlugin):
             "resolver_policy": self._resolver_policy,
             "resolver_scorer_path": self._resolver_scorer_path,
             "resolver_scorer_paths": dict(self._resolver_scorer_paths),
+            "use_stacked_landmark_regressor": self._use_stacked_regressor,
+            "stacked_landmark_regressor_policy": self._stacked_regressor_policy,
+            "stacked_landmark_regressor_path": self._stacked_regressor_path,
             "hard_case_strategy": self._resolver_hard_case,
             "secondary_hard_case_strategy": self._secondary_hard_case,
             "fallback_model": self._fallback_model,
@@ -943,6 +1002,9 @@ class Ensemble(ExtractPlugin):
             roll_veto_degrees=self._roll_veto_degrees,
             hard_roll_degrees=self._hard_roll_degrees,
             strict=self._strict,
+            use_stacked_regressor=self._use_stacked_regressor
+            and self._stacked_regressor is not None,
+            stacked_regressor_max_residual=self._stacked_regressor_max_residual,
         )
         logger.debug(
             "[Ensemble] resolving via runtime policy=%s models=%s detector_bbox=%s "
@@ -961,6 +1023,7 @@ class Ensemble(ExtractPlugin):
                 image_crop=image_crop,
                 crop_to_frame_matrix=crop_to_frame_matrix,
                 preloaded_scorer=self._runtime_scorer,
+                stacked_regressor=self._stacked_regressor,
             )
         except RuntimeResolverError as err:
             logger.warning("[Ensemble] runtime resolver hard-failed: %s", err)

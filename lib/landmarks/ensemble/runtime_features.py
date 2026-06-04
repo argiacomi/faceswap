@@ -13,10 +13,47 @@ import math
 import typing as T
 from collections.abc import Mapping
 
+import numpy as np
+
 CandidateLike = T.Any
 MetricLike = T.Any
 
 RUNTIME_FEATURE_CONTRACT_VERSION = "runtime_features_v1"
+
+#: Substrings that must never appear in a runtime feature name. These mark
+#: GT-derived, oracle, label-only, or transform-regret fields that are visible
+#: only offline. The runtime feature builders and the stacked regressor training
+#: path both assert against this list so a leaked label can never enter an
+#: artifact's feature contract.
+FORBIDDEN_RUNTIME_FEATURE_TOKENS: tuple[str, ...] = (
+    "gt_",
+    "_gt",
+    "ground_truth",
+    "truth",
+    "nme",
+    "oracle",
+    "regret",
+    "label",
+    "is_selected",
+    "was_selected",
+)
+
+#: Canonical adapter order for stacked-regression model-derived features. Missing
+#: models contribute zeros plus an availability flag, so the feature vector is a
+#: fixed width regardless of which adapters produced a prediction for a face.
+STACKED_REGRESSION_FEATURE_MODELS: tuple[str, ...] = ("fan", "hrnet", "orformer", "spiga")
+
+#: 5-region partition used for stacked-regression model-disagreement features.
+#: Mirrors ``stacked_regressor.STACKED_REGION_INDICES`` (kept here to avoid an
+#: import cycle; a drift-guard test asserts the two stay identical).
+STACKED_REGRESSION_REGION_INDICES: dict[str, tuple[int, ...]] = {
+    "jaw": tuple(range(0, 17)),
+    "brows": tuple(range(17, 27)),
+    "nose": tuple(range(27, 36)),
+    "eyes": tuple(range(36, 48)),
+    "mouth": tuple(range(48, 68)),
+}
+STACKED_REGRESSION_REGION_NAMES: tuple[str, ...] = tuple(STACKED_REGRESSION_REGION_INDICES)
 
 RUNTIME_PREFERRED_FEATURE_ORDER: tuple[str, ...] = (
     # Candidate structure.
@@ -73,6 +110,13 @@ RUNTIME_PREFERRED_FEATURE_ORDER: tuple[str, ...] = (
     "profile_repair_visible_side_left",
     "profile_repair_visible_side_right",
     "profile_repair_candidate_shape_score",
+    # Stacked residual candidate features (#223). Describe the regressor
+    # correction so the learned scorer can rank/penalize it; emitted only for
+    # the stacked_residual candidate, defaulting to 0.0 elsewhere.
+    "candidate_is_stacked_residual",
+    "stacked_residual_norm_max",
+    "stacked_residual_norm_mean",
+    "stacked_clip_applied",
 )
 
 
@@ -214,10 +258,150 @@ def runtime_feature_order(
     return tuple(ordered)
 
 
+def forbidden_runtime_features(names: T.Iterable[str]) -> tuple[str, ...]:
+    """Return feature names that leak GT/NME/oracle/regret/label-only fields.
+
+    The stacked regressor and scorer feature contracts must contain only
+    runtime-visible inputs. Training paths call this to fail fast before
+    persisting an artifact whose feature list references an offline label.
+    """
+    leaked: list[str] = []
+    for name in names:
+        lowered = str(name).lower()
+        if any(token in lowered for token in FORBIDDEN_RUNTIME_FEATURE_TOKENS):
+            leaked.append(str(name))
+    return tuple(leaked)
+
+
+def _bbox_bounds(
+    reference_bbox: T.Sequence[float] | None,
+    landmarks: np.ndarray,
+) -> tuple[float, float, float, float]:
+    """Return (x0, y0, size_x, size_y) from a bbox or landmark extent."""
+    if reference_bbox is not None and len(reference_bbox) == 4:
+        x0, y0, x1, y1 = (float(value) for value in reference_bbox)
+        size_x = x1 - x0
+        size_y = y1 - y0
+    else:
+        mins = landmarks.min(axis=0)
+        maxs = landmarks.max(axis=0)
+        x0, y0 = float(mins[0]), float(mins[1])
+        size_x = float(maxs[0] - mins[0])
+        size_y = float(maxs[1] - mins[1])
+    size_x = size_x if abs(size_x) > 1e-6 else 1.0
+    size_y = size_y if abs(size_y) > 1e-6 else 1.0
+    return x0, y0, size_x, size_y
+
+
+def stacked_regression_feature_map(
+    *,
+    base_landmarks: np.ndarray,
+    model_landmarks: T.Mapping[str, np.ndarray],
+    reference_bbox: T.Sequence[float] | None = None,
+    runtime_bucket: str = "",
+    risk_route: str = "",
+    runtime_bucket_source: str = "",
+    roll_estimate: float | None = None,
+    yaw_estimate: float | None = None,
+    candidate_yaw_disagreement: float | None = None,
+    max_disagreement_px: float | None = None,
+    hard_case_tags: T.Sequence[str] = (),
+    model_predictions_available: T.Mapping[str, bool] | T.Iterable[str] | None = None,
+) -> dict[str, float]:
+    """Build the runtime-visible feature row for the stacked residual regressor.
+
+    Inputs are the base candidate, the per-model single predictions (frame
+    space), and the runtime pose/bucket context. The feature vector is a fixed
+    width keyed on :data:`STACKED_REGRESSION_FEATURE_MODELS`, so missing models
+    contribute zeros plus an availability flag. All features are runtime-visible;
+    none derive from GT, NME, oracle, regret, or labels.
+    """
+    base = np.asarray(base_landmarks, dtype="float64")
+    x0, y0, size_x, size_y = _bbox_bounds(reference_bbox, base)
+    diag = float(math.hypot(size_x, size_y)) or 1.0
+
+    available: dict[str, np.ndarray] = {
+        str(model): np.asarray(points, dtype="float64")
+        for model, points in model_landmarks.items()
+        if np.asarray(points, dtype="float64").shape == (68, 2)
+    }
+    consensus = np.mean(list(available.values()), axis=0) if available else base.copy()
+
+    base_centroid = base.mean(axis=0)
+    features: dict[str, float] = {
+        "base_centroid_x_norm": (float(base_centroid[0]) - x0) / size_x,
+        "base_centroid_y_norm": (float(base_centroid[1]) - y0) / size_y,
+        "base_bbox_aspect": size_x / size_y,
+        "roll_degrees": _float(roll_estimate),
+        "yaw_degrees": _float(yaw_estimate),
+        "abs_roll_degrees": abs(_float(roll_estimate)),
+        "abs_yaw_degrees": abs(_float(yaw_estimate)),
+        "candidate_yaw_disagreement": _float(candidate_yaw_disagreement),
+        "overall_disagreement_norm": _float(max_disagreement_px) / diag,
+        "available_model_count": float(len(available)),
+    }
+
+    # Per-region inter-model disagreement (mean per-point std across models).
+    if len(available) >= 2:
+        stack = np.stack(list(available.values()), axis=0)
+        per_point_std = stack.std(axis=0).mean(axis=1)  # (68,)
+    else:
+        per_point_std = np.zeros(68, dtype="float64")
+    for region, indices in STACKED_REGRESSION_REGION_INDICES.items():
+        region_std = float(np.mean(per_point_std[list(indices)])) if indices else 0.0
+        features[f"region_disagreement_{region}"] = region_std / diag
+
+    # Per-model per-region centroid offset from consensus (directional bias).
+    consensus_region_centroids = {
+        region: consensus[list(indices)].mean(axis=0)
+        for region, indices in STACKED_REGRESSION_REGION_INDICES.items()
+    }
+    for model in STACKED_REGRESSION_FEATURE_MODELS:
+        points = available.get(model)
+        features[f"model_available_{model}"] = 1.0 if points is not None else 0.0
+        for region, indices in STACKED_REGRESSION_REGION_INDICES.items():
+            if points is None:
+                features[f"model_{model}_region_{region}_dx"] = 0.0
+                features[f"model_{model}_region_{region}_dy"] = 0.0
+                continue
+            centroid = points[list(indices)].mean(axis=0)
+            offset = centroid - consensus_region_centroids[region]
+            features[f"model_{model}_region_{region}_dx"] = float(offset[0]) / diag
+            features[f"model_{model}_region_{region}_dy"] = float(offset[1]) / diag
+
+    if runtime_bucket:
+        features[f"runtime_bucket={runtime_bucket}"] = 1.0
+    if risk_route:
+        features[f"risk_route={risk_route}"] = 1.0
+    if runtime_bucket_source:
+        features[f"runtime_bucket_source={runtime_bucket_source}"] = 1.0
+    for tag in hard_case_tags:
+        features[f"hard_case_tag={tag}"] = 1.0
+
+    model_available: dict[str, bool] = {}
+    if isinstance(model_predictions_available, Mapping):
+        model_available = {
+            str(model): bool(value) for model, value in model_predictions_available.items()
+        }
+    elif model_predictions_available is not None:
+        model_available = {str(model): True for model in model_predictions_available}
+    for model, is_available in model_available.items():
+        if is_available:
+            features[f"model_predictions_available={model}"] = 1.0
+
+    return features
+
+
 __all__ = [
+    "FORBIDDEN_RUNTIME_FEATURE_TOKENS",
     "RUNTIME_FEATURE_CONTRACT_VERSION",
     "RUNTIME_PREFERRED_FEATURE_ORDER",
+    "STACKED_REGRESSION_FEATURE_MODELS",
+    "STACKED_REGRESSION_REGION_INDICES",
+    "STACKED_REGRESSION_REGION_NAMES",
     "candidate_feature_map",
+    "forbidden_runtime_features",
     "runtime_candidate_feature_maps",
     "runtime_feature_order",
+    "stacked_regression_feature_map",
 ]

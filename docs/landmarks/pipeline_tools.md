@@ -87,6 +87,94 @@ These CLIs were removed after their replacement flows were confirmed as canonica
 
 Evaluation should consume `scorer_dataset/rows.csv` through `--scorer-rows` or `--scorer-dataset` whenever that dataset is available. Legacy manifest/cache rebuilding remains available for manual diagnostics and old runs.
 
+## Issue #223 stacked residual landmark regressor
+
+The stacked residual regressor is an optional, disabled-by-default **candidate
+generator** for the runtime resolver. It is not a selector: it emits a single
+`stacked_residual` candidate that flows through the existing candidate metrics,
+geometry vetoes, learned scorer, and safety fallbacks exactly like any other
+candidate. It can never bypass the all-veto fallback, hard-slice single fallback,
+high-risk safe fallback, or hard-pose guards.
+
+### Concept
+
+For each face the regressor takes a safe base candidate (the configured
+`base_candidate_policy`, e.g. `static_weighted`), reads runtime-visible features
+(model predictions plus pose/geometry/disagreement signals), predicts a
+correction, clips it to a fraction of the bbox diagonal, and adds it to the base:
+
+```text
+base_candidate = static_weighted (or active hard strategy / bucket-weighted)
+features       = model predictions + runtime-visible geometry features
+residual       = stacked_regressor.predict(features)
+corrected      = base_candidate + clipped(residual)
+candidate_name = stacked_residual
+```
+
+Three output modes are supported, in increasing freedom:
+
+- `global_transform` — translation, scale, rotation about the base centroid (4 outputs). Default.
+- `region_residual` — a `(dx, dy)` offset per jaw/brows/nose/eyes/mouth region (10 outputs).
+- `landmark_residual_68` — a full per-point residual (136 outputs). Gated behind `--allow-landmark-residual-68`; only use after the constrained modes are evaluated and promoted.
+
+Features and residuals are normalized by the base candidate's own landmark
+extent in both training and runtime, so the offline and live feature vectors
+match without depending on a detector bbox. The single source of truth for the
+feature contract is `lib.landmarks.ensemble.runtime_features` — no GT, NME,
+oracle, transform-regret, or label-only fields may enter the feature list, and
+`forbidden_runtime_features` enforces this at training time.
+
+### Artifact and bundle layout
+
+The trained artifact (`stacked_regressor.json`) is a small standardized linear
+model (`coef`/`intercept` plus per-feature `mean`/`std`), so it loads on the
+extract path with no LightGBM/Torch dependency. It records `model_type`,
+`candidate_name`, `base_candidate_policy`, `feature_names`, `output_mode`,
+`output_dim`, `residual_clip_fraction`, the runtime feature contract version, and
+training metadata. Feature order is validated at load time.
+
+It installs into the production bundle under `regressors/<name>.json` with a
+manifest entry:
+
+```json
+{
+  "stacked_regressors": {
+    "stacked_residual_v1": "regressors/stacked_residual_v1.json"
+  }
+}
+```
+
+Missing stacked regressor artifacts are non-fatal — the resolver simply omits the
+candidate unless `use_stacked_landmark_regressor` is enabled and a matching
+artifact is installed.
+
+### CLIs
+
+| Tool | Purpose |
+| --- | --- |
+| `tools/landmarks/train_stacked_landmark_regressor.py` | Build runtime-visible training rows from cached contexts, fit the residual model, write `stacked_regressor.json` plus `stacked_regressor_training.json`. Splits by sample identity to avoid leakage. |
+| `tools/landmarks/evaluate_stacked_landmark_regressor.py` | Apply the regressor per sample, report NME change / win-loss / catastrophic-rate / residual magnitude / clip rate by runtime bucket and hard-case slice, and apply promotion gates (`--fail-on-gate`). |
+
+Install the trained artifact into the bundle via
+`lib.landmarks.ensemble.production_artifacts.install_production_bundle(...,
+stacked_regressor_sources={"stacked_residual_v1": <path>})`.
+
+### Config flags (`plugins/extract/align/ensemble_defaults.py`)
+
+- `use_stacked_landmark_regressor` — default `False`. Master enable.
+- `stacked_landmark_regressor_policy` — default `stacked_residual_v1`. Must match a manifest `stacked_regressors` key.
+- `stacked_landmark_regressor_max_residual` — default `0.05` (fraction of bbox diagonal). Runtime safety cap; the tighter of this and the artifact's own clip wins. `0` defers to the artifact.
+
+### Promotion criteria and known risks
+
+Promotion gates (`evaluate_promotion_gates`) require: no increase in catastrophic
+outliers overall or on the frontal slice, no material frontal/easy NME
+regression, and a win rate at or above the floor on targeted hard slices
+(profile, large-yaw, roll). Known risks: an over-free output mode
+(`landmark_residual_68`) can over-correct frontal cases, so prefer the
+constrained modes and keep the residual clip conservative; always confirm stable
+behavior when the candidate is present but not selected before promoting.
+
 ## Remaining cleanup
 
 1. Finish physical migration of the large scorer implementation bodies out of `tools/landmarks` once all imports are migrated and CI is green.

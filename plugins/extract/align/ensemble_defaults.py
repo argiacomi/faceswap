@@ -224,3 +224,41 @@ hard_roll_degrees = ConfigItem(
     min_max=(0.0, 90.0),
     rounding=1,
 )
+
+use_stacked_landmark_regressor = ConfigItem(
+    datatype=bool,
+    default=False,
+    group="landmark_ensemble",
+    info=(
+        "Enable the optional stacked residual landmark regressor (#223). When on and a "
+        "matching regressor artifact is installed in the production bundle, the runtime "
+        "resolver emits an extra ``stacked_residual`` candidate that corrects a safe base "
+        "candidate with a clipped, model-derived residual. The candidate still flows "
+        "through the existing metrics, geometry vetoes, learned scorer, and safety "
+        "fallbacks; it never bypasses them. Disabled by default."
+    ),
+)
+
+stacked_landmark_regressor_policy = ConfigItem(
+    datatype=str,
+    default="stacked_residual_v1",
+    group="landmark_ensemble",
+    info=(
+        "Name of the stacked regressor artifact to load from the production bundle when "
+        "``use_stacked_landmark_regressor`` is enabled. Must match a key under "
+        "``stacked_regressors`` in the bundle manifest."
+    ),
+)
+
+stacked_landmark_regressor_max_residual = ConfigItem(
+    datatype=float,
+    default=0.05,
+    group="landmark_ensemble",
+    info=(
+        "Runtime safety cap on the stacked residual correction, as a fraction of the face "
+        "bbox diagonal. The tighter of this value and the artifact's own clip fraction "
+        "wins. Set to 0 to defer entirely to the artifact's trained clip."
+    ),
+    min_max=(0.0, 0.5),
+    rounding=3,
+)
