@@ -103,6 +103,80 @@ class Navigation:
             logger.trace("Stopping playback")
             self.tk_is_playing.set(False)
 
+    def increment_face(self):
+        """Update navigation to the next face in filtered frame order."""
+        self._cycle_face(1)
+
+    def decrement_face(self):
+        """Update navigation to the previous face in filtered frame order."""
+        self._cycle_face(-1)
+
+    def _cycle_face(self, direction):
+        """Cycle to the next/previous face, crossing filtered frames as needed."""
+        self.stop_playback()
+
+        frames = self._det_faces.filter.frames_list
+        if not frames:
+            logger.debug("No filtered frames. Not cycling face.")
+            return
+
+        face_counts = self._det_faces.face_count_per_index
+        position = self._current_filtered_position(frames)
+        current_frame = frames[position]
+        current_face_count = face_counts[current_frame]
+        current_face_index = self._globals.face_index
+
+        if current_face_count:
+            current_face_index = max(0, min(current_face_index, current_face_count - 1))
+            if direction > 0 and current_face_index < current_face_count - 1:
+                self._set_face_position(position, current_face_index + 1)
+                return
+            if direction < 0 and current_face_index > 0:
+                self._set_face_position(position, current_face_index - 1)
+                return
+
+        search = range(position + 1, len(frames)) if direction > 0 else range(position - 1, -1, -1)
+        for next_position in search:
+            frame_index = frames[next_position]
+            face_count = face_counts[frame_index]
+            if face_count == 0:
+                continue
+            face_index = 0 if direction > 0 else face_count - 1
+            self._set_face_position(next_position, face_index)
+            return
+
+        logger.debug("End of Stream. Not cycling face.")
+
+    def _current_filtered_position(self, frames):
+        """Return the current frame's position in the filtered frame list."""
+        current_frame = self._globals.frame_index
+        try:
+            return frames.index(current_frame)
+        except ValueError:
+            return min(self._get_safe_frame_index(), len(frames) - 1)
+
+    def _set_face_position(self, transport_index, face_index):
+        """Select a face and move transport to its frame if needed."""
+        frames = self._det_faces.filter.frames_list
+        if not 0 <= transport_index < len(frames):
+            return
+
+        frame_index = frames[transport_index]
+        logger.debug(
+            "Setting face position. transport_index: %s, frame_index: %s, face_index: %s",
+            transport_index,
+            frame_index,
+            face_index,
+        )
+        self._globals.set_selected_faces(((frame_index, face_index),))
+        self._globals.set_face_index(face_index)
+
+        if self._get_safe_frame_index() != transport_index:
+            self._globals.var_transport_index.set(transport_index)
+
+        self._globals.var_update_active_viewport.set(True)
+        self._globals.var_full_update.set(True)
+
     def increment_frame(self, frame_count=None, is_playing=False):
         """Update The frame navigation position to the next frame based on filter."""
         if not is_playing:

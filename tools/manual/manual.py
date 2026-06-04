@@ -251,6 +251,23 @@ class Manual(tk.Tk):
         logger.debug("Created containers: %s", retval)
         return retval
 
+    def _handle_arrow_key(self, direction: str) -> None:
+        """Handle arrow keys.
+
+        In BoundingBox mode, arrows nudge the active bounding box. Outside BoundingBox mode,
+        preserve the existing up/down face-grid scrolling behavior.
+        """
+        if self._display.tk_selected_action.get() == "BoundingBox":
+            nudge = getattr(self._display.active_editor, "nudge_bounding_box", None)
+            if callable(nudge):
+                nudge(direction)
+                return
+
+        if direction == "up":
+            self._faces_frame.canvas_scroll(T.cast(T.Literal["up"], direction))
+        elif direction == "down":
+            self._faces_frame.canvas_scroll(T.cast(T.Literal["down"], direction))
+
     def _handle_key_press(self, event: tk.Event) -> None:
         """Keyboard shortcuts
 
@@ -271,13 +288,15 @@ class Manual(tk.Tk):
 
         globs = self._globals
         bindings = {
-            "z": self._display.navigation.decrement_frame,
-            "x": self._display.navigation.increment_frame,
+            "z": self._display.navigation.decrement_face,
+            "x": self._display.navigation.increment_face,
             "space": self._display.navigation.handle_play_button,
             "home": self._display.navigation.goto_first_frame,
             "end": self._display.navigation.goto_last_frame,
-            "down": lambda d="down": self._faces_frame.canvas_scroll(T.cast(T.Literal["down"], d)),
-            "up": lambda d="up": self._faces_frame.canvas_scroll(T.cast(T.Literal["up"], d)),
+            "down": lambda d="down": self._handle_arrow_key(d),
+            "up": lambda d="up": self._handle_arrow_key(d),
+            "left": lambda d="left": self._handle_arrow_key(d),
+            "right": lambda d="right": self._handle_arrow_key(d),
             "next": lambda d="page-down": self._faces_frame.canvas_scroll(
                 T.cast(T.Literal["page-down"], d)
             ),

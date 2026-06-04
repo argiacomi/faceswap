@@ -153,7 +153,11 @@ class Viewport:
         self._tk_faces = {}
         self._clear_selected_boxes()
 
-    def update(self, refresh_annotations: bool = False) -> None:
+    def update(
+        self,
+        refresh_annotations: bool = False,
+        reload_active: bool = True,
+    ) -> None:
         """Update the viewport.
 
         Parameters
@@ -161,12 +165,17 @@ class Viewport:
         refresh_annotations: bool, optional
             ``True`` if mesh annotations should be re-calculated otherwise ``False``.
             Default: ``False``
+        reload_active: bool, optional
+            ``True`` to reload active-frame annotations. Set ``False`` when the active-frame
+            annotation reload is already in progress and only the visible viewport objects need
+            rebuilding after a scroll operation. Default: ``True``.
 
         Obtains the objects that are currently visible. Updates the visible area of the canvas
         and reloads the active frame's annotations."""
         self._objects.update()
         self._update_viewport(refresh_annotations)
-        self._active_frame.reload_annotations()
+        if reload_active:
+            self._active_frame.reload_annotations()
         self._update_selected_highlighters()
 
         self._raise_highlight_layers()

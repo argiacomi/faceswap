@@ -195,7 +195,7 @@ class HoverBox:
             return
 
         transport_id = self._grid.transport_index_from_frame(frame_id)
-        logger.trace(
+        logger.trace(  # type: ignore[attr-defined]
             "frame_index: %s, transport_id: %s, face_idx: %s",
             frame_id,
             transport_id,
@@ -396,6 +396,11 @@ class ActiveFrame:
         self._assets.meshes = self._objects.meshes[rows, cols].tolist()
         self._assets.faces = self._objects.visible_faces[rows, cols].tolist()
 
+    def _refresh_viewport_after_scroll(self) -> None:
+        """Refresh visible viewport objects after scrolling without recursive reload."""
+        self._viewport.update(reload_active=False)
+        self._set_active_objects()
+
     def _check_active_in_view(self) -> None:
         """If the frame has changed, there are faces in the frame, but they don't appear in the
         viewport, then bring the active faces to the top of the viewport."""
@@ -407,7 +412,7 @@ class ActiveFrame:
             y_coord = self._grid.y_coord_from_frame(self.frame_index)
             logger.trace("Active not in view. Moving to: %s", y_coord)  # type:ignore[attr-defined]
             self._canvas.yview_moveto(y_coord / self._canvas.bbox("backdrop")[3])
-            self._viewport.update()
+            self._refresh_viewport_after_scroll()
 
     def move_to_top(self) -> None:
         """Move the currently selected frame's faces to the top of the viewport if they are moving
@@ -447,14 +452,14 @@ class ActiveFrame:
                 top,
             )
             self._canvas.yview_moveto(top / height)
-            self._viewport.update()
+            self._refresh_viewport_after_scroll()
         elif self._canvas.winfo_height() <= self._size and y_top != top:
             logger.trace(  # type: ignore[attr-defined]
                 "Viewport shorter than single face height. Moving Active faces to top: %s",
                 top,
             )
             self._canvas.yview_moveto(top / height)
-            self._viewport.update()
+            self._refresh_viewport_after_scroll()
 
     def _create_new_boxes(self) -> None:
         """The highlight boxes (border around selected faces) are the only additional annotations

@@ -94,8 +94,8 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         return {
             "play": _("Play/Pause (SPACE)"),
             "beginning": _("Go to First Frame (HOME)"),
-            "prev": _("Go to Previous Frame (Z)"),
-            "next": _("Go to Next Frame (X)"),
+            "prev": _("Go to Previous Frame (Z: Previous Face)"),
+            "next": _("Go to Next Frame (X: Next Face)"),
             "end": _("Go to Last Frame (END)"),
             "extract": _("Extract the faces to a folder... (Ctrl+E)"),
             "save": _("Save the Alignments file (Ctrl+S)"),

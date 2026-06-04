@@ -47,6 +47,9 @@ class BoundingBox(Editor):
             " - Use Magnify to edit the selected face's bounding box in zoomed view."
         )
         key_bindings = {"<Delete>": self._delete_current_face}
+        key_bindings["<BackSpace>"] = self._delete_current_face
+        key_bindings["<Command-BackSpace>"] = self._delete_current_face
+        key_bindings["<Command-Delete>"] = self._delete_current_face
         super().__init__(
             canvas, detected_faces, control_text=control_text, key_bindings=key_bindings
         )
@@ -485,6 +488,67 @@ class BoundingBox(Editor):
             aligner=self._tk_aligner.get(),
         )
         self._drag_data["current_location"] = (event.x, event.y)
+
+    def _nudge_face_index(self):
+        """Return the face index to nudge from hover/selection state."""
+        frame_index = self._globals.frame_index
+        if frame_index < 0:
+            return None
+
+        faces = self._det_faces.current_faces[frame_index]
+        if not faces:
+            return None
+
+        if self._mouse_location is not None and self._mouse_location[0] == "box":
+            return int(self._mouse_location[1].split("_")[0])
+
+        face_index = self._globals.face_index
+        if 0 <= face_index < len(faces):
+            return face_index
+
+        return 0
+
+    def nudge_bounding_box(self, direction, pixels=5, *args):  # pylint:disable=unused-argument
+        """Move the active bounding box by a small number of display pixels."""
+        shifts = {
+            "left": (-pixels, 0),
+            "right": (pixels, 0),
+            "up": (0, -pixels),
+            "down": (0, pixels),
+        }
+        if direction not in shifts:
+            return
+
+        face_idx = self._nudge_face_index()
+        if face_idx is None:
+            logger.debug("Bounding box nudge ignored. No active face.")
+            return
+
+        frame_index = self._globals.frame_index
+        face_tag = f"bb_box_face_{face_idx}"
+        coords = self._canvas.coords(face_tag)
+        if not coords:
+            logger.debug("Bounding box nudge ignored. No canvas coords for tag: %s", face_tag)
+            return
+
+        shift_x, shift_y = shifts[direction]
+        nudged = np.array(coords) + (shift_x, shift_y, shift_x, shift_y)
+        logger.trace(
+            "Nudging bounding box. frame_index: %s, face_idx: %s, direction: %s, "
+            "pixels: %s, coords: %s",
+            frame_index,
+            face_idx,
+            direction,
+            pixels,
+            nudged,
+        )
+        self._det_faces.update.bounding_box(
+            frame_index,
+            face_idx,
+            *self._coords_to_bounding_box(nudged, face_idx),
+            aligner=self._tk_aligner.get(),
+        )
+        self._det_faces.update.post_edit_trigger(frame_index, face_idx)
 
     def _coords_to_bounding_box(self, coords, face_idx=None):
         """Convert display coordinates to DetectedFace bounding-box format.

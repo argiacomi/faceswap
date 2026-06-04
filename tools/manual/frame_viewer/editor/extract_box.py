@@ -44,6 +44,9 @@ class ExtractBox(Editor):
             " - Outside of the corners to rotate the landmarks."
         )
         key_bindings = {"<Delete>": self._delete_current_face}
+        key_bindings["<BackSpace>"] = self._delete_current_face
+        key_bindings["<Command-BackSpace>"] = self._delete_current_face
+        key_bindings["<Command-Delete>"] = self._delete_current_face
         super().__init__(
             canvas, detected_faces, control_text=control_text, key_bindings=key_bindings
         )

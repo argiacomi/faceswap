@@ -64,6 +64,9 @@ class Mask(Editor):
             "[": lambda *e, i=False: self._adjust_brush_radius(increase=i),
             "]": lambda *e, i=True: self._adjust_brush_radius(increase=i),
             "<Control-Delete>": self._delete_mask,
+            "<Control-BackSpace>": self._delete_mask,
+            "<Command-BackSpace>": self._delete_mask,
+            "<Command-Delete>": self._delete_mask,
         }
         super().__init__(
             canvas, detected_faces, control_text=control_text, key_bindings=key_bindings
