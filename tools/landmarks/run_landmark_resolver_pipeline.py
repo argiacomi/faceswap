@@ -801,7 +801,10 @@ def _commands_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> l
                 # Include 39-point profile samples by default (no-op for non
                 # Menpo2D/MultiPIE datasets); they feed the mined hard-source
                 # manifest and stay filtered out of canonical-68 scorer paths.
-                extra=["--include-39pt-profile", *getattr(args, "dataset_build_arg", [])],
+                extra=[
+                    # "--include-39pt-profile",
+                    *getattr(args, "dataset_build_arg", [])
+                ],
             )
         )
     return commands
@@ -860,7 +863,7 @@ def _command_hard_source_manifest(args: argparse.Namespace, paths: PipelinePaths
     # caller-supplied build args still wins because argparse honors the last
     # occurrence.
     extra_args = [
-        "--include-39pt-profile",
+        # "--include-39pt-profile",
         *getattr(args, "hard_source_dataset_build_arg", []),
     ]
     return _dataset_build_command(
