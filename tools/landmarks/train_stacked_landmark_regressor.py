@@ -43,6 +43,8 @@ from lib.landmarks.ensemble.stacked_regressor_context_cache import (
     load_or_build_stacked_contexts,
 )
 from lib.landmarks.ensemble.stacked_regressor_training import (
+    CONTEXT_SCOPE_ALL,
+    CONTEXT_SCOPES,
     DEFAULT_STACKED_EXPERT_MIN_EXAMPLES,
     DEFAULT_STACKED_L2,
     SAMPLE_WEIGHT_POLICIES,
@@ -91,6 +93,25 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Optional pickle cache for prebuilt SampleCandidateContext objects. "
             "Use this to avoid rebuilding contexts for every stacked-regressor sweep."
+        ),
+    )
+    parser.add_argument(
+        "--context-scope",
+        choices=tuple(sorted(CONTEXT_SCOPES)),
+        default=CONTEXT_SCOPE_ALL,
+        help=(
+            "Filter contexts for experimental training. non_profile excludes "
+            "profile buckets; profile_only trains only profile buckets. This is "
+            "not a runtime gate."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-context-scope",
+        choices=tuple(sorted(CONTEXT_SCOPES)),
+        default=CONTEXT_SCOPE_ALL,
+        help=(
+            "Runtime bucket scope supported by the emitted stacked regressor artifact. "
+            "Buckets outside this scope skip stacked_residual candidate generation."
         ),
     )
     parser.add_argument(
@@ -262,6 +283,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         return 1
 
     common_kwargs: dict[str, T.Any] = {
+        "context_scope": args.context_scope,
+        "runtime_context_scope": args.runtime_context_scope,
         "output_mode": args.output_mode,
         "base_candidate_policy": args.base_candidate_policy,
         "candidate_name": args.candidate_name,

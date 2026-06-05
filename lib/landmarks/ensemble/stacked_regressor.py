@@ -48,6 +48,26 @@ STACKED_REGRESSOR_CONTRACT_VERSION = "stacked_residual_v1"
 #: Default candidate name the regressor emits into the resolver pool.
 DEFAULT_STACKED_CANDIDATE_NAME = "stacked_residual"
 
+RUNTIME_CONTEXT_SCOPE_ALL = "all"
+RUNTIME_CONTEXT_SCOPE_NON_PROFILE = "non_profile"
+RUNTIME_CONTEXT_SCOPE_PROFILE_ONLY = "profile_only"
+RUNTIME_CONTEXT_SCOPE_LARGE_YAW_ONLY = "large_yaw_only"
+RUNTIME_CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY = "large_yaw_left_only"
+RUNTIME_CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY = "large_yaw_right_only"
+RUNTIME_CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY = "frontal_intermediate_only"
+
+RUNTIME_CONTEXT_SCOPES: frozenset[str] = frozenset(
+    {
+        RUNTIME_CONTEXT_SCOPE_ALL,
+        RUNTIME_CONTEXT_SCOPE_NON_PROFILE,
+        RUNTIME_CONTEXT_SCOPE_PROFILE_ONLY,
+        RUNTIME_CONTEXT_SCOPE_LARGE_YAW_ONLY,
+        RUNTIME_CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY,
+        RUNTIME_CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY,
+        RUNTIME_CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY,
+    }
+)
+
 #: Only model payload the runtime loader knows how to evaluate.
 MODEL_TYPE_NUMPY_LINEAR = "numpy_linear_residual_v1"
 
@@ -110,6 +130,32 @@ class StackedRegressorError(RuntimeError):
 
 class StackedRegressorInvalid(StackedRegressorError):
     """An artifact exists but its schema or payload is unusable."""
+
+
+def runtime_bucket_supported_by_scope(runtime_bucket: str, runtime_context_scope: str) -> bool:
+    """Return whether an artifact scoped to ``runtime_context_scope`` supports a bucket."""
+    scope = str(runtime_context_scope or RUNTIME_CONTEXT_SCOPE_ALL)
+    bucket = str(runtime_bucket or "").lower()
+
+    if scope == RUNTIME_CONTEXT_SCOPE_ALL:
+        return True
+    if scope == RUNTIME_CONTEXT_SCOPE_NON_PROFILE:
+        return "profile" not in bucket
+    if scope == RUNTIME_CONTEXT_SCOPE_PROFILE_ONLY:
+        return "profile" in bucket
+    if scope == RUNTIME_CONTEXT_SCOPE_LARGE_YAW_ONLY:
+        return "large_yaw" in bucket
+    if scope == RUNTIME_CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY:
+        return "large_yaw" in bucket and "left" in bucket
+    if scope == RUNTIME_CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY:
+        return "large_yaw" in bucket and "right" in bucket
+    if scope == RUNTIME_CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY:
+        return "frontal" in bucket or "intermediate" in bucket
+
+    raise StackedRegressorInvalid(
+        f"unsupported runtime_context_scope {runtime_context_scope!r}; expected one of "
+        f"{sorted(RUNTIME_CONTEXT_SCOPES)}"
+    )
 
 
 def output_dim_for_mode(output_mode: str) -> int:
@@ -271,6 +317,7 @@ class RuntimeStackedLandmarkRegressor:
     intercept: np.ndarray
     feature_mean: np.ndarray
     feature_std: np.ndarray
+    runtime_context_scope: str = RUNTIME_CONTEXT_SCOPE_ALL
     model_type: str = MODEL_TYPE_NUMPY_LINEAR
     contract_version: str = STACKED_REGRESSOR_CONTRACT_VERSION
     runtime_feature_contract_version: str = RUNTIME_FEATURE_CONTRACT_VERSION
@@ -333,6 +380,11 @@ class RuntimeStackedLandmarkRegressor:
             )
         if self.residual_clip_fraction < 0:
             raise StackedRegressorInvalid("residual_clip_fraction must be non-negative")
+        if self.runtime_context_scope not in RUNTIME_CONTEXT_SCOPES:
+            raise StackedRegressorInvalid(
+                f"unsupported runtime_context_scope {self.runtime_context_scope!r}; "
+                f"expected one of {sorted(RUNTIME_CONTEXT_SCOPES)}"
+            )
         if self.expert_policy not in EXPERT_POLICIES:
             raise StackedRegressorInvalid(
                 f"unsupported stacked regressor expert_policy {self.expert_policy!r}; "
@@ -373,6 +425,9 @@ class RuntimeStackedLandmarkRegressor:
         """Build a regressor from a parsed artifact payload, validating the contract."""
         if not isinstance(payload, T.Mapping):
             raise StackedRegressorInvalid("stacked regressor artifact must be a JSON object")
+        runtime_context_scope = str(
+            payload.get("runtime_context_scope", RUNTIME_CONTEXT_SCOPE_ALL)
+        )
         experts_payload = payload.get("experts")
         if isinstance(experts_payload, T.Mapping) and experts_payload:
             experts: dict[str, RuntimeStackedLandmarkRegressor] = {
@@ -402,6 +457,7 @@ class RuntimeStackedLandmarkRegressor:
                 intercept=default_model.intercept,
                 feature_mean=default_model.feature_mean,
                 feature_std=default_model.feature_std,
+                runtime_context_scope=runtime_context_scope,
                 model_type=default_model.model_type,
                 contract_version=str(
                     payload.get("contract_version", STACKED_REGRESSOR_CONTRACT_VERSION)
@@ -455,6 +511,7 @@ class RuntimeStackedLandmarkRegressor:
             intercept=intercept,
             feature_mean=feature_mean,
             feature_std=feature_std,
+            runtime_context_scope=runtime_context_scope,
             model_type=str(payload.get("model_type", MODEL_TYPE_NUMPY_LINEAR)),
             contract_version=str(
                 payload.get("contract_version", STACKED_REGRESSOR_CONTRACT_VERSION)
@@ -477,6 +534,7 @@ class RuntimeStackedLandmarkRegressor:
                 "output_mode": self.output_mode,
                 "output_dim": self.output_dim,
                 "residual_clip_fraction": self.residual_clip_fraction,
+                "runtime_context_scope": self.runtime_context_scope,
                 "model_type": self.model_type,
                 "contract_version": self.contract_version,
                 "runtime_feature_contract_version": self.runtime_feature_contract_version,
@@ -494,6 +552,7 @@ class RuntimeStackedLandmarkRegressor:
             "output_mode": self.output_mode,
             "output_dim": self.output_dim,
             "residual_clip_fraction": self.residual_clip_fraction,
+            "runtime_context_scope": self.runtime_context_scope,
             "coef": self.coef.tolist(),
             "intercept": self.intercept.tolist(),
             "feature_mean": self.feature_mean.tolist(),
@@ -529,6 +588,11 @@ class RuntimeStackedLandmarkRegressor:
             available=set(self.experts),
             default_expert=self.default_expert,
         )
+
+    def supports_runtime_bucket(self, runtime_bucket: str) -> bool:
+        """Return whether this artifact should emit a candidate for ``runtime_bucket``."""
+        return runtime_bucket_supported_by_scope(runtime_bucket, self.runtime_context_scope)
+
 
     def feature_vector(self, features: T.Mapping[str, float]) -> np.ndarray:
         """Build the standardized model input row in the artifact feature order."""
@@ -654,6 +718,15 @@ def write_stacked_regressor(
 
 
 __all__ = [
+    "runtime_bucket_supported_by_scope",
+    "RUNTIME_CONTEXT_SCOPES",
+    "RUNTIME_CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY",
+    "RUNTIME_CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY",
+    "RUNTIME_CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY",
+    "RUNTIME_CONTEXT_SCOPE_LARGE_YAW_ONLY",
+    "RUNTIME_CONTEXT_SCOPE_PROFILE_ONLY",
+    "RUNTIME_CONTEXT_SCOPE_NON_PROFILE",
+    "RUNTIME_CONTEXT_SCOPE_ALL",
     "DEFAULT_STACKED_EXPERT_KEY",
     "EXPERT_POLICIES",
     "EXPERT_POLICY_RUNTIME_BUCKET",

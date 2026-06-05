@@ -38,6 +38,11 @@ from lib.landmarks.ensemble.stacked_regressor_evaluation import (
     evaluate_promotion_gates,
     evaluate_stacked_candidate,
 )
+from lib.landmarks.ensemble.stacked_regressor_training import (
+    CONTEXT_SCOPE_ALL,
+    CONTEXT_SCOPES,
+    filter_contexts_for_scope,
+)
 from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("evaluate_stacked_landmark_regressor")
@@ -77,6 +82,15 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Optional pickle cache for prebuilt SampleCandidateContext objects. "
             "Use this to avoid rebuilding contexts for every stacked-regressor evaluation."
+        ),
+    )
+    parser.add_argument(
+        "--context-scope",
+        choices=tuple(sorted(CONTEXT_SCOPES)),
+        default=CONTEXT_SCOPE_ALL,
+        help=(
+            "Filter contexts for experimental evaluation. Use the same scope as "
+            "training when checking non_profile/profile_only artifacts."
         ),
     )
     parser.add_argument(
@@ -180,9 +194,21 @@ def main(argv: T.Sequence[str] | None = None) -> int:
             "allow_image_backfill": args.allow_image_backfill,
         },
     )
+    contexts = filter_contexts_for_scope(
+        contexts,
+        context_scope=args.context_scope,
+    )
     if not contexts:
-        logger.error("no sample contexts loaded; nothing to evaluate")
+        logger.error(
+            "no sample contexts remain after applying context_scope=%s",
+            args.context_scope,
+        )
         return 1
+    logger.info(
+        "Using %d stacked regressor context(s) after context_scope=%s",
+        len(contexts),
+        args.context_scope,
+    )
 
     report = evaluate_stacked_candidate(
         contexts,
@@ -195,6 +221,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         "regressor": str(args.regressor),
         "output_mode": regressor.output_mode,
         "base_candidate_policy": regressor.base_candidate_policy,
+        "context_scope": args.context_scope,
         "report": report.to_dict(),
         "promotion_gate": {
             "passed": gate.passed,

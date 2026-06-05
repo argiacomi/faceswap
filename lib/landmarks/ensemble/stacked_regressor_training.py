@@ -81,6 +81,25 @@ TARGET_POLICIES: frozenset[str] = frozenset(
     }
 )
 
+CONTEXT_SCOPE_ALL = "all"
+CONTEXT_SCOPE_NON_PROFILE = "non_profile"
+CONTEXT_SCOPE_PROFILE_ONLY = "profile_only"
+CONTEXT_SCOPE_LARGE_YAW_ONLY = "large_yaw_only"
+CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY = "large_yaw_left_only"
+CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY = "large_yaw_right_only"
+CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY = "frontal_intermediate_only"
+CONTEXT_SCOPES: frozenset[str] = frozenset(
+    {
+        CONTEXT_SCOPE_ALL,
+        CONTEXT_SCOPE_NON_PROFILE,
+        CONTEXT_SCOPE_PROFILE_ONLY,
+        CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY,
+        CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY,
+        CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY,
+        CONTEXT_SCOPE_LARGE_YAW_ONLY,
+    }
+)
+
 _LOG_SCALE_CLAMP = 1.0
 
 
@@ -346,6 +365,70 @@ def select_base_candidate(context: ContextLike, policy: str) -> T.Any:
     return next(iter(finite.values()), None)
 
 
+def _context_runtime_bucket(context: ContextLike) -> str:
+    return str(getattr(context, "runtime_bucket", "") or "").lower()
+
+
+def _is_profile_context(context: ContextLike) -> bool:
+    return "profile" in _context_runtime_bucket(context)
+
+
+def _is_large_yaw_context(context: ContextLike) -> bool:
+    return "large_yaw" in _context_runtime_bucket(context)
+
+
+def _is_large_yaw_left_context(context: ContextLike) -> bool:
+    bucket = _context_runtime_bucket(context)
+    return "large_yaw" in bucket and "left" in bucket
+
+
+def _is_large_yaw_right_context(context: ContextLike) -> bool:
+    bucket = _context_runtime_bucket(context)
+    return "large_yaw" in bucket and "right" in bucket
+
+
+def _is_frontal_intermediate_context(context: ContextLike) -> bool:
+    bucket = _context_runtime_bucket(context)
+    return "frontal" in bucket or "intermediate" in bucket
+
+
+def filter_contexts_for_scope(
+    contexts: T.Iterable[ContextLike],
+    *,
+    context_scope: str,
+) -> list[ContextLike]:
+    """Return contexts included by the requested training/evaluation scope.
+
+    This is an experiment scoping tool, not a runtime gate. It lets us isolate
+    whether profile contexts are poisoning the residual fit/eval behavior.
+    """
+    if context_scope not in CONTEXT_SCOPES:
+        raise StackedRegressorTrainingError(
+            f"unsupported context_scope {context_scope!r}; expected one of "
+            f"{sorted(CONTEXT_SCOPES)}"
+        )
+
+    rows = list(contexts)
+    if context_scope == CONTEXT_SCOPE_ALL:
+        return rows
+    if context_scope == CONTEXT_SCOPE_NON_PROFILE:
+        return [row for row in rows if not _is_profile_context(row)]
+    if context_scope == CONTEXT_SCOPE_PROFILE_ONLY:
+        return [row for row in rows if _is_profile_context(row)]
+    if context_scope == CONTEXT_SCOPE_LARGE_YAW_ONLY:
+        return [row for row in rows if _is_large_yaw_context(row)]
+    if context_scope == CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY:
+        return [row for row in rows if _is_large_yaw_left_context(row)]
+    if context_scope == CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY:
+        return [row for row in rows if _is_large_yaw_right_context(row)]
+    if context_scope == CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY:
+        return [row for row in rows if _is_frontal_intermediate_context(row)]
+
+    raise StackedRegressorTrainingError(
+        f"unsupported context_scope {context_scope!r}; expected one of {sorted(CONTEXT_SCOPES)}"
+    )
+
+
 def build_training_examples(
     contexts: T.Iterable[ContextLike],
     *,
@@ -520,6 +603,8 @@ def _split_by_identity(
 def train_stacked_regressor(
     contexts: T.Iterable[ContextLike],
     *,
+    context_scope: str = CONTEXT_SCOPE_ALL,
+    runtime_context_scope: str = CONTEXT_SCOPE_ALL,
     output_mode: str = OUTPUT_MODE_GLOBAL_TRANSFORM,
     base_candidate_policy: str = "static_weighted",
     candidate_name: str = DEFAULT_STACKED_CANDIDATE_NAME,
@@ -537,8 +622,23 @@ def train_stacked_regressor(
             "landmark_residual_68 output is gated; pass allow_landmark_residual_68=True "
             "only after constrained modes are evaluated and promoted"
         )
-    examples = build_training_examples(
+    if runtime_context_scope not in CONTEXT_SCOPES:
+        raise StackedRegressorTrainingError(
+            f"unsupported runtime_context_scope {runtime_context_scope!r}; expected one of "
+            f"{sorted(CONTEXT_SCOPES)}"
+        )
+
+    scoped_contexts = filter_contexts_for_scope(
         contexts,
+        context_scope=context_scope,
+    )
+    if not scoped_contexts:
+        raise StackedRegressorTrainingError(
+            f"no contexts remain after applying context_scope={context_scope!r}"
+        )
+
+    examples = build_training_examples(
+        scoped_contexts,
         output_mode=output_mode,
         base_candidate_policy=base_candidate_policy,
         sample_weight_policy=sample_weight_policy,
@@ -629,6 +729,8 @@ def train_stacked_regressor(
     training_metadata: dict[str, T.Any] = {
         "output_mode": output_mode,
         "base_candidate_policy": base_candidate_policy,
+        "context_scope": context_scope,
+        "runtime_context_scope": runtime_context_scope,
         "n_examples": len(examples),
         "n_train": len(train_examples),
         "n_eval": len(eval_examples),
@@ -676,6 +778,7 @@ def train_stacked_regressor(
         intercept=intercept,
         feature_mean=mean,
         feature_std=std,
+        runtime_context_scope=runtime_context_scope,
         training_metadata=training_metadata,
     )
     metrics = dict(training_metadata)
@@ -747,6 +850,8 @@ def _group_contexts_by_runtime_expert(
 def train_stacked_regressor_experts(
     contexts: T.Iterable[ContextLike],
     *,
+    context_scope: str = CONTEXT_SCOPE_ALL,
+    runtime_context_scope: str = CONTEXT_SCOPE_ALL,
     output_mode: str = OUTPUT_MODE_GLOBAL_TRANSFORM,
     base_candidate_policy: str = "static_weighted",
     candidate_name: str = DEFAULT_STACKED_CANDIDATE_NAME,
@@ -765,9 +870,20 @@ def train_stacked_regressor_experts(
     the model class from one global linear fit to multiple pose-family linear fits;
     it does not add runtime accept/reject gates.
     """
-    context_rows = list(contexts)
+    if runtime_context_scope not in CONTEXT_SCOPES:
+        raise StackedRegressorTrainingError(
+            f"unsupported runtime_context_scope {runtime_context_scope!r}; expected one of "
+            f"{sorted(CONTEXT_SCOPES)}"
+        )
+
+    context_rows = filter_contexts_for_scope(
+        contexts,
+        context_scope=context_scope,
+    )
     if not context_rows:
-        raise StackedRegressorTrainingError("no contexts supplied for expert training")
+        raise StackedRegressorTrainingError(
+            f"no contexts remain after applying context_scope={context_scope!r}"
+        )
 
     grouped = _group_contexts_by_runtime_expert(context_rows)
     default_key = DEFAULT_STACKED_EXPERT_KEY
@@ -825,6 +941,8 @@ def train_stacked_regressor_experts(
 
     training_metadata: dict[str, T.Any] = {
         "expert_policy": EXPERT_POLICY_RUNTIME_BUCKET,
+        "context_scope": context_scope,
+        "runtime_context_scope": runtime_context_scope,
         "default_expert": default_key,
         "experts": expert_metrics,
         "expert_min_examples": int(expert_min_examples),
@@ -851,6 +969,7 @@ def train_stacked_regressor_experts(
         intercept=default_model.intercept,
         feature_mean=default_model.feature_mean,
         feature_std=default_model.feature_std,
+        runtime_context_scope=runtime_context_scope,
         training_metadata=training_metadata,
         expert_policy=EXPERT_POLICY_RUNTIME_BUCKET,
         default_expert=default_key,
@@ -866,6 +985,15 @@ def train_stacked_regressor_experts(
 
 
 __all__ = [
+    "CONTEXT_SCOPE_FRONTAL_INTERMEDIATE_ONLY",
+    "CONTEXT_SCOPE_LARGE_YAW_RIGHT_ONLY",
+    "CONTEXT_SCOPE_LARGE_YAW_LEFT_ONLY",
+    "CONTEXT_SCOPE_LARGE_YAW_ONLY",
+    "filter_contexts_for_scope",
+    "CONTEXT_SCOPE_PROFILE_ONLY",
+    "CONTEXT_SCOPE_NON_PROFILE",
+    "CONTEXT_SCOPE_ALL",
+    "CONTEXT_SCOPES",
     "DEFAULT_STACKED_L2",
     "train_stacked_regressor_experts",
     "DEFAULT_STACKED_EXPERT_MIN_EXAMPLES",

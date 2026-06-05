@@ -871,7 +871,7 @@ def _fuse_strategy(
     method = strategy_outlier_method(canonical)
     threshold = config.outlier_threshold if strategy_uses_threshold(canonical) else 3.5
     if not strategy_requires_weights(canonical):
-        return T.cast(  # type: ignore[redundant-cast]
+        return T.cast(
             "np.ndarray",
             plain_average(items, outlier_method=method, outlier_threshold=threshold).points,
         )
@@ -892,10 +892,10 @@ def _fuse_strategy(
             model_count=stack.shape[0],
             landmark_count=stack.shape[1],
         )
-        return T.cast(  # type: ignore[redundant-cast]
+        return T.cast(
             "np.ndarray", weighted_median(stack, normalized).astype("float32", copy=False)
         )
-    return T.cast(  # type: ignore[redundant-cast]
+    return T.cast(
         "np.ndarray",
         static_weighted(
             items,
@@ -1339,6 +1339,15 @@ def _stacked_regressor_candidate(
     """
     if not config.use_stacked_regressor or stacked_regressor is None:
         return None
+    if not stacked_regressor.supports_runtime_bucket(runtime_bucket):
+        logger.debug(
+            "[RuntimeResolver] skipping stacked regressor candidate: "
+            "runtime_bucket=%s outside runtime_context_scope=%s",
+            runtime_bucket,
+            stacked_regressor.runtime_context_scope,
+        )
+        return None
+
     candidate_name = stacked_regressor.candidate_name or DEFAULT_STACKED_CANDIDATE_NAME
     if any(candidate.name == candidate_name for candidate in candidates):
         return None
@@ -1423,6 +1432,7 @@ def _stacked_regressor_candidate(
     metadata: dict[str, T.Any] = {
         "stacked_regressor_name": candidate_name,
         "stacked_output_mode": stacked_regressor.output_mode,
+        "stacked_runtime_context_scope": stacked_regressor.runtime_context_scope,
         "stacked_base_candidate": base.name,
         "stacked_residual_norm_max": result.residual_norm_max,
         "stacked_residual_norm_mean": result.residual_norm_mean,
@@ -2644,7 +2654,7 @@ def resolve_runtime(
             )
             if hard_slice_fallback_used:
                 rejected_candidate = selected
-                selected = hard_slice_fallback  # type: ignore[assignment]
+                selected = T.cast(str, hard_slice_fallback)
                 fallback_reason = "consensus_collapse_fusion_rejected"
             else:
                 rejected_candidate = ""
@@ -2667,7 +2677,7 @@ def resolve_runtime(
             )
             if safe_fallback_used:
                 rejected_candidate = selected
-                selected = safe_fallback  # type: ignore[assignment]
+                selected = T.cast(str, safe_fallback)
                 fallback_reason = "scorer_high_risk_safe_fallback"
             guard_replacement = _hard_pose_plain_average_replacement(
                 selected=selected,
@@ -2684,7 +2694,7 @@ def resolve_runtime(
             if hard_pose_plain_average_guard_used:
                 rejected_candidate = selected
                 hard_pose_plain_average_rejected_candidate = selected
-                selected = guard_replacement  # type: ignore[assignment]
+                selected = T.cast(str, guard_replacement)
                 fallback_reason = fallback_reason or "hard_pose_plain_average_guard"
         logger.debug(
             "[RuntimeResolver] learned selection=%s fallback_reason=%s rejected=%s",
@@ -2753,7 +2763,7 @@ def resolve_runtime(
         )
         if hard_pose_plain_average_guard_used:
             hard_pose_plain_average_rejected_candidate = selected
-            selected = guard_replacement  # type: ignore[assignment]
+            selected = T.cast(str, guard_replacement)
             fallback_reason = fallback_reason or "hard_pose_plain_average_guard"
         logger.debug(
             "[RuntimeResolver] bucket-priority selection=%s fallback_reason=%s",
