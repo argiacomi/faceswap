@@ -13,6 +13,7 @@ from lib.landmarks.ensemble.runtime_resolver import CandidateRecord
 from lib.landmarks.ensemble.stacked_regressor import (
     OUTPUT_MODE_GLOBAL_TRANSFORM,
     OUTPUT_MODE_LANDMARK_RESIDUAL_68,
+    OUTPUT_MODE_REGION_RESIDUAL,
 )
 from lib.landmarks.ensemble.stacked_regressor_evaluation import (
     evaluate_promotion_gates,
@@ -20,6 +21,7 @@ from lib.landmarks.ensemble.stacked_regressor_evaluation import (
 )
 from lib.landmarks.ensemble.stacked_regressor_training import (
     SAMPLE_WEIGHT_POLICY_HARD_SLICE,
+    TARGET_POLICY_CLIPPED_RESIDUAL,
     StackedRegressorTrainingError,
     StackedTrainingExample,
     stacked_feature_order,
@@ -176,3 +178,18 @@ def test_promotion_gate_blocks_frontal_regression() -> None:
     gate = evaluate_promotion_gates(report)
     assert not gate.passed
     assert any("frontal" in reason for reason in gate.reasons)
+
+
+def test_clipped_residual_target_policy_limits_region_targets() -> None:
+    contexts = _make_contexts(32)
+    _, metrics = train_stacked_regressor(
+        contexts,
+        output_mode=OUTPUT_MODE_REGION_RESIDUAL,
+        residual_clip_fraction=0.001,
+        target_policy=TARGET_POLICY_CLIPPED_RESIDUAL,
+        eval_fraction=0.25,
+    )
+
+    assert metrics["target_policy"] == TARGET_POLICY_CLIPPED_RESIDUAL
+    assert metrics["baseline_eval_mse"] < 1.0e-5
+    assert metrics["eval_mse"] < 1.0e-5

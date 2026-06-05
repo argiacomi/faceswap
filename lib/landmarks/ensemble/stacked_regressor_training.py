@@ -72,6 +72,15 @@ SAMPLE_WEIGHT_POLICIES: frozenset[str] = frozenset(
 
 #: log-scale is clamped both at fit and apply time so a degenerate sample can't
 #: produce an exploding similarity scale.
+TARGET_POLICY_FULL_RESIDUAL = "full_residual"
+TARGET_POLICY_CLIPPED_RESIDUAL = "clipped_residual"
+TARGET_POLICIES: frozenset[str] = frozenset(
+    {
+        TARGET_POLICY_FULL_RESIDUAL,
+        TARGET_POLICY_CLIPPED_RESIDUAL,
+    }
+)
+
 _LOG_SCALE_CLAMP = 1.0
 
 
@@ -211,6 +220,93 @@ def landmark_residual_68_target(base: np.ndarray, gt: np.ndarray, diag: float) -
     return target
 
 
+def _clip_vector_norm(values: np.ndarray, max_norm: float) -> np.ndarray:
+    """Clip one or more normalized 2-D vectors to ``max_norm``.
+
+    ``values`` may be shape ``(2,)`` or ``(..., 2)``. The returned array keeps
+    the original shape. This mirrors runtime residual clipping in normalized
+    units, so the fitted target represents what runtime can actually apply.
+    """
+    if max_norm <= 0:
+        zeros = np.zeros_like(values, dtype="float64")
+        return T.cast(np.ndarray, zeros)
+
+    arr = np.asarray(values, dtype="float64")
+    original_shape = arr.shape
+    flat = arr.reshape(-1, 2)
+    norms = np.linalg.norm(flat, axis=1)
+    scale = np.ones_like(norms, dtype="float64")
+    mask = norms > max_norm
+    scale[mask] = max_norm / np.maximum(norms[mask], 1e-12)
+
+    clipped = flat * scale[:, None]
+    reshaped = clipped.reshape(original_shape)
+    return T.cast(np.ndarray, reshaped)
+
+
+def _clip_target_for_runtime(
+    target: np.ndarray,
+    *,
+    output_mode: str,
+    residual_clip_fraction: float,
+) -> np.ndarray:
+    """Return a clip-aware target in the model's normalized output space."""
+    max_norm = float(residual_clip_fraction)
+    if max_norm < 0:
+        raise StackedRegressorTrainingError(
+            "residual_clip_fraction must be non-negative for clipped target policy"
+        )
+
+    values = np.asarray(target, dtype="float64").copy()
+
+    if output_mode == OUTPUT_MODE_GLOBAL_TRANSFORM:
+        if values.shape[0] < 2:
+            raise StackedRegressorTrainingError(
+                "global_transform target must contain at least translation dx/dy"
+            )
+        values[:2] = _clip_vector_norm(values[:2], max_norm)
+        return T.cast(np.ndarray, values)
+
+    if output_mode == OUTPUT_MODE_REGION_RESIDUAL:
+        if values.shape[0] % 2:
+            raise StackedRegressorTrainingError("region_residual target dimension must be even")
+        region_values = _clip_vector_norm(values.reshape(-1, 2), max_norm)
+        region_target = region_values.reshape(values.shape)
+        return T.cast(np.ndarray, region_target)
+
+    if output_mode == OUTPUT_MODE_LANDMARK_RESIDUAL_68:
+        if values.shape[0] != 136:
+            raise StackedRegressorTrainingError(
+                "landmark_residual_68 target dimension must be 136"
+            )
+        landmark_values = _clip_vector_norm(values.reshape(68, 2), max_norm)
+        landmark_target = landmark_values.reshape(values.shape)
+        return T.cast(np.ndarray, landmark_target)
+
+    raise StackedRegressorTrainingError(f"unsupported output_mode {output_mode!r}")
+
+
+def _apply_target_policy(
+    target: np.ndarray,
+    *,
+    output_mode: str,
+    residual_clip_fraction: float,
+    target_policy: str,
+) -> np.ndarray:
+    if target_policy == TARGET_POLICY_FULL_RESIDUAL:
+        full_target = np.asarray(target, dtype="float64")
+        return T.cast(np.ndarray, full_target)
+    if target_policy == TARGET_POLICY_CLIPPED_RESIDUAL:
+        return _clip_target_for_runtime(
+            target,
+            output_mode=output_mode,
+            residual_clip_fraction=residual_clip_fraction,
+        )
+    raise StackedRegressorTrainingError(
+        f"unsupported target_policy {target_policy!r}; expected one of {sorted(TARGET_POLICIES)}"
+    )
+
+
 def _target_for_mode(
     output_mode: str,
     base: np.ndarray,
@@ -256,6 +352,8 @@ def build_training_examples(
     output_mode: str,
     base_candidate_policy: str,
     sample_weight_policy: str = SAMPLE_WEIGHT_POLICY_UNIFORM,
+    target_policy: str = TARGET_POLICY_FULL_RESIDUAL,
+    residual_clip_fraction: float = 0.05,
 ) -> list[StackedTrainingExample]:
     """Build per-sample training examples from cached sample contexts."""
     output_dim_for_mode(output_mode)  # validate mode early
@@ -293,6 +391,12 @@ def build_training_examples(
             model_predictions_available=getattr(context, "model_predictions_available", None),
         )
         target = _target_for_mode(output_mode, base_landmarks, gt, diag)
+        target = _apply_target_policy(
+            target,
+            output_mode=output_mode,
+            residual_clip_fraction=residual_clip_fraction,
+            target_policy=target_policy,
+        )
         sample_weight = sample_weight_for_context(
             context,
             policy=sample_weight_policy,
@@ -422,6 +526,7 @@ def train_stacked_regressor(
     residual_clip_fraction: float = 0.05,
     l2: float = DEFAULT_STACKED_L2,
     sample_weight_policy: str = SAMPLE_WEIGHT_POLICY_UNIFORM,
+    target_policy: str = TARGET_POLICY_FULL_RESIDUAL,
     eval_fraction: float = 0.2,
     split_seed: str | int = "stacked_residual_v1",
     allow_landmark_residual_68: bool = False,
@@ -437,6 +542,8 @@ def train_stacked_regressor(
         output_mode=output_mode,
         base_candidate_policy=base_candidate_policy,
         sample_weight_policy=sample_weight_policy,
+        target_policy=target_policy,
+        residual_clip_fraction=residual_clip_fraction,
     )
     if not examples:
         raise StackedRegressorTrainingError("no usable training examples were produced")
@@ -533,6 +640,7 @@ def train_stacked_regressor(
         "weighted_baseline_eval_mse": weighted_baseline_eval_mse,
         "l2": float(l2),
         "sample_weight_policy": sample_weight_policy,
+        "target_policy": target_policy,
         "train_sample_weight_min": float(train_weights_for_metrics.min()),
         "train_sample_weight_max": float(train_weights_for_metrics.max()),
         "train_sample_weight_mean": float(train_weights_for_metrics.mean()),
@@ -572,11 +680,12 @@ def train_stacked_regressor(
     )
     metrics = dict(training_metadata)
     logger.info(
-        "[StackedRegressor] trained output_mode=%s sample_weight_policy=%s "
+        "[StackedRegressor] trained output_mode=%s sample_weight_policy=%s target_policy=%s "
         "n_train=%d n_eval=%d train_mse=%.6g eval_mse=%.6g baseline_eval_mse=%.6g "
         "train_weight_range=[%.3g, %.3g]",
         output_mode,
         sample_weight_policy,
+        target_policy,
         len(train_examples),
         len(eval_examples),
         train_mse,
@@ -599,6 +708,7 @@ def _train_single_kwargs(
     split_seed: str | int,
     allow_landmark_residual_68: bool,
     sample_weight_policy: str | None,
+    target_policy: str | None,
 ) -> dict[str, T.Any]:
     kwargs: dict[str, T.Any] = {
         "output_mode": output_mode,
@@ -615,6 +725,11 @@ def _train_single_kwargs(
         and "sample_weight_policy" in train_stacked_regressor.__code__.co_varnames
     ):
         kwargs["sample_weight_policy"] = sample_weight_policy
+    if (
+        target_policy is not None
+        and "target_policy" in train_stacked_regressor.__code__.co_varnames
+    ):
+        kwargs["target_policy"] = target_policy
     return kwargs
 
 
@@ -638,6 +753,7 @@ def train_stacked_regressor_experts(
     residual_clip_fraction: float = 0.05,
     l2: float = DEFAULT_STACKED_L2,
     sample_weight_policy: str | None = None,
+    target_policy: str | None = None,
     eval_fraction: float = 0.2,
     split_seed: str | int = "stacked_residual_v1",
     allow_landmark_residual_68: bool = False,
@@ -667,6 +783,7 @@ def train_stacked_regressor_experts(
         split_seed=split_seed,
         allow_landmark_residual_68=allow_landmark_residual_68,
         sample_weight_policy=sample_weight_policy,
+        target_policy=target_policy,
     )
 
     experts: dict[str, RuntimeStackedLandmarkRegressor] = {}
@@ -718,6 +835,7 @@ def train_stacked_regressor_experts(
         "residual_clip_fraction": float(residual_clip_fraction),
         "l2": float(l2),
         "sample_weight_policy": sample_weight_policy,
+        "target_policy": target_policy,
         "eval_fraction": float(eval_fraction),
         "split_seed": str(split_seed),
     }
@@ -752,6 +870,9 @@ __all__ = [
     "train_stacked_regressor_experts",
     "DEFAULT_STACKED_EXPERT_MIN_EXAMPLES",
     "SAMPLE_WEIGHT_POLICIES",
+    "TARGET_POLICIES",
+    "TARGET_POLICY_CLIPPED_RESIDUAL",
+    "TARGET_POLICY_FULL_RESIDUAL",
     "SAMPLE_WEIGHT_POLICY_HARD_SLICE",
     "SAMPLE_WEIGHT_POLICY_HARD_SLICE_PLUS_BASE_ERROR",
     "SAMPLE_WEIGHT_POLICY_UNIFORM",

@@ -48,6 +48,8 @@ from lib.landmarks.ensemble.stacked_regressor_training import (
     SAMPLE_WEIGHT_POLICIES,
     SAMPLE_WEIGHT_POLICY_UNIFORM,
     STACKED_REGRESSOR_ARTIFACT,
+    TARGET_POLICIES,
+    TARGET_POLICY_FULL_RESIDUAL,
     train_stacked_regressor,
     train_stacked_regressor_experts,
 )
@@ -116,6 +118,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-name", default=DEFAULT_STACKED_CANDIDATE_NAME)
     parser.add_argument("--residual-clip-fraction", type=float, default=0.05)
     parser.add_argument("--l2", type=float, default=DEFAULT_STACKED_L2)
+    parser.add_argument(
+        "--target-policy",
+        choices=tuple(sorted(TARGET_POLICIES)),
+        default=TARGET_POLICY_FULL_RESIDUAL,
+        help=(
+            "Training target policy. clipped_residual fits the correction after "
+            "runtime residual clipping, aligning training with what inference can apply."
+        ),
+    )
     parser.add_argument(
         "--expert-policy",
         choices=(EXPERT_POLICY_SINGLE, EXPERT_POLICY_RUNTIME_BUCKET),
@@ -262,6 +273,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     }
     if hasattr(args, "sample_weight_policy"):
         common_kwargs["sample_weight_policy"] = args.sample_weight_policy
+    common_kwargs["target_policy"] = args.target_policy
 
     if args.expert_policy == EXPERT_POLICY_RUNTIME_BUCKET:
         regressor, metrics = train_stacked_regressor_experts(
