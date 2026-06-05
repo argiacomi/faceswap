@@ -593,7 +593,6 @@ class RuntimeStackedLandmarkRegressor:
         """Return whether this artifact should emit a candidate for ``runtime_bucket``."""
         return runtime_bucket_supported_by_scope(runtime_bucket, self.runtime_context_scope)
 
-
     def feature_vector(self, features: T.Mapping[str, float]) -> np.ndarray:
         """Build the standardized model input row in the artifact feature order."""
         raw = np.array(

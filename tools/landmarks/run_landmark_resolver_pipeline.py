@@ -2672,7 +2672,7 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
         "learned_quality_v3": paths.canonical_v3_scorer_artifact,
         "learned_quality_v3_profile": paths.canonical_v3_profile_scorer_artifact,
     }
-    return install_production_bundle(
+    installed_path = install_production_bundle(
         setup_src=paths.best_setup,
         weights_src=paths.best_weights,
         scorer_sources={
@@ -2684,6 +2684,7 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
         source_output_root=paths.output_root,
         created_by="run_landmark_resolver_pipeline.py",
     )
+    return installed_path
 
 
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
@@ -3539,6 +3540,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--scorer-learning-rate", type=float, default=0.05)
     parser.add_argument("--scorer-iterations", type=int, default=150)
     parser.add_argument("--scorer-num-leaves", type=int, default=31)
+    parser.add_argument(
+        "--scorer-context-workers",
+        type=int,
+        default=0,
+        help="Worker threads for scorer_training context loading. 0/1 keeps serial loading.",
+    )
     parser.add_argument(
         "--prediction-cache-mode",
         choices=("run-models", "fixtures"),

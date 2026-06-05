@@ -48,6 +48,7 @@ from lib.landmarks.ensemble.scorer_targets import (
     tagged_quality_rows,
     untag_quality_rows,
 )
+from lib.landmarks.ensemble.stacked_regressor import RuntimeStackedLandmarkRegressor
 from lib.landmarks.pipeline_conventions import (
     SOURCE_PRODUCTION_VALIDATED,
     write_json,
@@ -802,6 +803,9 @@ def train_runtime_resolver_scorer_suite(
     profile39_eval_fraction: float = 0.2,
     profile39_query_weight: float = 1.0,
     mixed_profile_split_seed: str = "mixed_profile_v1",
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None = None,
+    stacked_regressor_max_residual: float = 0.0,
+    context_workers: int = 0,
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Train the active v3 scorer from one canonical row split.
@@ -831,6 +835,9 @@ def train_runtime_resolver_scorer_suite(
         allow_image_backfill=allow_image_backfill,
         gt_hard_resolver_metadata=gt_hard_resolver_metadata,
         require_gt_hard_metadata=True,
+        stacked_regressor=stacked_regressor,
+        stacked_regressor_max_residual=stacked_regressor_max_residual,
+        context_workers=context_workers,
         progress=progress,
     )
     tagged_rows = tagged_quality_rows(contexts, high_gap_threshold=high_gap_threshold)
@@ -867,6 +874,14 @@ def train_runtime_resolver_scorer_suite(
             "eval_fraction": eval_fraction,
             "split_seed": split_seed,
             "allow_image_backfill": allow_image_backfill,
+            "stacked_regressor": ""
+            if stacked_regressor is None
+            else str(getattr(stacked_regressor, "candidate_name", "stacked_residual")),
+            "stacked_regressor_runtime_context_scope": ""
+            if stacked_regressor is None
+            else str(getattr(stacked_regressor, "runtime_context_scope", "")),
+            "stacked_regressor_max_residual": stacked_regressor_max_residual,
+            "context_workers": context_workers,
         },
     )
 

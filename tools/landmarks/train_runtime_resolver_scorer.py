@@ -36,6 +36,7 @@ from lib.landmarks.ensemble.scorer_training import (
     train_runtime_resolver_scorer_suite,
     train_runtime_resolver_scorer_v3,
 )
+from lib.landmarks.ensemble.stacked_regressor import load_stacked_regressor
 from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("train_runtime_resolver_scorer")
@@ -92,6 +93,28 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-leaves", type=int, default=31)
     parser.add_argument("--eval-fraction", type=float, default=0.20)
     parser.add_argument("--split-seed", type=int, default=42)
+    parser.add_argument(
+        "--context-workers",
+        type=int,
+        default=0,
+        help="Worker threads for scorer context loading. 0/1 keeps serial loading.",
+    )
+    parser.add_argument(
+        "--use-stacked-regressor",
+        action="store_true",
+        help="Include a stacked_residual candidate in scorer rows using --stacked-regressor.",
+    )
+    parser.add_argument(
+        "--stacked-regressor",
+        type=Path,
+        help="Path to stacked_regressor.json used to append stacked_residual scorer rows.",
+    )
+    parser.add_argument(
+        "--stacked-regressor-max-residual",
+        type=float,
+        default=0.0,
+        help="Runtime safety cap for stacked residual generation. 0 defers to the artifact.",
+    )
     parser.add_argument(
         "--allow-image-backfill",
         action="store_true",
@@ -164,6 +187,11 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     configure_tool_logging(args.log_level)
     weights = load_weights(args.weights)
     candidates = parse_candidates(args.candidates, weights)
+    stacked_regressor = None
+    if args.use_stacked_regressor or args.stacked_regressor is not None:
+        if args.stacked_regressor is None:
+            parser.error("--stacked-regressor is required with --use-stacked-regressor")
+        stacked_regressor = load_stacked_regressor(args.stacked_regressor)
     metrics = train_runtime_resolver_scorer_suite(
         gt_manifest=args.gt_manifest,
         gt_cache_dir=args.gt_cache_dir,
@@ -188,6 +216,9 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         profile39_eval_fraction=args.profile39_eval_fraction,
         profile39_query_weight=args.profile39_query_weight,
         mixed_profile_split_seed=args.mixed_profile_split_seed,
+        stacked_regressor=stacked_regressor,
+        stacked_regressor_max_residual=args.stacked_regressor_max_residual,
+        context_workers=args.context_workers,
         progress=_context_progress,
     )
     logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])

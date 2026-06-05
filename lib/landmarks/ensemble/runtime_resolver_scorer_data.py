@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import functools
 import heapq
 import json
 import logging
 import math
+import threading
 import typing as T
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +56,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     _metric_for_candidate,
     _populate_consensus_geometry,
     _shape_reasons,
+    _stacked_regressor_candidate,
     append_bucket_weight_candidates,
     append_region_weight_candidate,
     build_candidates,
@@ -67,6 +70,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_NME_FAILURE_THRESHOLD,
     DEFAULT_REGRET_NORMALIZER,
 )
+from lib.landmarks.ensemble.stacked_regressor import RuntimeStackedLandmarkRegressor
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_optional_weight_blocks, load_weights
 from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
@@ -901,6 +905,8 @@ def build_sample_context(
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None = None,
+    stacked_regressor_max_residual: float = 0.0,
 ) -> SampleCandidateContext:
     """Build candidates, diagnostics, labels, and current-policy choice for one sample."""
     requested_adaptive, single_models = _requested_candidate_sets(requested_candidates)
@@ -1078,6 +1084,31 @@ def build_sample_context(
         truth_landmarks=truth,
         visibility=sample.visibility,
     )
+
+    if stacked_regressor is not None:
+        candidate_list = list(candidates)
+        stacked_config = replace(
+            config,
+            use_stacked_regressor=True,
+            stacked_regressor_max_residual=stacked_regressor_max_residual,
+        )
+        stacked_regressor_result = _stacked_regressor_candidate(
+            candidate_list,
+            metrics=metrics,
+            config=stacked_config,
+            stacked_regressor=stacked_regressor,
+            predictions=predictions,
+            runtime_bucket=bucket_result.bucket,
+            reference_bbox=reference_bbox,
+            roll_estimate=roll_estimate,
+            yaw_estimate=yaw_estimate,
+            candidate_yaw_disagreement=bucket_result.features.get("candidate_yaw_disagreement"),
+            max_disagreement_px=max_disagreement_px,
+        )
+        if stacked_regressor_result is not None:
+            _stacked_metadata, stacked_feature_values, stacked_name = stacked_regressor_result
+            candidates = tuple(candidate_list)
+            candidate_extra_features.setdefault(stacked_name, {}).update(stacked_feature_values)
 
     nme_by_candidate: dict[str, float] = {}
     failure_by_candidate: dict[str, bool] = {}
@@ -1312,8 +1343,8 @@ def _hard_negative_weight_from_sample(sample: LandmarkSample) -> float:
     try:
         weight = float(metadata.get("hard_negative_weight", DEFAULT_HARD_NEGATIVE_WEIGHT))
     except (TypeError, ValueError):
-        return DEFAULT_HARD_NEGATIVE_WEIGHT
-    return clamp_hard_negative_weight(weight)
+        return float(DEFAULT_HARD_NEGATIVE_WEIGHT)
+    return float(clamp_hard_negative_weight(weight))
 
 
 def _proxy_text_for_downstream_cost(
@@ -1662,6 +1693,9 @@ def iter_contexts(
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    context_workers: int = 0,
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None = None,
+    stacked_regressor_max_residual: float = 0.0,
     progress: ContextProgress | None = None,
 ) -> T.Iterator[SampleCandidateContext]:
     """Yield sample contexts for one manifest/cache pair without retaining all of them."""
@@ -1670,22 +1704,30 @@ def iter_contexts(
     explicit_candidates = bool(candidates)
     include_adaptive_candidates = not explicit_candidates
     requested = tuple(candidates or parse_candidates(None, weights))
-    cache = DiskPredictionCache(cache_dir)
     samples = filter_canonical_68_samples(
         load_manifest(manifest_path),
         context="scorer dataset",
         progress=progress,
     )
-    iterator = (
-        progress(samples, f"Load contexts [{source or manifest_path.stem}]")
-        if progress is not None
-        else samples
-    )
-    for sample in iterator:
+
+    worker_count = max(int(context_workers or 0), 0)
+    serial_cache = DiskPredictionCache(cache_dir)
+    thread_state = threading.local()
+
+    def _cache_for_worker() -> DiskPredictionCache:
+        if worker_count <= 1:
+            return serial_cache
+        cache = getattr(thread_state, "cache", None)
+        if cache is None:
+            cache = DiskPredictionCache(cache_dir)
+            thread_state.cache = cache
+        return T.cast(DiskPredictionCache, cache)
+
+    def _build_one(sample: LandmarkSample) -> SampleCandidateContext | None:
         try:
-            yield build_sample_context(
+            return build_sample_context(
                 sample,
-                cache=cache,
+                cache=_cache_for_worker(),
                 requested_candidates=requested,
                 weights=weights,
                 source=source,
@@ -1698,9 +1740,34 @@ def iter_contexts(
                 allow_image_backfill=allow_image_backfill,
                 image_backfill_crop_scale=image_backfill_crop_scale,
                 image_backfill_crop_size=image_backfill_crop_size,
+                stacked_regressor=stacked_regressor,
+                stacked_regressor_max_residual=stacked_regressor_max_residual,
             )
         except (FileNotFoundError, ValueError) as err:
             logger.warning("skipping sample %s: %s", sample.sample_id, err)
+            return None
+
+    iterator = (
+        progress(samples, f"Load contexts [{source or manifest_path.stem}]")
+        if progress is not None
+        else samples
+    )
+    if worker_count > 1:
+        logger.info(
+            "Loading scorer contexts with %d worker threads from %s",
+            worker_count,
+            manifest_path,
+        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+            for context in executor.map(_build_one, iterator):
+                if context is not None:
+                    yield context
+        return
+
+    for sample in iterator:
+        context = _build_one(sample)
+        if context is not None:
+            yield context
 
 
 def load_contexts(
@@ -1716,6 +1783,9 @@ def load_contexts(
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    context_workers: int = 0,
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None = None,
+    stacked_regressor_max_residual: float = 0.0,
     progress: ContextProgress | None = None,
 ) -> list[SampleCandidateContext]:
     """Load all sample contexts for one manifest/cache pair."""
@@ -1732,6 +1802,8 @@ def load_contexts(
             allow_image_backfill=allow_image_backfill,
             image_backfill_crop_scale=image_backfill_crop_scale,
             image_backfill_crop_size=image_backfill_crop_size,
+            stacked_regressor=stacked_regressor,
+            stacked_regressor_max_residual=stacked_regressor_max_residual,
             progress=progress,
         )
     )

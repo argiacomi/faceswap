@@ -18,6 +18,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     SampleCandidateContext,
     load_contexts,
 )
+from lib.landmarks.ensemble.stacked_regressor import RuntimeStackedLandmarkRegressor
 from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
@@ -70,6 +71,9 @@ def load_scorer_contexts(
     allow_image_backfill: bool = False,
     gt_hard_resolver_metadata: Path | None = None,
     require_gt_hard_metadata: bool = True,
+    stacked_regressor: RuntimeStackedLandmarkRegressor | None = None,
+    stacked_regressor_max_residual: float = 0.0,
+    context_workers: int = 0,
     progress: T.Callable[[T.Sequence[T.Any], str], T.Iterable[T.Any]] | None = None,
 ) -> list[SampleCandidateContext]:
     """Load scorer contexts across GT-hard and production sources."""
@@ -114,6 +118,9 @@ def load_scorer_contexts(
             failure_threshold=failure_threshold,
             outlier_threshold=outlier_threshold,
             allow_image_backfill=allow_image_backfill,
+            stacked_regressor=stacked_regressor,
+            stacked_regressor_max_residual=stacked_regressor_max_residual,
+            context_workers=context_workers,
             progress=progress,
         )
         if context_source != source:

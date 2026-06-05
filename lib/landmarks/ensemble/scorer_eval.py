@@ -54,7 +54,7 @@ from lib.landmarks.pipeline_conventions import (
     SOURCE_PRODUCTION_VALIDATED,
 )
 
-RuntimeResolverLearnedScorerLike = RuntimeResolverLearnedScorer
+RuntimeResolverLearnedScorerLike: T.TypeAlias = RuntimeResolverLearnedScorer
 
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
@@ -293,10 +293,13 @@ def best_single(
     contexts: T.Sequence[SampleCandidateContext],
     candidates: T.Sequence[str],
 ) -> tuple[str, dict[str, float]]:
+    if not contexts:
+        raise ValueError("best-single baseline requires at least one context")
     single_names = [
         name
         for name in candidates
-        if name in contexts[0].nme_by_candidate and not is_fusion_candidate(name)
+        if not is_fusion_candidate(name)
+        and all(name in context.nme_by_candidate for context in contexts)
     ]
     if not single_names:
         raise ValueError("best-single baseline requires at least one non-fusion model candidate")
