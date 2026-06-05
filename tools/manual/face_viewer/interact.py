@@ -516,6 +516,7 @@ class ActiveFrame:
             self._canvas.itemconfig(image_id, image=tk_face.photo)
             is_selected = (self.frame_index, face_idx) in self._globals.selected_faces
             self._show_box(box_id, coords, is_selected)
+            mesh_ids = self._objects.ensure_mesh_compatible(mesh_ids, det_face)
             self._show_mesh(mesh_ids, face_idx, det_face, top_left)
         self._last_execution["size"] = self._viewport.face_size
 
@@ -597,10 +598,14 @@ class ActiveFrame:
         for key, kwarg in kwargs.items():
             if key not in mesh_ids:
                 continue
-            for idx, mesh_id in enumerate(mesh_ids[key]):
-                self._canvas.coords(mesh_id, *landmarks[key][idx].flatten())
+            landmark_groups = landmarks[key]
+            for coords, mesh_id in zip(landmark_groups, mesh_ids[key], strict=False):
+                self._canvas.coords(mesh_id, *coords.flatten())
                 self._canvas.itemconfig(mesh_id, state=state, **kwarg)
                 self._canvas.addtag_withtag(f"active_mesh_{key}", mesh_id)
+
+            for mesh_id in mesh_ids[key][len(landmark_groups) :]:
+                self._canvas.itemconfig(mesh_id, state="hidden")
 
 
 __all__ = get_module_objects(__name__)

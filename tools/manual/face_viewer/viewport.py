@@ -267,6 +267,7 @@ class Viewport:
                             self._canvas.itemconfig(mesh_id, state="hidden")
                     continue
 
+                mesh_ids = self._objects.ensure_mesh_compatible(mesh_ids, face)
                 tk_face = self.get_tk_face(frame_idx, face_idx, face)
                 self._canvas.itemconfig(image_id, image=tk_face.photo)
 
@@ -663,6 +664,43 @@ class Recycler:
             logger.trace("Created new image: %s", retval)  # type:ignore[attr-defined]
         return retval
 
+    @staticmethod
+    def _mesh_counts_for_face(
+        face: DetectedFace,
+    ) -> dict[T.Literal["polygon", "line"], int]:
+        """Return expected mesh object counts for the face's landmark schema."""
+        counts: dict[T.Literal["polygon", "line"], int] = {"polygon": 0, "line": 0}
+        mesh_parts = LANDMARK_PARTS[LandmarkType.from_shape(face.landmarks_xy.shape)]
+        for _, _, fill in mesh_parts.values():
+            asset_type: T.Literal["polygon", "line"] = "polygon" if fill else "line"
+            counts[asset_type] += 1
+        return counts
+
+    def ensure_mesh_compatible(
+        self,
+        mesh_ids: dict[T.Literal["polygon", "line"], list[int]],
+        face: DetectedFace,
+    ) -> dict[T.Literal["polygon", "line"], list[int]]:
+        """Regenerate stale mesh canvas objects when landmark schemas differ."""
+        expected = self._mesh_counts_for_face(face)
+        current: dict[T.Literal["polygon", "line"], int] = {
+            "polygon": len(mesh_ids.get("polygon", [])),
+            "line": len(mesh_ids.get("line", [])),
+        }
+        if current == expected:
+            return mesh_ids
+
+        stale_ids = [asset_id for ids in mesh_ids.values() for asset_id in ids]
+        for asset_id in stale_ids:
+            self._canvas.itemconfig(asset_id, state="hidden")
+        if stale_ids:
+            self.recycle_assets(stale_ids)
+
+        replacement = self.get_mesh(face)
+        mesh_ids.clear()
+        mesh_ids.update(replacement)
+        return mesh_ids
+
     def get_mesh(self, face: DetectedFace) -> dict[T.Literal["polygon", "line"], list[int]]:
         """Get the mesh annotation for the landmarks. This is made up of a series of polygons
         or lines, depending on which part of the face is being annotated. Creates a new series of
@@ -772,6 +810,14 @@ class VisibleObjects:
         objects required to build a face's mesh annotation for the face at the corresponding
         location."""
         return self._meshes
+
+    def ensure_mesh_compatible(
+        self,
+        mesh_ids: dict[T.Literal["polygon", "line"], list[int]],
+        face: DetectedFace,
+    ) -> dict[T.Literal["polygon", "line"], list[int]]:
+        """Ensure a viewport cell's mesh layout matches the current face."""
+        return self._recycler.ensure_mesh_compatible(mesh_ids, face)
 
     @property
     def _top_left(self) -> np.ndarray:
