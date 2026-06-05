@@ -209,6 +209,8 @@ class PipelinePaths:
     progress_log: Path = field(init=False)
     summary_json: Path = field(init=False)
     summary_md: Path = field(init=False)
+    stacked_context_dir: Path = field(init=False)
+    stacked_context_cache: Path = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "stable_root", self.output_root / "current")
@@ -363,6 +365,12 @@ class PipelinePaths:
         object.__setattr__(self, "progress_log", self.output_root / PROGRESS_LOG_FILENAME)
         object.__setattr__(self, "summary_json", self.output_root / "pipeline_summary.json")
         object.__setattr__(self, "summary_md", self.output_root / "pipeline_summary.md")
+        object.__setattr__(self, "stacked_context_dir", self.output_root / "stacked_contexts")
+        object.__setattr__(
+            self,
+            "stacked_context_cache",
+            self.stacked_context_dir / "contexts.pkl",
+        )
 
 
 @dataclass(frozen=True)
@@ -3222,6 +3230,87 @@ def _progress_enabled(args: argparse.Namespace) -> bool | None:
     return None
 
 
+def _command_build_stacked_contexts(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    argv = [
+        args.python_executable,
+        _script("build_stacked_regressor_contexts.py"),
+        "--gt-manifest",
+        str(paths.hard_manifest),
+        "--gt-cache-dir",
+        str(paths.run_cache),
+        "--production-manifest",
+        str(paths.production_manifest),
+        "--production-cache-dir",
+        str(paths.production_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--output",
+        str(paths.stacked_context_cache),
+        "--candidates",
+        args.candidates,
+        "--context-workers",
+        str(args.stacked_context_workers),
+        "--log-level",
+        str(args.log_level),
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    return argv
+
+
+def _build_stacked_contexts_after_pipeline(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> StageResult:
+    stage = "build_stacked_regressor_contexts"
+    outputs = [str(paths.stacked_context_cache)]
+    started = time.time()
+    command = _command_build_stacked_contexts(args, paths)
+    try:
+        if args.dry_run:
+            return StageResult(
+                stage,
+                "planned",
+                command=command,
+                outputs=outputs,
+                notes=["would prebuild stacked-regressor context cache"],
+            )
+        if (
+            args.resume
+            and paths.stacked_context_cache.is_file()
+            and not args.rebuild_stacked_contexts
+        ):
+            return StageResult(
+                stage,
+                "skipped",
+                command=command,
+                outputs=outputs,
+                validated_outputs=outputs,
+                notes=["resume: stacked context cache already exists"],
+            )
+        _run_command(command)
+        _require(paths.stacked_context_cache, "stacked regressor context cache")
+        return StageResult(
+            stage,
+            "ok",
+            duration_seconds=round(time.time() - started, 3),
+            command=command,
+            outputs=outputs,
+            validated_outputs=outputs,
+            notes=["prebuilt stacked-regressor context cache"],
+        )
+    except Exception as err:  # noqa: BLE001
+        logger.exception("Stacked context prebuild failed")
+        return StageResult(
+            stage,
+            "failed",
+            duration_seconds=round(time.time() - started, 3),
+            command=command,
+            outputs=outputs,
+            error=str(err),
+        )
+
+
 def run_pipeline(args: argparse.Namespace) -> dict[str, T.Any]:
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     paths.output_root.mkdir(parents=True, exist_ok=True)
@@ -3246,6 +3335,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, T.Any]:
         )
         if result.status == "failed":
             break
+    if getattr(args, "build_stacked_regressor_contexts", False):
+        result = _build_stacked_contexts_after_pipeline(args, paths)
+        results.append(result)
+        if result.status == "failed":
+            raise RuntimeError(f"pipeline failed at {result.name}: {result.error}")
+
     summary = _summary_payload(args, paths, results)
     write_json(paths.summary_json, summary)
     if getattr(args, "write_summary_md", False):
@@ -3290,6 +3385,25 @@ def _parser() -> argparse.ArgumentParser:
         "--write-summary-md",
         action="store_true",
         help="Write the optional human-readable pipeline_summary.md alongside pipeline_summary.json.",
+    )
+    parser.add_argument(
+        "--build-stacked-regressor-contexts",
+        action="store_true",
+        help=(
+            "After the selected pipeline stages complete, prebuild "
+            "resolver_pipeline/stacked_contexts/contexts.pkl for fast stacked-regressor sweeps."
+        ),
+    )
+    parser.add_argument(
+        "--rebuild-stacked-contexts",
+        action="store_true",
+        help="Rebuild stacked_contexts/contexts.pkl even when --resume finds it already exists.",
+    )
+    parser.add_argument(
+        "--stacked-context-workers",
+        type=int,
+        default=0,
+        help="Parallel workers for --build-stacked-regressor-contexts. 0/1 means serial.",
     )
     parser.add_argument(
         "--progress", action="store_true", help="Force terminal progress bar output."

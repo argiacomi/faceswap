@@ -51,6 +51,20 @@ DEFAULT_STACKED_CANDIDATE_NAME = "stacked_residual"
 #: Only model payload the runtime loader knows how to evaluate.
 MODEL_TYPE_NUMPY_LINEAR = "numpy_linear_residual_v1"
 
+#: Expert routing policies. ``single`` preserves the original one-model artifact.
+EXPERT_POLICY_SINGLE = "single"
+EXPERT_POLICY_RUNTIME_BUCKET = "runtime_bucket"
+EXPERT_POLICIES: frozenset[str] = frozenset(
+    {
+        EXPERT_POLICY_SINGLE,
+        EXPERT_POLICY_RUNTIME_BUCKET,
+    }
+)
+
+#: Default expert key for runtime-bucket artifacts. Frontal/intermediate/unknown
+#: buckets route here unless a more specific hard-pose expert is available.
+DEFAULT_STACKED_EXPERT_KEY = "frontal"
+
 #: Supported correction parameterizations.
 OUTPUT_MODE_GLOBAL_TRANSFORM = "global_transform"
 OUTPUT_MODE_REGION_RESIDUAL = "region_residual"
@@ -262,6 +276,9 @@ class RuntimeStackedLandmarkRegressor:
     runtime_feature_contract_version: str = RUNTIME_FEATURE_CONTRACT_VERSION
     training_metadata: dict[str, T.Any] = field(default_factory=dict)
     source_path: str = ""
+    expert_policy: str = EXPERT_POLICY_SINGLE
+    default_expert: str = DEFAULT_STACKED_EXPERT_KEY
+    experts: T.Mapping[str, RuntimeStackedLandmarkRegressor] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.model_type != MODEL_TYPE_NUMPY_LINEAR:
@@ -316,6 +333,35 @@ class RuntimeStackedLandmarkRegressor:
             )
         if self.residual_clip_fraction < 0:
             raise StackedRegressorInvalid("residual_clip_fraction must be non-negative")
+        if self.expert_policy not in EXPERT_POLICIES:
+            raise StackedRegressorInvalid(
+                f"unsupported stacked regressor expert_policy {self.expert_policy!r}; "
+                f"expected one of {sorted(EXPERT_POLICIES)}"
+            )
+        if self.experts:
+            if self.expert_policy != EXPERT_POLICY_RUNTIME_BUCKET:
+                raise StackedRegressorInvalid(
+                    "stacked regressor artifact has experts but expert_policy is not runtime_bucket"
+                )
+            if self.default_expert not in self.experts:
+                raise StackedRegressorInvalid(
+                    f"default_expert {self.default_expert!r} is not present in experts"
+                )
+            for key, expert in self.experts.items():
+                if expert.experts:
+                    raise StackedRegressorInvalid(
+                        f"nested stacked regressor expert {key!r} unexpectedly has experts"
+                    )
+                if expert.output_mode != self.output_mode:
+                    raise StackedRegressorInvalid(
+                        f"expert {key!r} output_mode {expert.output_mode!r} does not "
+                        f"match root {self.output_mode!r}"
+                    )
+                if expert.output_dim != self.output_dim:
+                    raise StackedRegressorInvalid(
+                        f"expert {key!r} output_dim {expert.output_dim} does not "
+                        f"match root {self.output_dim}"
+                    )
 
     @classmethod
     def from_payload(
@@ -327,6 +373,54 @@ class RuntimeStackedLandmarkRegressor:
         """Build a regressor from a parsed artifact payload, validating the contract."""
         if not isinstance(payload, T.Mapping):
             raise StackedRegressorInvalid("stacked regressor artifact must be a JSON object")
+        experts_payload = payload.get("experts")
+        if isinstance(experts_payload, T.Mapping) and experts_payload:
+            experts: dict[str, RuntimeStackedLandmarkRegressor] = {
+                str(key): cls.from_payload(
+                    T.cast(T.Mapping[str, T.Any], value),
+                    source_path=f"{source_path}#{key}",
+                )
+                for key, value in experts_payload.items()
+            }
+            default_key = str(payload.get("default_expert", DEFAULT_STACKED_EXPERT_KEY))
+            if default_key not in experts:
+                default_key = next(iter(experts))
+            default_model = experts[default_key]
+            training_metadata = payload.get("training_metadata", {})
+            return cls(
+                candidate_name=str(payload.get("candidate_name", default_model.candidate_name)),
+                base_candidate_policy=str(
+                    payload.get("base_candidate_policy", default_model.base_candidate_policy)
+                ),
+                feature_names=default_model.feature_names,
+                output_mode=default_model.output_mode,
+                output_dim=default_model.output_dim,
+                residual_clip_fraction=float(
+                    payload.get("residual_clip_fraction", default_model.residual_clip_fraction)
+                ),
+                coef=default_model.coef,
+                intercept=default_model.intercept,
+                feature_mean=default_model.feature_mean,
+                feature_std=default_model.feature_std,
+                model_type=default_model.model_type,
+                contract_version=str(
+                    payload.get("contract_version", STACKED_REGRESSOR_CONTRACT_VERSION)
+                ),
+                runtime_feature_contract_version=str(
+                    payload.get(
+                        "runtime_feature_contract_version",
+                        default_model.runtime_feature_contract_version,
+                    )
+                ),
+                training_metadata=dict(training_metadata)
+                if isinstance(training_metadata, T.Mapping)
+                else {},
+                source_path=source_path,
+                expert_policy=str(payload.get("expert_policy", EXPERT_POLICY_RUNTIME_BUCKET)),
+                default_expert=default_key,
+                experts=experts,
+            )
+
         feature_names = tuple(str(item) for item in payload.get("feature_names", ()))
         output_mode = str(payload.get("output_mode", ""))
         output_dim = int(payload.get("output_dim", output_dim_for_mode(output_mode)))
@@ -376,6 +470,23 @@ class RuntimeStackedLandmarkRegressor:
 
     def to_payload(self) -> dict[str, T.Any]:
         """Return a JSON-serializable artifact payload."""
+        if self.experts:
+            return {
+                "candidate_name": self.candidate_name,
+                "base_candidate_policy": self.base_candidate_policy,
+                "output_mode": self.output_mode,
+                "output_dim": self.output_dim,
+                "residual_clip_fraction": self.residual_clip_fraction,
+                "model_type": self.model_type,
+                "contract_version": self.contract_version,
+                "runtime_feature_contract_version": self.runtime_feature_contract_version,
+                "expert_policy": self.expert_policy,
+                "default_expert": self.default_expert,
+                "experts": {
+                    key: expert.to_payload() for key, expert in sorted(self.experts.items())
+                },
+                "training_metadata": dict(self.training_metadata),
+            }
         return {
             "candidate_name": self.candidate_name,
             "base_candidate_policy": self.base_candidate_policy,
@@ -393,6 +504,32 @@ class RuntimeStackedLandmarkRegressor:
             "training_metadata": dict(self.training_metadata),
         }
 
+    def expert_for_features(
+        self,
+        features: T.Mapping[str, float],
+    ) -> RuntimeStackedLandmarkRegressor:
+        """Return the expert selected by runtime-visible feature values."""
+        if not self.experts:
+            return self
+        runtime_bucket = _runtime_bucket_from_features(features)
+        key = _select_available_expert_key(
+            runtime_bucket,
+            available=set(self.experts),
+            default_expert=self.default_expert,
+        )
+        return self.experts[key]
+
+    def expert_key_for_features(self, features: T.Mapping[str, float]) -> str:
+        """Return the selected expert key for metadata/debugging."""
+        if not self.experts:
+            return ""
+        runtime_bucket = _runtime_bucket_from_features(features)
+        return _select_available_expert_key(
+            runtime_bucket,
+            available=set(self.experts),
+            default_expert=self.default_expert,
+        )
+
     def feature_vector(self, features: T.Mapping[str, float]) -> np.ndarray:
         """Build the standardized model input row in the artifact feature order."""
         raw = np.array(
@@ -404,6 +541,9 @@ class RuntimeStackedLandmarkRegressor:
 
     def predict(self, features: T.Mapping[str, float]) -> np.ndarray:
         """Return the raw regressor output vector (normalized units)."""
+        expert = self.expert_for_features(features)
+        if expert is not self:
+            return expert.predict(features)
         standardized = self.feature_vector(features)
         output: np.ndarray = (standardized @ self.coef) + self.intercept
         return output
@@ -434,6 +574,52 @@ def _feature_value(value: T.Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return number if math.isfinite(number) else default
+
+
+def runtime_bucket_expert_key(runtime_bucket: str) -> str:
+    """Return the deterministic expert key for a runtime bucket.
+
+    This is not a gate. Every sample still emits exactly one stacked residual
+    candidate when stacked regression is enabled. The artifact just routes to a
+    model trained for the bucket family instead of forcing one global fit to cover
+    incompatible pose regimes.
+    """
+    bucket = str(runtime_bucket or "").lower()
+    if "profile_left" in bucket:
+        return "profile_left"
+    if "profile_right" in bucket:
+        return "profile_right"
+    if "large_yaw_left" in bucket:
+        return "large_yaw_left"
+    if "large_yaw_right" in bucket:
+        return "large_yaw_right"
+    return DEFAULT_STACKED_EXPERT_KEY
+
+
+def _runtime_bucket_from_features(features: T.Mapping[str, float]) -> str:
+    for name, value in features.items():
+        key = str(name)
+        if not key.startswith("runtime_bucket="):
+            continue
+        if _feature_value(value) > 0.5:
+            return key.split("=", 1)[1]
+    return ""
+
+
+def _select_available_expert_key(
+    runtime_bucket: str,
+    *,
+    available: T.AbstractSet[str],
+    default_expert: str,
+) -> str:
+    key = runtime_bucket_expert_key(runtime_bucket)
+    if key in available:
+        return key
+    if runtime_bucket in available:
+        return runtime_bucket
+    if default_expert in available:
+        return default_expert
+    return next(iter(available))
 
 
 @lru_cache(maxsize=8)
@@ -468,6 +654,10 @@ def write_stacked_regressor(
 
 
 __all__ = [
+    "DEFAULT_STACKED_EXPERT_KEY",
+    "EXPERT_POLICIES",
+    "EXPERT_POLICY_RUNTIME_BUCKET",
+    "EXPERT_POLICY_SINGLE",
     "DEFAULT_STACKED_CANDIDATE_NAME",
     "GLOBAL_TRANSFORM_OUTPUT_DIM",
     "LANDMARK_RESIDUAL_68_OUTPUT_DIM",
@@ -488,5 +678,6 @@ __all__ = [
     "apply_residual",
     "load_stacked_regressor",
     "output_dim_for_mode",
+    "runtime_bucket_expert_key",
     "write_stacked_regressor",
 ]

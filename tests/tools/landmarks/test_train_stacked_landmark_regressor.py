@@ -19,6 +19,7 @@ from lib.landmarks.ensemble.stacked_regressor_evaluation import (
     evaluate_stacked_candidate,
 )
 from lib.landmarks.ensemble.stacked_regressor_training import (
+    SAMPLE_WEIGHT_POLICY_HARD_SLICE,
     StackedRegressorTrainingError,
     StackedTrainingExample,
     stacked_feature_order,
@@ -89,6 +90,28 @@ def test_train_reduces_eval_error_below_baseline() -> None:
     assert metrics["eval_mse"] <= metrics["baseline_eval_mse"]
     assert regressor.output_mode == OUTPUT_MODE_GLOBAL_TRANSFORM
     assert regressor.training_metadata["n_examples"] == 48
+
+
+def test_hard_slice_sample_weight_policy_records_non_uniform_weights() -> None:
+    frontal = _make_contexts(24, bucket="frontal", seed=1)
+    profile = _make_contexts(24, bucket="profile_left", seed=2)
+    for index, ctx in enumerate(frontal):
+        ctx.sample_id = f"frontal_{index}"
+    for index, ctx in enumerate(profile):
+        ctx.sample_id = f"profile_{index}"
+
+    _, metrics = train_stacked_regressor(
+        frontal + profile,
+        output_mode=OUTPUT_MODE_GLOBAL_TRANSFORM,
+        sample_weight_policy=SAMPLE_WEIGHT_POLICY_HARD_SLICE,
+        eval_fraction=0.25,
+    )
+
+    assert metrics["sample_weight_policy"] == SAMPLE_WEIGHT_POLICY_HARD_SLICE
+    assert metrics["train_sample_weight_min"] < 1.0
+    assert metrics["train_sample_weight_max"] > 1.0
+    assert metrics["train_weighted_mse"] >= 0.0
+    assert metrics["eval_weighted_mse"] >= 0.0
 
 
 def test_trained_candidate_improves_nme_and_passes_gates() -> None:

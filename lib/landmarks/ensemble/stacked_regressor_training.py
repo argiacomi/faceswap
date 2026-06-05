@@ -34,6 +34,8 @@ from lib.landmarks.ensemble.runtime_features import (
 )
 from lib.landmarks.ensemble.stacked_regressor import (
     DEFAULT_STACKED_CANDIDATE_NAME,
+    DEFAULT_STACKED_EXPERT_KEY,
+    EXPERT_POLICY_RUNTIME_BUCKET,
     OUTPUT_MODE_GLOBAL_TRANSFORM,
     OUTPUT_MODE_LANDMARK_RESIDUAL_68,
     OUTPUT_MODE_REGION_RESIDUAL,
@@ -42,6 +44,7 @@ from lib.landmarks.ensemble.stacked_regressor import (
     RuntimeStackedLandmarkRegressor,
     StackedRegressorError,
     output_dim_for_mode,
+    runtime_bucket_expert_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +55,20 @@ STACKED_REGRESSOR_ARTIFACT = "stacked_regressor.json"
 
 #: Default L2 regularization for the standardized linear residual model.
 DEFAULT_STACKED_L2 = 1.0
+
+#: Minimum examples required to train a non-default runtime-bucket expert.
+DEFAULT_STACKED_EXPERT_MIN_EXAMPLES = 128
+
+SAMPLE_WEIGHT_POLICY_UNIFORM = "uniform"
+SAMPLE_WEIGHT_POLICY_HARD_SLICE = "hard_slice"
+SAMPLE_WEIGHT_POLICY_HARD_SLICE_PLUS_BASE_ERROR = "hard_slice_plus_base_error"
+SAMPLE_WEIGHT_POLICIES: frozenset[str] = frozenset(
+    {
+        SAMPLE_WEIGHT_POLICY_UNIFORM,
+        SAMPLE_WEIGHT_POLICY_HARD_SLICE,
+        SAMPLE_WEIGHT_POLICY_HARD_SLICE_PLUS_BASE_ERROR,
+    }
+)
 
 #: log-scale is clamped both at fit and apply time so a degenerate sample can't
 #: produce an exploding similarity scale.
@@ -70,6 +87,8 @@ class StackedTrainingExample:
     base_candidate: str
     features: dict[str, float]
     target: np.ndarray
+    runtime_bucket: str = ""
+    sample_weight: float = 1.0
 
 
 def _base_extent_diagonal(landmarks: np.ndarray) -> float:
@@ -77,6 +96,68 @@ def _base_extent_diagonal(landmarks: np.ndarray) -> float:
     maxs = landmarks.max(axis=0)
     diag = float(math.hypot(float(maxs[0] - mins[0]), float(maxs[1] - mins[1])))
     return diag if diag > 1e-6 else 1.0
+
+
+def _bucket_sample_weight(bucket: str) -> float:
+    """Return a conservative fixed weight for a runtime bucket.
+
+    The goal is objective alignment, not gating. Hard slices get more influence
+    during fitting because uniform residual MSE was dominated by common/easy
+    samples while profile and large-yaw stayed net-negative by NME.
+    """
+    name = (bucket or "").lower()
+    if "profile" in name:
+        return 3.0
+    if "large_yaw" in name or "yaw" in name:
+        return 2.0
+    if "roll" in name:
+        return 2.0
+    if "intermediate" in name:
+        return 0.5
+    if name in {"frontal", "no_pose", ""}:
+        return 0.25
+    return 1.0
+
+
+def _base_nme_for_weight(base: np.ndarray, gt: np.ndarray, normalizer: T.Any) -> float | None:
+    try:
+        norm = float(normalizer)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(norm) or norm <= 0:
+        return None
+    distances = np.linalg.norm(base - gt, axis=1)
+    return float(np.mean(distances) / norm)
+
+
+def sample_weight_for_context(
+    context: ContextLike,
+    *,
+    policy: str,
+    base_landmarks: np.ndarray,
+    gt: np.ndarray,
+) -> float:
+    """Return a positive sample weight for the requested training policy."""
+    if policy == SAMPLE_WEIGHT_POLICY_UNIFORM:
+        return 1.0
+    if policy not in SAMPLE_WEIGHT_POLICIES:
+        raise StackedRegressorTrainingError(
+            f"unsupported sample_weight_policy {policy!r}; expected one of "
+            f"{sorted(SAMPLE_WEIGHT_POLICIES)}"
+        )
+
+    bucket = str(getattr(context, "runtime_bucket", "") or "")
+    weight = _bucket_sample_weight(bucket)
+
+    if policy == SAMPLE_WEIGHT_POLICY_HARD_SLICE_PLUS_BASE_ERROR:
+        base_nme = _base_nme_for_weight(base_landmarks, gt, getattr(context, "normalizer", None))
+        if base_nme is not None:
+            # Focus on samples where the base candidate has room to improve, while
+            # avoiding one or two extreme outliers dominating the linear fit.
+            error_scale = max(0.5, min(4.0, base_nme / 0.03))
+            weight *= error_scale
+
+    return float(max(weight, 1e-6))
 
 
 def global_transform_target(base: np.ndarray, gt: np.ndarray, diag: float) -> np.ndarray:
@@ -174,6 +255,7 @@ def build_training_examples(
     *,
     output_mode: str,
     base_candidate_policy: str,
+    sample_weight_policy: str = SAMPLE_WEIGHT_POLICY_UNIFORM,
 ) -> list[StackedTrainingExample]:
     """Build per-sample training examples from cached sample contexts."""
     output_dim_for_mode(output_mode)  # validate mode early
@@ -197,11 +279,12 @@ def build_training_examples(
             for candidate in getattr(context, "candidates", ())
             if not getattr(candidate, "is_fusion", False)
         }
+        runtime_bucket = str(getattr(context, "runtime_bucket", "") or "")
         features = stacked_regression_feature_map(
             base_landmarks=base_landmarks,
             model_landmarks=model_landmarks,
             reference_bbox=None,
-            runtime_bucket=str(getattr(context, "runtime_bucket", "") or ""),
+            runtime_bucket=runtime_bucket,
             roll_estimate=getattr(context, "roll_estimate", None),
             yaw_estimate=getattr(context, "yaw_estimate", None),
             candidate_yaw_disagreement=getattr(context, "candidate_yaw_disagreement", None),
@@ -210,12 +293,20 @@ def build_training_examples(
             model_predictions_available=getattr(context, "model_predictions_available", None),
         )
         target = _target_for_mode(output_mode, base_landmarks, gt, diag)
+        sample_weight = sample_weight_for_context(
+            context,
+            policy=sample_weight_policy,
+            base_landmarks=base_landmarks,
+            gt=gt,
+        )
         examples.append(
             StackedTrainingExample(
                 sample_id=str(getattr(context, "sample_id", "")),
                 base_candidate=str(base.name),
+                runtime_bucket=runtime_bucket,
                 features=features,
                 target=target,
+                sample_weight=sample_weight,
             )
         )
     return examples
@@ -238,22 +329,65 @@ def stacked_feature_order(examples: T.Sequence[StackedTrainingExample]) -> tuple
     return tuple(sorted(names))
 
 
+def _normalized_sample_weights(
+    sample_weights: np.ndarray | None,
+    *,
+    n_rows: int,
+) -> np.ndarray | None:
+    if sample_weights is None:
+        return None
+    weights = np.asarray(sample_weights, dtype="float64").reshape(-1)
+    if weights.shape[0] != n_rows:
+        raise StackedRegressorTrainingError(
+            f"sample_weights length {weights.shape[0]} != row count {n_rows}"
+        )
+    if not np.all(np.isfinite(weights)) or np.any(weights <= 0):
+        raise StackedRegressorTrainingError("sample_weights must be finite and positive")
+    mean_weight = float(np.mean(weights))
+    if mean_weight <= 0:
+        raise StackedRegressorTrainingError("sample_weights mean must be positive")
+    normalized: np.ndarray = T.cast(np.ndarray, weights / mean_weight)
+    return normalized
+
+
 def fit_linear_residual_model(
     x: np.ndarray,
     y: np.ndarray,
     *,
     l2: float,
+    sample_weights: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Fit a standardized ridge linear model, returning coef, intercept, mean, std."""
-    mean = x.mean(axis=0)
-    std = x.std(axis=0)
+    weights = _normalized_sample_weights(sample_weights, n_rows=x.shape[0])
+    if weights is None:
+        mean = x.mean(axis=0)
+        std = x.std(axis=0)
+        std = np.where(std < 1e-12, 1.0, std)
+        standardized = (x - mean) / std
+        y_mean = y.mean(axis=0)
+        y_centered = y - y_mean
+        n_features = standardized.shape[1]
+        gram = standardized.T @ standardized + float(l2) * np.eye(n_features)
+        rhs = standardized.T @ y_centered
+        coef = np.linalg.solve(gram, rhs)
+        return coef, y_mean, mean, std
+
+    mean = np.average(x, axis=0, weights=weights)
+    variance = np.average((x - mean) ** 2, axis=0, weights=weights)
+    std = np.sqrt(variance)
     std = np.where(std < 1e-12, 1.0, std)
     standardized = (x - mean) / std
-    y_mean = y.mean(axis=0)
+
+    y_mean = np.average(y, axis=0, weights=weights)
     y_centered = y - y_mean
-    n_features = standardized.shape[1]
-    gram = standardized.T @ standardized + float(l2) * np.eye(n_features)
-    rhs = standardized.T @ y_centered
+
+    sqrt_weights = np.sqrt(weights)[:, None]
+    weighted_x = standardized * sqrt_weights
+    weighted_y = y_centered * sqrt_weights
+
+    n_features = weighted_x.shape[1]
+    gram = weighted_x.T @ weighted_x + float(l2) * np.eye(n_features)
+    rhs = weighted_x.T @ weighted_y
     coef = np.linalg.solve(gram, rhs)
     return coef, y_mean, mean, std
 
@@ -287,6 +421,7 @@ def train_stacked_regressor(
     candidate_name: str = DEFAULT_STACKED_CANDIDATE_NAME,
     residual_clip_fraction: float = 0.05,
     l2: float = DEFAULT_STACKED_L2,
+    sample_weight_policy: str = SAMPLE_WEIGHT_POLICY_UNIFORM,
     eval_fraction: float = 0.2,
     split_seed: str | int = "stacked_residual_v1",
     allow_landmark_residual_68: bool = False,
@@ -301,6 +436,7 @@ def train_stacked_regressor(
         contexts,
         output_mode=output_mode,
         base_candidate_policy=base_candidate_policy,
+        sample_weight_policy=sample_weight_policy,
     )
     if not examples:
         raise StackedRegressorTrainingError("no usable training examples were produced")
@@ -327,9 +463,21 @@ def train_stacked_regressor(
         targets: np.ndarray = np.array([ex.target for ex in rows], dtype="float64")
         return targets
 
+    def _weights(rows: T.Sequence[StackedTrainingExample]) -> np.ndarray:
+        weights: np.ndarray = np.array([ex.sample_weight for ex in rows], dtype="float64")
+        return weights
+
     x_train = _matrix(train_examples)
     y_train = _targets(train_examples)
-    coef, intercept, mean, std = fit_linear_residual_model(x_train, y_train, l2=l2)
+    train_weights = (
+        None if sample_weight_policy == SAMPLE_WEIGHT_POLICY_UNIFORM else _weights(train_examples)
+    )
+    coef, intercept, mean, std = fit_linear_residual_model(
+        x_train,
+        y_train,
+        l2=l2,
+        sample_weights=train_weights,
+    )
 
     def _mse(rows: T.Sequence[StackedTrainingExample]) -> float:
         if not rows:
@@ -340,10 +488,35 @@ def train_stacked_regressor(
         predicted = (standardized @ coef) + intercept
         return float(np.mean((predicted - y) ** 2))
 
+    def _weighted_mse(rows: T.Sequence[StackedTrainingExample]) -> float:
+        if not rows:
+            return float("nan")
+        x = _matrix(rows)
+        y = _targets(rows)
+        standardized = (x - mean) / std
+        predicted = (standardized @ coef) + intercept
+        per_row = np.mean((predicted - y) ** 2, axis=1)
+        return float(np.average(per_row, weights=_weights(rows)))
+
     train_mse = _mse(train_examples)
     eval_mse = _mse(eval_examples)
+    train_weighted_mse = _weighted_mse(train_examples)
+    eval_weighted_mse = _weighted_mse(eval_examples)
     baseline_eval_mse = (
         float(np.mean(_targets(eval_examples) ** 2)) if eval_examples else float("nan")
+    )
+    weighted_baseline_eval_mse = (
+        float(
+            np.average(
+                np.mean(_targets(eval_examples) ** 2, axis=1), weights=_weights(eval_examples)
+            )
+        )
+        if eval_examples
+        else float("nan")
+    )
+    train_weights_for_metrics = _weights(train_examples)
+    eval_weights_for_metrics = (
+        _weights(eval_examples) if eval_examples else np.array([], dtype="float64")
     )
 
     training_metadata: dict[str, T.Any] = {
@@ -354,8 +527,30 @@ def train_stacked_regressor(
         "n_eval": len(eval_examples),
         "train_mse": train_mse,
         "eval_mse": eval_mse,
+        "train_weighted_mse": train_weighted_mse,
+        "eval_weighted_mse": eval_weighted_mse,
         "baseline_eval_mse": baseline_eval_mse,
+        "weighted_baseline_eval_mse": weighted_baseline_eval_mse,
         "l2": float(l2),
+        "sample_weight_policy": sample_weight_policy,
+        "train_sample_weight_min": float(train_weights_for_metrics.min()),
+        "train_sample_weight_max": float(train_weights_for_metrics.max()),
+        "train_sample_weight_mean": float(train_weights_for_metrics.mean()),
+        "eval_sample_weight_min": (
+            float(eval_weights_for_metrics.min())
+            if eval_weights_for_metrics.size
+            else float("nan")
+        ),
+        "eval_sample_weight_max": (
+            float(eval_weights_for_metrics.max())
+            if eval_weights_for_metrics.size
+            else float("nan")
+        ),
+        "eval_sample_weight_mean": (
+            float(eval_weights_for_metrics.mean())
+            if eval_weights_for_metrics.size
+            else float("nan")
+        ),
         "eval_fraction": float(eval_fraction),
         "split_seed": str(split_seed),
         "eval_sample_ids": sorted(eval_ids),
@@ -377,20 +572,189 @@ def train_stacked_regressor(
     )
     metrics = dict(training_metadata)
     logger.info(
-        "[StackedRegressor] trained output_mode=%s n_train=%d n_eval=%d train_mse=%.6g "
-        "eval_mse=%.6g baseline_eval_mse=%.6g",
+        "[StackedRegressor] trained output_mode=%s sample_weight_policy=%s "
+        "n_train=%d n_eval=%d train_mse=%.6g eval_mse=%.6g baseline_eval_mse=%.6g "
+        "train_weight_range=[%.3g, %.3g]",
         output_mode,
+        sample_weight_policy,
         len(train_examples),
         len(eval_examples),
         train_mse,
         eval_mse,
         baseline_eval_mse,
+        float(train_weights_for_metrics.min()),
+        float(train_weights_for_metrics.max()),
     )
     return regressor, metrics
 
 
+def _train_single_kwargs(
+    *,
+    output_mode: str,
+    base_candidate_policy: str,
+    candidate_name: str,
+    residual_clip_fraction: float,
+    l2: float,
+    eval_fraction: float,
+    split_seed: str | int,
+    allow_landmark_residual_68: bool,
+    sample_weight_policy: str | None,
+) -> dict[str, T.Any]:
+    kwargs: dict[str, T.Any] = {
+        "output_mode": output_mode,
+        "base_candidate_policy": base_candidate_policy,
+        "candidate_name": candidate_name,
+        "residual_clip_fraction": residual_clip_fraction,
+        "l2": l2,
+        "eval_fraction": eval_fraction,
+        "split_seed": split_seed,
+        "allow_landmark_residual_68": allow_landmark_residual_68,
+    }
+    if (
+        sample_weight_policy is not None
+        and "sample_weight_policy" in train_stacked_regressor.__code__.co_varnames
+    ):
+        kwargs["sample_weight_policy"] = sample_weight_policy
+    return kwargs
+
+
+def _group_contexts_by_runtime_expert(
+    contexts: T.Iterable[ContextLike],
+) -> dict[str, list[ContextLike]]:
+    grouped: dict[str, list[ContextLike]] = {}
+    for context in contexts:
+        bucket = str(getattr(context, "runtime_bucket", "") or "")
+        key = runtime_bucket_expert_key(bucket)
+        grouped.setdefault(key, []).append(context)
+    return grouped
+
+
+def train_stacked_regressor_experts(
+    contexts: T.Iterable[ContextLike],
+    *,
+    output_mode: str = OUTPUT_MODE_GLOBAL_TRANSFORM,
+    base_candidate_policy: str = "static_weighted",
+    candidate_name: str = DEFAULT_STACKED_CANDIDATE_NAME,
+    residual_clip_fraction: float = 0.05,
+    l2: float = DEFAULT_STACKED_L2,
+    sample_weight_policy: str | None = None,
+    eval_fraction: float = 0.2,
+    split_seed: str | int = "stacked_residual_v1",
+    allow_landmark_residual_68: bool = False,
+    expert_min_examples: int = DEFAULT_STACKED_EXPERT_MIN_EXAMPLES,
+) -> tuple[RuntimeStackedLandmarkRegressor, dict[str, T.Any]]:
+    """Train one linear expert per runtime-bucket family in a single artifact.
+
+    Routing is deterministic from runtime-visible bucket features. This changes
+    the model class from one global linear fit to multiple pose-family linear fits;
+    it does not add runtime accept/reject gates.
+    """
+    context_rows = list(contexts)
+    if not context_rows:
+        raise StackedRegressorTrainingError("no contexts supplied for expert training")
+
+    grouped = _group_contexts_by_runtime_expert(context_rows)
+    default_key = DEFAULT_STACKED_EXPERT_KEY
+    default_contexts = grouped.get(default_key) or context_rows
+
+    single_kwargs = _train_single_kwargs(
+        output_mode=output_mode,
+        base_candidate_policy=base_candidate_policy,
+        candidate_name=candidate_name,
+        residual_clip_fraction=residual_clip_fraction,
+        l2=l2,
+        eval_fraction=eval_fraction,
+        split_seed=split_seed,
+        allow_landmark_residual_68=allow_landmark_residual_68,
+        sample_weight_policy=sample_weight_policy,
+    )
+
+    experts: dict[str, RuntimeStackedLandmarkRegressor] = {}
+    expert_metrics: dict[str, dict[str, T.Any]] = {}
+
+    default_model, default_metrics = train_stacked_regressor(default_contexts, **single_kwargs)
+    experts[default_key] = default_model
+    expert_metrics[default_key] = {
+        **default_metrics,
+        "n_contexts": len(default_contexts),
+        "runtime_bucket_expert": default_key,
+    }
+
+    for key, key_contexts in sorted(grouped.items()):
+        if key == default_key:
+            continue
+        if len(key_contexts) < expert_min_examples:
+            logger.info(
+                "[StackedRegressor] skipping expert=%s n_contexts=%d < min=%d; routes fall back to %s",
+                key,
+                len(key_contexts),
+                expert_min_examples,
+                default_key,
+            )
+            continue
+        expert_model, metrics = train_stacked_regressor(
+            key_contexts,
+            **{
+                **single_kwargs,
+                "split_seed": f"{split_seed}:{key}",
+            },
+        )
+        experts[key] = expert_model
+        expert_metrics[key] = {
+            **metrics,
+            "n_contexts": len(key_contexts),
+            "runtime_bucket_expert": key,
+        }
+
+    training_metadata: dict[str, T.Any] = {
+        "expert_policy": EXPERT_POLICY_RUNTIME_BUCKET,
+        "default_expert": default_key,
+        "experts": expert_metrics,
+        "expert_min_examples": int(expert_min_examples),
+        "n_contexts": len(context_rows),
+        "n_experts": len(experts),
+        "output_mode": output_mode,
+        "base_candidate_policy": base_candidate_policy,
+        "residual_clip_fraction": float(residual_clip_fraction),
+        "l2": float(l2),
+        "sample_weight_policy": sample_weight_policy,
+        "eval_fraction": float(eval_fraction),
+        "split_seed": str(split_seed),
+    }
+
+    root = RuntimeStackedLandmarkRegressor(
+        candidate_name=candidate_name,
+        base_candidate_policy=base_candidate_policy,
+        feature_names=default_model.feature_names,
+        output_mode=default_model.output_mode,
+        output_dim=default_model.output_dim,
+        residual_clip_fraction=default_model.residual_clip_fraction,
+        coef=default_model.coef,
+        intercept=default_model.intercept,
+        feature_mean=default_model.feature_mean,
+        feature_std=default_model.feature_std,
+        training_metadata=training_metadata,
+        expert_policy=EXPERT_POLICY_RUNTIME_BUCKET,
+        default_expert=default_key,
+        experts=experts,
+    )
+    logger.info(
+        "[StackedRegressor] trained runtime-bucket experts=%s default=%s n_contexts=%d",
+        sorted(experts),
+        default_key,
+        len(context_rows),
+    )
+    return root, training_metadata
+
+
 __all__ = [
     "DEFAULT_STACKED_L2",
+    "train_stacked_regressor_experts",
+    "DEFAULT_STACKED_EXPERT_MIN_EXAMPLES",
+    "SAMPLE_WEIGHT_POLICIES",
+    "SAMPLE_WEIGHT_POLICY_HARD_SLICE",
+    "SAMPLE_WEIGHT_POLICY_HARD_SLICE_PLUS_BASE_ERROR",
+    "SAMPLE_WEIGHT_POLICY_UNIFORM",
     "STACKED_REGRESSOR_ARTIFACT",
     "StackedRegressorTrainingError",
     "StackedTrainingExample",
@@ -399,6 +763,7 @@ __all__ = [
     "global_transform_target",
     "landmark_residual_68_target",
     "region_residual_target",
+    "sample_weight_for_context",
     "select_base_candidate",
     "stacked_feature_order",
     "train_stacked_regressor",

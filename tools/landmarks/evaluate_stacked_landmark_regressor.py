@@ -29,6 +29,10 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     parse_candidates,
 )
 from lib.landmarks.ensemble.stacked_regressor import load_stacked_regressor
+from lib.landmarks.ensemble.stacked_regressor_context_cache import (
+    load_contexts_maybe_parallel,
+    load_or_build_stacked_contexts,
+)
 from lib.landmarks.ensemble.stacked_regressor_evaluation import (
     DEFAULT_CATASTROPHIC_NME,
     evaluate_promotion_gates,
@@ -65,8 +69,27 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--gt-cache-dir", type=Path)
     parser.add_argument("--production-manifest", type=Path)
     parser.add_argument("--production-cache-dir", type=Path)
-    parser.add_argument("--weights", type=Path, required=True)
+    parser.add_argument("--weights", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--context-cache",
+        type=Path,
+        help=(
+            "Optional pickle cache for prebuilt SampleCandidateContext objects. "
+            "Use this to avoid rebuilding contexts for every stacked-regressor evaluation."
+        ),
+    )
+    parser.add_argument(
+        "--rebuild-context-cache",
+        action="store_true",
+        help="Ignore an existing --context-cache and rebuild it from manifests/caches.",
+    )
+    parser.add_argument(
+        "--context-workers",
+        type=int,
+        default=0,
+        help="Parallel workers for building contexts before caching. 0/1 means serial.",
+    )
     parser.add_argument("--candidates", default="")
     parser.add_argument("--catastrophic-nme", type=float, default=DEFAULT_CATASTROPHIC_NME)
     parser.add_argument("--failure-threshold", type=float, default=DEFAULT_FAILURE_THRESHOLD)
@@ -82,9 +105,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _load_all_contexts(args: argparse.Namespace, candidates: T.Sequence[str]) -> list[T.Any]:
-    from lib.landmarks.ensemble.runtime_resolver_scorer_data import load_contexts
-
     contexts: list[T.Any] = []
+    if args.weights is None:
+        raise ValueError("--weights is required when building stacked regressor contexts")
     for source, manifest, cache_dir in (
         ("gt", args.gt_manifest, args.gt_cache_dir),
         ("production", args.production_manifest, args.production_cache_dir),
@@ -92,7 +115,7 @@ def _load_all_contexts(args: argparse.Namespace, candidates: T.Sequence[str]) ->
         if manifest is None or cache_dir is None:
             continue
         contexts.extend(
-            load_contexts(
+            load_contexts_maybe_parallel(
                 manifest_path=manifest,
                 cache_dir=cache_dir,
                 weights_path=args.weights,
@@ -101,7 +124,9 @@ def _load_all_contexts(args: argparse.Namespace, candidates: T.Sequence[str]) ->
                 failure_threshold=args.failure_threshold,
                 outlier_threshold=args.outlier_threshold,
                 allow_image_backfill=args.allow_image_backfill,
+                workers=max(int(args.context_workers), 0),
                 progress=_context_progress,
+                logger=logger,
             )
         )
     return contexts
@@ -113,13 +138,48 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     from lib.logger import configure_tool_logging
 
     configure_tool_logging(args.log_level)
-    if args.gt_manifest is None and args.production_manifest is None:
-        parser.error("at least one of --gt-manifest / --production-manifest is required")
+    needs_context_build = (
+        args.context_cache is None
+        or args.rebuild_context_cache
+        or not args.context_cache.is_file()
+    )
+    if needs_context_build:
+        if args.weights is None:
+            parser.error("--weights is required when building stacked regressor contexts")
+        if args.gt_manifest is None and args.production_manifest is None:
+            parser.error("at least one of --gt-manifest / --production-manifest is required")
 
     regressor = load_stacked_regressor(args.regressor)
-    weights = load_weights(args.weights)
-    candidates = parse_candidates(args.candidates, weights)
-    contexts = _load_all_contexts(args, candidates)
+    if args.weights is not None:
+        weights = load_weights(args.weights)
+        candidates = parse_candidates(args.candidates, weights)
+    else:
+        if args.candidates:
+            parser.error("--weights is required when --candidates is provided")
+        candidates = ()
+
+    contexts = load_or_build_stacked_contexts(
+        context_cache=args.context_cache,
+        rebuild_context_cache=args.rebuild_context_cache,
+        build=lambda: _load_all_contexts(args, candidates),
+        logger=logger,
+        metadata={
+            "tool": "evaluate_stacked_landmark_regressor",
+            "gt_manifest": "" if args.gt_manifest is None else str(args.gt_manifest),
+            "gt_cache_dir": "" if args.gt_cache_dir is None else str(args.gt_cache_dir),
+            "production_manifest": (
+                "" if args.production_manifest is None else str(args.production_manifest)
+            ),
+            "production_cache_dir": (
+                "" if args.production_cache_dir is None else str(args.production_cache_dir)
+            ),
+            "weights": "" if args.weights is None else str(args.weights),
+            "candidates": list(candidates),
+            "failure_threshold": args.failure_threshold,
+            "outlier_threshold": args.outlier_threshold,
+            "allow_image_backfill": args.allow_image_backfill,
+        },
+    )
     if not contexts:
         logger.error("no sample contexts loaded; nothing to evaluate")
         return 1
