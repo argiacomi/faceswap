@@ -540,6 +540,87 @@ class Loss(GlobalSection):
             "overall quality by focusing attention on the core face area."
         ),
     )
+    batch_relative_loss_weighting = ConfigItem(
+        datatype=bool,
+        default=False,
+        group=_("batch relative loss weighting"),
+        info=_(
+            "Apply optional batch-relative loss weighting to the final reconstruction loss "
+            "reduction. When enabled, samples with higher aggregate weighted loss within the "
+            "current batch receive higher loss weight than easier samples. Disabled preserves "
+            "the standard batch mean exactly."
+        ),
+        fixed=False,
+    )
+    brlw_strength = ConfigItem(
+        datatype=str,
+        default="auto",
+        group=_("batch relative loss weighting"),
+        info=_(
+            "How strongly to apply batch-relative loss weighting. Use 'auto' for a "
+            "conservative scheduled value, or enter a numeric value. 0.0 is a no-op, 1.0 "
+            "uses the full relative weighting before clamping."
+        ),
+        fixed=False,
+    )
+    brlw_min_batch_size = ConfigItem(
+        datatype=int,
+        default=4,
+        group=_("batch relative loss weighting"),
+        info=_(
+            "Minimum batch size before batch-relative loss weighting can apply. Smaller "
+            "batches use the standard batch mean."
+        ),
+        min_max=(1, 256),
+        rounding=1,
+        fixed=False,
+    )
+    brlw_min_weight = ConfigItem(
+        datatype=float,
+        default=0.5,
+        group=_("batch relative loss weighting"),
+        info=_(
+            "Minimum per-sample loss weight for batch-relative loss weighting. Must be "
+            "greater than 0 and no greater than 1.0."
+        ),
+        min_max=(0.01, 1.0),
+        rounding=2,
+        fixed=False,
+    )
+    brlw_max_weight = ConfigItem(
+        datatype=float,
+        default=2.0,
+        group=_("batch relative loss weighting"),
+        info=_(
+            "Maximum per-sample loss weight for batch-relative loss weighting. Must be at "
+            "least 1.0."
+        ),
+        min_max=(1.0, 10.0),
+        rounding=2,
+        fixed=False,
+    )
+    brlw_warmup_iterations = ConfigItem(
+        datatype=str,
+        default="auto",
+        group=_("batch relative loss weighting"),
+        info=_(
+            "Number of iterations used to ramp batch-relative loss weighting when trainer "
+            "automation is off. Use 'auto' for a conservative warmup, or enter 0 to apply "
+            "the configured strength immediately."
+        ),
+        fixed=False,
+    )
+    brlw_detach_weights = ConfigItem(
+        datatype=bool,
+        default=True,
+        group=_("batch relative loss weighting"),
+        info=_(
+            "Detach batch-relative sample weights from gradients. This keeps BRLW focused "
+            "on changing sample contribution without backpropagating through the weighting "
+            "calculation."
+        ),
+        fixed=False,
+    )
     mask_type = ConfigItem(
         datatype=str,
         default="extended",

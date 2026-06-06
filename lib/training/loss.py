@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import typing as T
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import torch
 from torch import nn
@@ -28,6 +28,131 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class BRLWStats:
+    """Statistics for batch-relative loss weighting."""
+
+    weights: torch.Tensor
+    min_weight: torch.Tensor
+    mean_weight: torch.Tensor
+    max_weight: torch.Tensor
+    std_weight: torch.Tensor
+    effective_batch_size: torch.Tensor
+
+
+@dataclass(frozen=True)
+class BatchRelativeLossWeighting:
+    """Configuration for batch-relative loss weighting."""
+
+    enabled: bool = False
+    strength: float = 0.0
+    min_batch_size: int = 4
+    min_weight: float = 0.5
+    max_weight: float = 2.0
+    detach_weights: bool = True
+    eps: float = 1e-8
+    protected_samples: torch.Tensor | None = None
+    """Boolean mask for samples that must not receive a weight above 1.0."""
+
+    def __post_init__(self) -> None:
+        if self.strength < 0.0:
+            raise ValueError(f"BRLW strength must be >= 0.0. Got {self.strength}")
+        if self.min_batch_size < 1:
+            raise ValueError(f"BRLW minimum batch size must be >= 1. Got {self.min_batch_size}")
+        if self.min_weight <= 0.0:
+            raise ValueError(f"BRLW minimum weight must be > 0.0. Got {self.min_weight}")
+        if self.max_weight < self.min_weight:
+            raise ValueError(
+                "BRLW maximum weight must be >= minimum weight. "
+                f"Got min={self.min_weight}, max={self.max_weight}"
+            )
+        if not (self.min_weight <= 1.0 <= self.max_weight):
+            raise ValueError(
+                "BRLW weights must allow a mean of 1.0. "
+                f"Got min={self.min_weight}, max={self.max_weight}"
+            )
+
+    @property
+    def active(self) -> bool:
+        """``True`` when BRLW can alter a batch loss."""
+        return self.enabled and self.strength > 0.0
+
+    def with_protected_samples(
+        self, protected_samples: torch.Tensor | None
+    ) -> BatchRelativeLossWeighting:
+        """Return a copy with per-sample overweight protection attached."""
+        return replace(self, protected_samples=protected_samples)
+
+    def _max_weights(self, weights: torch.Tensor) -> torch.Tensor:
+        """Return per-sample maximum weights, including metadata safeguards."""
+        max_weights = torch.full_like(weights, self.max_weight)
+        if self.protected_samples is None:
+            return max_weights
+        protected = self.protected_samples.to(device=weights.device, dtype=torch.bool)
+        if protected.shape != weights.shape:
+            return max_weights
+        return torch.where(
+            protected, torch.minimum(max_weights, torch.ones_like(weights)), max_weights
+        )
+
+    def _normalize_clamped(self, weights: torch.Tensor) -> torch.Tensor:
+        """Normalize weights to sum to batch size without exceeding configured bounds."""
+        max_weights = self._max_weights(weights)
+        normalized = torch.maximum(weights, torch.full_like(weights, self.min_weight))
+        normalized = torch.minimum(normalized, max_weights)
+        target = torch.as_tensor(
+            float(normalized.numel()), dtype=normalized.dtype, device=normalized.device
+        )
+        active = torch.ones_like(normalized, dtype=torch.bool)
+
+        for _ in range(normalized.numel()):
+            active_sum = normalized[active].sum()
+            if not bool(active.any()) or active_sum.abs() < self.eps:
+                break
+
+            remaining = target - normalized[~active].sum()
+            candidate = normalized[active] * (remaining / active_sum.clamp_min(self.eps))
+            too_low = candidate < self.min_weight
+            active_max = max_weights[active]
+            too_high = candidate > active_max
+            active_indices = active.nonzero(as_tuple=False).flatten()
+
+            if not bool((too_low | too_high).any()):
+                normalized[active_indices] = candidate
+                break
+
+            low_indices = active_indices[too_low]
+            high_indices = active_indices[too_high]
+            normalized[low_indices] = self.min_weight
+            normalized[high_indices] = max_weights[high_indices]
+            active[low_indices] = False
+            active[high_indices] = False
+
+        return normalized
+
+    def apply(self, sample_loss: torch.Tensor) -> tuple[torch.Tensor, BRLWStats | None]:
+        """Apply BRLW to a per-sample aggregate loss vector."""
+        if not self.active or sample_loss.ndim == 0 or sample_loss.numel() < self.min_batch_size:
+            return sample_loss.mean(), None
+
+        relative = sample_loss / sample_loss.mean().clamp_min(self.eps)
+        weights = 1.0 + self.strength * (relative - 1.0)
+        weights = self._normalize_clamped(weights)
+        loss_weights = weights.detach() if self.detach_weights else weights
+        loss = (sample_loss * loss_weights).mean()
+
+        stats = BRLWStats(
+            weights=weights,
+            min_weight=weights.min(),
+            mean_weight=weights.mean(),
+            max_weight=weights.max(),
+            std_weight=weights.std(unbiased=False),
+            effective_batch_size=weights.sum().square()
+            / weights.square().sum().clamp_min(self.eps),
+        )
+        return loss, stats
+
+
 @dataclass
 class BatchLoss:
     """Dataclass for holding Loss values for a batch of data"""
@@ -41,17 +166,25 @@ class BatchLoss:
     mask: torch.Tensor | None = None
     """The loss scalar for the mask for each item in the batch if learn_mask is selected otherwise
     ``None``. Default: ``None``"""
+    brlw: BatchRelativeLossWeighting = field(default_factory=BatchRelativeLossWeighting)
+    """Optional batch-relative loss weighting configuration."""
+    brlw_stats: BRLWStats | None = None
+    """Statistics from the last BRLW reduction, if BRLW was active for this batch."""
     _total: torch.Tensor | None = field(init=False, default=None)
 
     @property
     def total(self) -> torch.Tensor:
         """The total single weighted loss scalar for all items in the batch for backprop"""
         if self._total is None:
-            total = T.cast(
-                torch.Tensor, sum(sum(y.mean() for y in x.values()) for x in self.weighted)
-            )
+            component_losses = [y for x in self.weighted for y in x.values()]
             if self.mask is not None:
-                total += self.mask.mean()
+                component_losses.append(self.mask)
+            if self.brlw.active and component_losses:
+                sample_loss = T.cast(torch.Tensor, sum(component_losses))
+                total, self.brlw_stats = self.brlw.apply(sample_loss)
+            else:
+                total = T.cast(torch.Tensor, sum(y.mean() for y in component_losses))
+                self.brlw_stats = None
             self._total = total
         return self._total
 
@@ -66,6 +199,19 @@ class BatchLoss:
         self.unweighted = [{k: v.detach().cpu() for k, v in x.items()} for x in self.unweighted]
         self.weighted = [{k: v.detach().cpu() for k, v in x.items()} for x in self.weighted]
         self.mask = None if self.mask is None else self.mask.detach().cpu()
+        if self.brlw_stats is not None:
+            self.brlw_stats = BRLWStats(
+                weights=self.brlw_stats.weights.detach().cpu(),
+                min_weight=self.brlw_stats.min_weight.detach().cpu(),
+                mean_weight=self.brlw_stats.mean_weight.detach().cpu(),
+                max_weight=self.brlw_stats.max_weight.detach().cpu(),
+                std_weight=self.brlw_stats.std_weight.detach().cpu(),
+                effective_batch_size=self.brlw_stats.effective_batch_size.detach().cpu(),
+            )
+        if self.brlw.protected_samples is not None:
+            self.brlw = self.brlw.with_protected_samples(
+                self.brlw.protected_samples.detach().cpu()
+            )
         return self
 
 
@@ -107,7 +253,26 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         The weight to apply to the identity loss. Default: ``0.0``
     identity_start_iteration
         The iteration at which the identity loss begins to be applied. Default: ``0``
+    brlw_enabled
+        ``True`` to enable batch-relative loss weighting. Default: ``False``
+    brlw_strength
+        Maximum BRLW strength. ``None`` selects the conservative automatic value. Default:
+        ``None``
+    brlw_min_batch_size
+        Minimum batch size before BRLW can apply. Default: ``4``
+    brlw_min_weight
+        Minimum per-sample BRLW weight. Default: ``0.5``
+    brlw_max_weight
+        Maximum per-sample BRLW weight. Default: ``2.0``
+    brlw_warmup_iterations
+        Number of iterations to ramp BRLW when no phase schedule is injected. ``None`` selects
+        the automatic warmup. Default: ``None``
+    brlw_detach_weights
+        ``True`` to detach BRLW weights from gradients. Default: ``True``
     """
+
+    _AUTO_BRLW_STRENGTH = 0.25
+    _AUTO_BRLW_WARMUP_ITERATIONS = 10_000
 
     def __init__(
         self,
@@ -127,6 +292,13 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         identity_loss: IdentityLoss | None = None,
         identity_weight: float = 0.0,
         identity_start_iteration: int = 0,
+        brlw_enabled: bool = False,
+        brlw_strength: float | None = None,
+        brlw_min_batch_size: int = 4,
+        brlw_min_weight: float = 0.5,
+        brlw_max_weight: float = 2.0,
+        brlw_warmup_iterations: int | None = None,
+        brlw_detach_weights: bool = True,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
@@ -148,6 +320,14 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         self._identity_weight = identity_weight
         self._identity_start_iteration = identity_start_iteration
         self._iteration = 0
+        self._brlw_enabled = brlw_enabled
+        self._brlw_strength = brlw_strength
+        self._brlw_min_batch_size = brlw_min_batch_size
+        self._brlw_min_weight = brlw_min_weight
+        self._brlw_max_weight = brlw_max_weight
+        self._brlw_warmup_iterations = brlw_warmup_iterations
+        self._brlw_detach_weights = brlw_detach_weights
+        self._brlw_schedule_multiplier: float | None = None
 
         # First configured reconstruction loss is treated as the "primary" component, the
         # remainder as "secondary". The phase scheduler injects per-component multipliers via
@@ -189,6 +369,32 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
+    @property
+    def batch_relative_loss_weighting(self) -> BatchRelativeLossWeighting:
+        """Return the BRLW reducer for the current iteration and schedule state."""
+        base_strength = (
+            self._AUTO_BRLW_STRENGTH if self._brlw_strength is None else self._brlw_strength
+        )
+        if self._brlw_schedule_multiplier is not None:
+            strength = base_strength * self._brlw_schedule_multiplier
+        else:
+            warmup = (
+                self._AUTO_BRLW_WARMUP_ITERATIONS
+                if self._brlw_warmup_iterations is None
+                else self._brlw_warmup_iterations
+            )
+            progress = 1.0 if warmup <= 0 else min(1.0, max(0.0, self._iteration / warmup))
+            strength = base_strength * progress
+
+        return BatchRelativeLossWeighting(
+            enabled=self._brlw_enabled,
+            strength=strength,
+            min_batch_size=self._brlw_min_batch_size,
+            min_weight=self._brlw_min_weight,
+            max_weight=self._brlw_max_weight,
+            detach_weights=self._brlw_detach_weights,
+        )
+
     def set_iteration(self, iteration: int) -> None:
         """Update the current training iteration.
 
@@ -221,12 +427,48 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
             if value < 0.0:
                 raise ValueError(f"Scheduled multiplier '{name}' must be >= 0.0. Got {value}")
             self._schedule[name] = value
+        self._brlw_schedule_multiplier = (
+            None if multipliers is None else float(multipliers.get("secondary_loss", 1.0))
+        )
 
     def _function_schedule_multiplier(self, name: str) -> float:
         """Return the scheduled multiplier for a configured reconstruction loss function."""
         if name == self._primary_function:
             return self._schedule["primary_loss"]
         return self._schedule["secondary_loss"]
+
+    @staticmethod
+    def _is_brlw_protected_sample(sample: T.Any) -> bool:
+        """Return whether metadata marks a sample as unsafe to overweight."""
+        return getattr(sample, "has_faceqa", False) and (
+            getattr(sample, "duplicate_bucket", "unknown") == "duplicate"
+            or getattr(sample, "identity_outlier_bucket", "unknown") in ("outlier", "reject")
+        )
+
+    def _brlw_protected_samples(
+        self,
+        meta: BatchMeta,
+        weighted: list[dict[str, torch.Tensor]],
+        mask_loss: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        """Return a per-sample mask for metadata rows BRLW must not overweight."""
+        if meta.faceqa is None or not meta.faceqa:
+            return None
+        reference = mask_loss
+        for output_losses in weighted:
+            if output_losses:
+                reference = next(iter(output_losses.values()))
+                break
+        if reference is None or reference.ndim == 0:
+            return None
+
+        samples = meta.faceqa[0]
+        if len(samples) != reference.numel():
+            return None
+        protected = [self._is_brlw_protected_sample(sample) for sample in samples]
+        if not any(protected):
+            return None
+        return torch.tensor(protected, dtype=torch.bool, device=reference.device)
 
     def _occlusion_weight(self, meta: BatchMeta, index: int) -> torch.Tensor | None:
         """Obtain the per-pixel occlusion-exclusion weight for an output if enabled.
@@ -560,7 +802,15 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
             all_unweighted.append(unweighted)
             all_weighted.append(weighted)
 
-        retval = BatchLoss(unweighted=all_unweighted, weighted=all_weighted, mask=mask_loss)
+        brlw = self.batch_relative_loss_weighting.with_protected_samples(
+            self._brlw_protected_samples(meta, all_weighted, mask_loss)
+        )
+        retval = BatchLoss(
+            unweighted=all_unweighted,
+            weighted=all_weighted,
+            mask=mask_loss,
+            brlw=brlw,
+        )
         logger.trace("[Loss] %s", retval)  # type:ignore[attr-defined]
         return retval
 

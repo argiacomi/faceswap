@@ -10,7 +10,7 @@ import warnings
 import torch
 
 from lib.training.data import BatchMeta
-from lib.training.loss import BatchLoss
+from lib.training.loss import BatchLoss, BatchRelativeLossWeighting
 from lib.utils import get_module_objects
 
 from .original import Trainer as OriginalTrainer
@@ -23,6 +23,16 @@ if T.TYPE_CHECKING:
     from .base import TrainConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _loss_payload(loss: BatchLoss) -> dict:
+    """Return the DataParallel-safe payload for a loss object."""
+    if not hasattr(loss, "unweighted") or not hasattr(loss, "weighted"):
+        return {k: v for k, v in loss.__dict__.items() if v is not None}
+    payload = {"unweighted": loss.unweighted, "weighted": loss.weighted}
+    if loss.mask is not None:
+        payload["mask"] = loss.mask
+    return payload
 
 
 class WrappedModel(torch.nn.Module):
@@ -77,7 +87,7 @@ class WrappedModel(torch.nn.Module):
         ]
 
         logger.trace("Losses: %s", losses)  # type:ignore[attr-defined]
-        return [{k: v for k, v in x.__dict__.items() if v is not None} for x in losses]
+        return [_loss_payload(x) for x in losses]
 
 
 class Trainer(OriginalTrainer):
@@ -186,13 +196,18 @@ class Trainer(OriginalTrainer):
         return wrapped
 
     @classmethod
-    def _mean_loss(cls, value: torch.Tensor | list | dict) -> torch.Tensor | list | dict:
+    def _mean_loss(
+        cls, value: torch.Tensor | list | dict, *, preserve_tensors: bool = False
+    ) -> torch.Tensor | list | dict:
         """Recursively collate the loss from multiple GPUs back to single scalars
 
         Parameters
         ----------
         value
             A loss value returned from the model as either a tensor, list or dict
+        preserve_tensors
+            ``True`` to preserve per-sample tensor values instead of reducing each tensor to its
+            mean. Used by BRLW so the final reducer can weight the full effective batch.
 
         Returns
         -------
@@ -204,11 +219,13 @@ class Trainer(OriginalTrainer):
             If the value is in an unexpected format
         """
         if isinstance(value, torch.Tensor):
-            return value.mean()
+            return value.flatten() if preserve_tensors else value.mean()
         if isinstance(value, list):
-            return [cls._mean_loss(v) for v in value]
+            return [cls._mean_loss(v, preserve_tensors=preserve_tensors) for v in value]
         if isinstance(value, dict):
-            return {k: cls._mean_loss(v) for k, v in value.items()}
+            return {
+                k: cls._mean_loss(v, preserve_tensors=preserve_tensors) for k, v in value.items()
+            }
         raise NotImplementedError(f"Unsupported type in loss structure: {type(value)}")
 
     def _forward(
@@ -231,7 +248,23 @@ class Trainer(OriginalTrainer):
         The loss for each input to the model in order (A, B, ...)
         """
         loss_dicts = self._distributed_model(inputs, targets, meta.tensor_dict())
-        loss = [BatchLoss(**T.cast(dict, self._mean_loss(loss_dict))) for loss_dict in loss_dicts]
+        brlw_candidate = getattr(
+            getattr(self.model.model, "loss_func", None),
+            "batch_relative_loss_weighting",
+            None,
+        )
+        brlw = (
+            brlw_candidate
+            if isinstance(brlw_candidate, BatchRelativeLossWeighting)
+            else BatchRelativeLossWeighting()
+        )
+        loss = [
+            BatchLoss(
+                **T.cast(dict, self._mean_loss(loss_dict, preserve_tensors=brlw.active)),
+                brlw=brlw,
+            )
+            for loss_dict in loss_dicts
+        ]
         return loss
 
 

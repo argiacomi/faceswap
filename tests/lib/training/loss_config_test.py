@@ -27,6 +27,13 @@ _EXPECTED_DEFAULTS = {
     "occlusion_exclusion": "none",
     "occlusion_mask_type": "none",
     "occlusion_exclusion_strength": 1.0,
+    "batch_relative_loss_weighting": False,
+    "brlw_strength": "auto",
+    "brlw_min_batch_size": 4,
+    "brlw_min_weight": 0.5,
+    "brlw_max_weight": 2.0,
+    "brlw_warmup_iterations": "auto",
+    "brlw_detach_weights": True,
 }
 
 

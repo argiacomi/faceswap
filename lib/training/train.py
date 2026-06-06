@@ -55,6 +55,36 @@ BoundaryBandMode = T.Literal["inner", "outer", "both"]
 IdentityCrop = T.Literal["face", "mask_bbox"]
 
 
+def _auto_float(value: object, *, name: str) -> float | None:
+    """Return ``None`` for auto, otherwise parse a non-negative float."""
+    text = str(value).strip().lower()
+    if text == "auto":
+        return None
+    try:
+        parsed = float(text)
+    except ValueError as err:
+        raise ValueError(f"{name} must be 'auto' or a non-negative number. Got {value!r}") from err
+    if parsed < 0.0:
+        raise ValueError(f"{name} must be >= 0.0. Got {parsed}")
+    return parsed
+
+
+def _auto_int(value: object, *, name: str) -> int | None:
+    """Return ``None`` for auto, otherwise parse a non-negative integer."""
+    text = str(value).strip().lower()
+    if text == "auto":
+        return None
+    try:
+        parsed = int(text)
+    except ValueError as err:
+        raise ValueError(
+            f"{name} must be 'auto' or a non-negative integer. Got {value!r}"
+        ) from err
+    if parsed < 0:
+        raise ValueError(f"{name} must be >= 0. Got {parsed}")
+    return parsed
+
+
 def _boundary_band_mode(value: str) -> BoundaryBandMode:
     """Return a validated boundary band mode for BoundaryLoss."""
     if value not in ("inner", "outer", "both"):
@@ -204,6 +234,15 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             identity_loss=identity_loss,
             identity_weight=mod_cfg.Loss.identity_loss_weight(),
             identity_start_iteration=mod_cfg.Loss.identity_loss_start_iteration(),
+            brlw_enabled=mod_cfg.Loss.batch_relative_loss_weighting(),
+            brlw_strength=_auto_float(mod_cfg.Loss.brlw_strength(), name="brlw_strength"),
+            brlw_min_batch_size=mod_cfg.Loss.brlw_min_batch_size(),
+            brlw_min_weight=mod_cfg.Loss.brlw_min_weight(),
+            brlw_max_weight=mod_cfg.Loss.brlw_max_weight(),
+            brlw_warmup_iterations=_auto_int(
+                mod_cfg.Loss.brlw_warmup_iterations(), name="brlw_warmup_iterations"
+            ),
+            brlw_detach_weights=mod_cfg.Loss.brlw_detach_weights(),
         )
         plugin.register_loss(loss)
         plugin.model.model.to(self._device)
@@ -778,6 +817,14 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                 logs[f"unweighted_{key}"] = {k: v.item() for k, v in unweighted.items()}
             if out.mask is not None:
                 logs[f"mask_{lbl}"] = out.mask.mean().item()
+            if out.brlw_stats is not None:
+                logs[f"brlw_{lbl}"] = {
+                    "min_weight": out.brlw_stats.min_weight.item(),
+                    "mean_weight": out.brlw_stats.mean_weight.item(),
+                    "max_weight": out.brlw_stats.max_weight.item(),
+                    "std_weight": out.brlw_stats.std_weight.item(),
+                    "effective_batch_size": out.brlw_stats.effective_batch_size.item(),
+                }
         if self._faceqa_diagnostic_logs:
             logs["faceqa_diagnostics"] = self._faceqa_diagnostic_logs
         if self._phase_schedule_state is not None:
