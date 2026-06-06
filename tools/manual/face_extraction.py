@@ -263,7 +263,16 @@ def _extract_video(
                 result.errors.append(f"Video frame missing: {frame_name}")
                 _emit(progress, done, total, f"Skipped {frame_name}")
                 continue
-            _filename, image = loader.image_from_index(frame_index)
+            try:
+                _filename, image = loader.image_from_index(frame_index)
+            except Exception as err:  # noqa: BLE001 - keep extraction best-effort per frame
+                result.skipped_frames += 1
+                result.errors.append(f"Could not read video frame {frame_name}: {err}")
+                logger.warning(
+                    "Manual Tool extraction skipped unreadable video frame: %s", frame_name
+                )
+                _emit(progress, done, total, f"Skipped {frame_name}")
+                continue
             _emit_faces_for_frame(alignments, frame_name, entry, image, saver, request, result)
             result.frames_processed += 1
             _emit(progress, done, total, f"Extracted faces from {frame_name}")
@@ -286,7 +295,8 @@ def _emit_faces_for_frame(
     from lib.image import encode_image
 
     source_stem = os.path.splitext(os.path.basename(frame_name))[0]
-    for face_index, face in enumerate(_entry_faces(entry)):
+    for ordinal, face in enumerate(_entry_faces(entry)):
+        face_index = int(getattr(face, "face_index", ordinal))
         output_name = f"{source_stem}_{face_index}.png"
         aligned = AlignedFace(
             face.landmarks_xy, image=image, centering="head", size=EXTRACT_FACE_SIZE

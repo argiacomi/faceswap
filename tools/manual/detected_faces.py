@@ -22,7 +22,7 @@ from lib.gui.custom_widgets import PopupProgress
 from lib.gui.utils import FileHandler
 from lib.image import ImagesLoader, ImagesSaver, encode_image, generate_thumbnail
 from lib.multithreading import MultiThread
-from lib.utils import get_folder, get_module_objects
+from lib.utils import get_folder
 from tools.manual.frame_filter import (
     filtered_frame_indices,
     frame_landmarks_outside_thumbnail,
@@ -302,15 +302,23 @@ class _DiskIO:
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def load(self) -> None:
-        """Load the faces from the alignments file, convert to
-        :class:`~lib.align.DetectedFace`. objects and add to :attr:`_frame_faces`."""
+        """Load detected faces from the alignments file.
+
+        Re-loading is defensive: clear existing state first so callers cannot
+        accidentally duplicate faces by invoking ``load_faces`` more than once
+        in a Manual session.
+        """
+        self._frame_faces.clear()
+        self._updated_frame_indices.clear()
+        self._sorted_frame_names.clear()
+
         for key in sorted(self._alignments.data):
             this_frame_faces: list[DetectedFace] = []
             for item in self._alignments.data[key].faces:
                 face = DetectedFace()
                 face.from_alignment(item, with_thumb=True)
                 face.load_aligned(None)
-                _ = face.aligned.average_distance  # cache the distances
+                _ = face.aligned.average_distance
                 this_frame_faces.append(face)
             self._frame_faces.append(this_frame_faces)
         self._sorted_frame_names = sorted(self._alignments.data)
@@ -598,8 +606,8 @@ class Filter:
         if filter_mode == "Multiple Faces":
             return len(frame_faces) > 2
         if filter_mode == "Misaligned Faces":
-            distance = self._filter_distance
-            return any(face.aligned.average_distance > distance for face in frame_faces)
+            lower, upper = self._filter_distance_range
+            return any(lower <= face.aligned.average_distance <= upper for face in frame_faces)
         if filter_mode == "Neighbor Outliers":
             return bool(
                 frame_neighbor_landmark_outlier_from_provider(
@@ -620,6 +628,26 @@ class Filter:
         except tk.TclError:
             retval = 0
         return int(retval)
+
+    @property
+    def _filter_distance_range_raw(self) -> tuple[int, int]:
+        """The raw lower/upper distance values selected for Misaligned Faces."""
+
+        def read_int(tk_var, default: int) -> int:
+            try:
+                return int(tk_var.get())
+            except (AttributeError, tk.TclError, ValueError):
+                return default
+
+        lower = read_int(getattr(self._globals, "var_filter_distance_min", None), 10)
+        upper = read_int(getattr(self._globals, "var_filter_distance_max", None), 20)
+        return tuple(sorted((lower, upper)))
+
+    @property
+    def _filter_distance_range(self) -> tuple[float, float]:
+        """The scaled lower/upper distance range for Misaligned Faces."""
+        lower, upper = self._filter_distance_range_raw
+        return float(lower) / 100.0, float(upper) / 100.0
 
     @property
     def _filter_distance(self) -> float:
@@ -777,51 +805,79 @@ class FaceUpdate:
         """
         return self._detected_faces.tk_face_count_changed
 
-    def _faces_at_frame_index(self, frame_index: int) -> list[DetectedFace]:
-        """Checks whether the frame has already been added to :attr:`_updated_frame_indices` and
-        adds it. Triggers the unsaved variable if this is the first edited frame. Returns the
-        detected face objects for the given frame.
-
-        Parameters
-        ----------
-        frame_index
-            The frame index to check whether there are updated alignments available
-
-        Returns
-        -------
-        The :class:`~lib.align.DetectedFace` objects for the requested frame
-        """
+    def _mark_frame_updated(self, frame_index: int) -> None:
+        """Mark ``frame_index`` dirty after it has been validated."""
         if not self._updated_frame_indices and not self._tk_unsaved.get():
             self._tk_unsaved.set(True)
         self._updated_frame_indices.add(frame_index)
-        retval = self._frame_faces[frame_index]
-        return retval
+
+    def _faces_at_frame_index(self, frame_index: int) -> list[DetectedFace]:
+        """Return faces for a valid frame and mark the frame as dirty."""
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            raise IndexError(f"Invalid frame index: {frame_index}")
+        self._mark_frame_updated(frame_index)
+        return self._frame_faces[frame_index]
+
+    def _face_at_index(
+        self,
+        frame_index: int,
+        face_index: int,
+        operation: str,
+    ) -> DetectedFace | None:
+        """Return a face for editing, or ``None`` for stale GUI state."""
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            logger.debug("%s ignored. Invalid frame_index: %s", operation, frame_index)
+            return None
+
+        faces = self._frame_faces[frame_index]
+        if face_index < 0 or face_index >= len(faces):
+            logger.debug(
+                "%s ignored. Invalid face_index: %s for frame_index: %s; available faces: %s",
+                operation,
+                face_index,
+                frame_index,
+                len(faces),
+            )
+            self._globals.set_face_index(max(0, min(self._globals.face_index, len(faces) - 1)))
+            return None
+
+        self._mark_frame_updated(frame_index)
+        return faces[face_index]
 
     def add(self, frame_index: int, pnt_x: int, width: int, pnt_y: int, height: int) -> None:
-        """Add a :class:`~lib.align.DetectedFace` object to the current frame with the
-        given dimensions.
+        """Add a face to the current frame, rolling back if alignment fails."""
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            logger.debug("Add face ignored. Invalid frame_index: %s", frame_index)
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        pnt_x
-            The left point of the bounding box
-        width
-            The width of the bounding box
-        pnt_y
-            The top point of the bounding box
-        height
-            The height of the bounding box
-        """
-        face = DetectedFace()
         faces = self._faces_at_frame_index(frame_index)
+        face = DetectedFace()
+        face.left = pnt_x
+        face.width = width
+        face.top = pnt_y
+        face.height = height
+
         faces.append(face)
         face_index = len(faces) - 1
+        try:
+            face.add_landmarks_xy(
+                self._extractor.get_landmarks(frame_index, face_index, "cv2-dnn")
+            )
+            face.load_aligned(None)
+        except Exception as err:  # pylint:disable=broad-except
+            del faces[face_index]
+            logger.error(
+                "Failed to add face at frame_index=%s face_index=%s: %s",
+                frame_index,
+                face_index,
+                err,
+                exc_info=True,
+            )
+            return
 
-        self.bounding_box(frame_index, face_index, pnt_x, width, pnt_y, height, aligner="cv2-dnn")
-        face.load_aligned(None)
+        self._globals.set_face_index(face_index)
         self._tk_face_count_changed.set(True)
+        self._globals.var_full_update.set(True)
 
     def delete(self, frame_index: int, face_index: int) -> None:
         """Delete the :class:`~lib.align.DetectedFace` object for the given frame and face
@@ -917,27 +973,11 @@ class FaceUpdate:
         pnt_y: int,
         height: int,
         aligner: str = "HRNet",
-    ) -> None:
-        """Update the bounding box for the :class:`~lib.align.DetectedFace` object at the
-        given frame and face indices, with the given dimensions and update the 68 point landmarks
-        from the :class:`~tools.manual.manual.Aligner` for the updated bounding box.
+    ) -> bool:
+        """Update a face bounding box and regenerate landmarks.
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        pnt_x
-            The left point of the bounding box
-        width
-            The width of the bounding box
-        pnt_y
-            The top point of the bounding box
-        height
-            The height of the bounding box
-        aligner
-            The aligner to use to generate the landmarks. Default: "HRNet"
+        The update is transactional: if the aligner fails, the old bbox and
+        landmarks remain in place.
         """
         logger.trace(  # type: ignore[attr-defined]
             "frame_index: %s, face_index %s, pnt_x %s, width %s, pnt_y %s, height %s, aligner: %s",
@@ -949,13 +989,41 @@ class FaceUpdate:
             height,
             aligner,
         )
-        face = self._faces_at_frame_index(frame_index)[face_index]
+        face = self._face_at_index(frame_index, face_index, "Bounding box update")
+        if face is None:
+            return False
+
+        old_state = (
+            face.left,
+            face.width,
+            face.top,
+            face.height,
+            face.landmarks_xy.copy(),
+        )
+
         face.left = pnt_x
         face.width = width
         face.top = pnt_y
         face.height = height
-        face.add_landmarks_xy(self._extractor.get_landmarks(frame_index, face_index, aligner))
+
+        try:
+            landmarks = self._extractor.get_landmarks(frame_index, face_index, aligner)
+        except Exception as err:  # pylint:disable=broad-except
+            face.left, face.width, face.top, face.height, old_landmarks = old_state
+            face.add_landmarks_xy(old_landmarks)
+            logger.error(
+                "Bounding box update failed. frame_index=%s face_index=%s aligner=%s: %s",
+                frame_index,
+                face_index,
+                aligner,
+                err,
+                exc_info=True,
+            )
+            return False
+
+        face.add_landmarks_xy(landmarks)
         self._globals.var_full_update.set(True)
+        return True
 
     def landmark(
         self,
@@ -966,26 +1034,11 @@ class FaceUpdate:
         shift_y: int,
         is_zoomed: bool,
     ) -> None:
-        """Shift a single landmark point for the :class:`~lib.align.DetectedFace` object
-        at the given frame and face indices by the given x and y values.
+        """Shift one landmark, or a collection of landmarks."""
+        face = self._face_at_index(frame_index, face_index, "Landmark update")
+        if face is None:
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        landmark_index
-            The landmark index to shift. If a list is provided, this should be a list of landmark
-            indices to be shifted
-        shift_x
-            The amount to shift the landmark by along the x axis
-        shift_y
-            The amount to shift the landmark by along the y axis
-        is_zoomed
-            ``True`` if landmarks are being adjusted on a zoomed image otherwise ``False``
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
         if is_zoomed:
             aligned = AlignedFace(
                 face.landmarks_xy,
@@ -994,8 +1047,7 @@ class FaceUpdate:
             )
             landmark = aligned.landmarks[landmark_index]
             landmark += (shift_x, shift_y)
-            matrix = aligned.adjusted_matrix
-            matrix = cv2.invertAffineTransform(matrix)
+            matrix = cv2.invertAffineTransform(aligned.adjusted_matrix)
             if landmark.ndim == 1:
                 landmark = np.reshape(landmark, (1, 1, 2))
                 landmark = cv2.transform(landmark, matrix, landmark.shape).squeeze()
@@ -1017,23 +1069,11 @@ class FaceUpdate:
         points: np.ndarray,
         is_zoomed: bool,
     ) -> None:
-        """Replace a landmark region with absolute point positions.
+        """Replace a landmark region with absolute point positions."""
+        face = self._face_at_index(frame_index, face_index, "Landmark region update")
+        if face is None:
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for.
-        face_index
-            The face index within the frame.
-        landmark_indices
-            The landmark indices to replace.
-        points
-            Replacement points. In frame view these are original-frame coordinates.
-            In zoomed view these are displayed coordinates in the zoomed ROI.
-        is_zoomed
-            ``True`` if the replacement was drawn on the zoomed image.
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
         indices = np.asarray(tuple(int(idx) for idx in landmark_indices), dtype=np.int32)
         replacement = np.asarray(points, dtype=np.float32)
         if replacement.shape != (len(indices), 2):
@@ -1067,28 +1107,14 @@ class FaceUpdate:
         self._globals.var_full_update.set(True)
 
     def landmarks(self, frame_index: int, face_index: int, shift_x: int, shift_y: int) -> None:
-        """Shift all of the landmarks and bounding box for the
-        :class:`~lib.align.DetectedFace` object at the given frame and face indices by the
-        given x and y values and update the masks.
+        """Shift all landmarks and the bbox by the given x/y values."""
+        face = self._face_at_index(frame_index, face_index, "Landmarks move")
+        if face is None:
+            return
+        if face.left is None or face.top is None:
+            logger.debug("Landmarks move ignored. Face has no bbox.")
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        shift_x
-            The amount to shift the landmarks by along the x axis
-        shift_y
-            The amount to shift the landmarks by along the y axis
-
-        Notes
-        -----
-        Whilst the bounding box does not need to be shifted, it is anyway, to ensure that it is
-        aligned with the newly adjusted landmarks.
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
-        assert face.left is not None and face.top is not None
         face.left += shift_x
         face.top += shift_y
         face.add_landmarks_xy(face.landmarks_xy + (shift_x, shift_y))
@@ -1100,40 +1126,29 @@ class FaceUpdate:
         face_index: int,
         shift_x: int,
         shift_y: int,
-    ) -> None:
-        """Move a face bounding box and translate its existing landmarks.
+    ) -> bool:
+        """Move a face bbox and translate its landmarks without re-running the aligner."""
+        face = self._face_at_index(frame_index, face_index, "Bounding box move")
+        if face is None:
+            return False
+        if face.left is None or face.top is None:
+            logger.debug("Bounding box move ignored. Face has no bbox.")
+            return False
 
-        This is used while dragging a bounding box in bbox-zoom mode, where the
-        box and landmarks should remain spatially coupled in source-frame
-        coordinates. Final landmark regeneration still happens through
-        ``bounding_box(...)`` on release/resize paths.
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
-        assert face.left is not None and face.top is not None
         face.left += shift_x
         face.top += shift_y
         face.add_landmarks_xy(face.landmarks_xy + (shift_x, shift_y))
         self._globals.var_full_update.set(True)
+        return True
 
     def landmarks_rotate(
         self, frame_index: int, face_index: int, angle: float, center: np.ndarray
     ) -> None:
-        """Rotate the landmarks on an Extract Box rotate for the
-        :class:`~lib.align.DetectedFace` object at the given frame and face indices for the
-        given angle from the given center point.
+        """Rotate landmarks around ``center``."""
+        face = self._face_at_index(frame_index, face_index, "Landmarks rotate")
+        if face is None:
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        angle
-            The angle, in radians to rotate the points by
-        center
-            The center point of the Landmark's Extract Box
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
         rot_mat = cv2.getRotationMatrix2D(tuple(center.astype("float32")), angle, 1.0)
         face.add_landmarks_xy(
             cv2.transform(np.expand_dims(face.landmarks_xy, axis=0), rot_mat).squeeze()
@@ -1143,41 +1158,28 @@ class FaceUpdate:
     def landmarks_scale(
         self, frame_index: int, face_index: int, scale: np.ndarray, center: np.ndarray
     ) -> None:
-        """Scale the landmarks on an Extract Box resize for the
-        :class:`~lib.align.DetectedFace` object at the given frame and face indices from the
-        given center point.
+        """Scale landmarks around ``center``."""
+        face = self._face_at_index(frame_index, face_index, "Landmarks scale")
+        if face is None:
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        scale
-            The amount to scale the landmarks by
-        center
-            The center point of the Landmark's Extract Box
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
         face.add_landmarks_xy(((face.landmarks_xy - center) * scale) + center)
         self._globals.var_full_update.set(True)
 
     def mask(self, frame_index: int, face_index: int, mask: np.ndarray, mask_type: str) -> None:
-        """Update the mask on an edit for the :class:`~lib.align.DetectedFace` object at
-        the given frame and face indices, for the given mask and mask type.
+        """Update one stored face mask."""
+        face = self._face_at_index(frame_index, face_index, "Mask update")
+        if face is None:
+            return
+        if mask_type not in face.mask:
+            logger.debug(
+                "Mask update ignored. Missing mask type '%s' for frame_index=%s face_index=%s",
+                mask_type,
+                frame_index,
+                face_index,
+            )
+            return
 
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        mask
-            The mask to replace
-        mask_type
-            The name of the mask that is to be replaced
-        """
-        face = self._faces_at_frame_index(frame_index)[face_index]
         face.mask[mask_type].replace_mask(mask)
         self._tk_edited.set(True)
         self._globals.var_full_update.set(True)
@@ -1209,14 +1211,21 @@ class FaceUpdate:
 
     def _copy_faces_from_frame(self, frame_index: int) -> list[DetectedFace]:
         """Return deep-copied detected faces from ``frame_index`` without marking source dirty."""
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            return []
+
         to_copy = self._frame_faces[frame_index]
         if not to_copy:
             return []
 
-        # ``aligned_face`` cannot be deep-copied reliably, so remove and recreate.
-        for face in to_copy:
-            face._aligned = None  # pylint:disable=protected-access
-        copied = deepcopy(to_copy)
+        old_aligned = [face._aligned for face in to_copy]  # pylint:disable=protected-access
+        try:
+            for face in to_copy:
+                face._aligned = None  # pylint:disable=protected-access
+            copied = deepcopy(to_copy)
+        finally:
+            for face, aligned in zip(to_copy, old_aligned, strict=False):
+                face._aligned = aligned  # pylint:disable=protected-access
 
         for old_face, new_face in zip(to_copy, copied, strict=False):
             old_face.load_aligned(None)
@@ -1224,19 +1233,12 @@ class FaceUpdate:
         return copied
 
     def copy(self, frame_index: int, direction: T.Literal["prev", "next"]) -> None:
-        """Copy the alignments from the previous or next frame that has alignments
-        to the current frame.
-
-        Parameters
-        ----------
-        frame_index
-            The frame that the needs to have alignments copied to it
-        direction
-            Whether to copy alignments from the previous frame with alignments, or the next
-            frame with alignments
-        """
+        """Copy alignments from the nearest previous/next frame with faces."""
         logger.debug("frame: %s, direction: %s", frame_index, direction)
-        faces = self._faces_at_frame_index(frame_index)
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            logger.debug("Copy ignored. Invalid frame_index: %s", frame_index)
+            return
+
         frames_with_faces = [
             idx for idx, faces in enumerate(self._detected_faces.current_faces) if len(faces) > 0
         ]
@@ -1246,13 +1248,14 @@ class FaceUpdate:
             else next((idx for idx in frames_with_faces if idx > frame_index), None)
         )
         if idx is None:
-            # No previous/next frame available
             return
-        logger.debug("Copying alignments from frame %s to frame: %s", idx, frame_index)
 
+        logger.debug("Copying alignments from frame %s to frame: %s", idx, frame_index)
         copied = self._copy_faces_from_frame(idx)
         if not copied:
             return
+
+        faces = self._faces_at_frame_index(frame_index)
         faces.extend(copied)
         self._tk_face_count_changed.set(True)
         self._globals.var_full_update.set(True)
@@ -1295,19 +1298,11 @@ class FaceUpdate:
         return copied_count
 
     def post_edit_trigger(self, frame_index: int, face_index: int) -> None:
-        """Update the jpg thumbnail, the viewport thumbnail, the landmark masks and the aligned
-        face on a face edit.
-
-        Parameters
-        ----------
-        frame_index
-            The frame that the face is being set for
-        face_index
-            The face index within the frame
-        """
+        """Refresh face-derived cached state after an edit."""
         if frame_index < 0 or frame_index >= len(self._frame_faces):
             logger.debug("Skipping post-edit trigger for missing frame index: %s", frame_index)
             return
+
         faces = self._frame_faces[frame_index]
         if not 0 <= face_index < len(faces):
             logger.debug(
@@ -1319,15 +1314,28 @@ class FaceUpdate:
             return
 
         face = faces[face_index]
-        face.load_aligned(None, force=True)  # Update average distance
+        face.load_aligned(None, force=True)
         if face.mask:
             face.mask = {}
         if face.identity:
             face.clear_all_identities()
 
+        image = (
+            self._globals.current_frame.image
+            if frame_index == self._globals.frame_index
+            else self._globals.frame_image(frame_index)
+        )
+        if image is None:
+            logger.debug(
+                "Skipping thumbnail update. Could not resolve frame image: %s", frame_index
+            )
+            self._mark_filter_membership_dirty()
+            self._tk_edited.set(True)
+            return
+
         aligned = AlignedFace(
             face.landmarks_xy,
-            image=self._globals.current_frame.image,
+            image=image,
             centering="head",
             size=96,
         )
@@ -1335,6 +1343,3 @@ class FaceUpdate:
         face.thumbnail = generate_thumbnail(aligned.face, size=96)
         self._mark_filter_membership_dirty()
         self._tk_edited.set(True)
-
-
-__all__ = get_module_objects(__name__)

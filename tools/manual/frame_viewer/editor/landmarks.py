@@ -104,8 +104,8 @@ class Landmarks(Editor):
         self._trace_region_hidden: tuple[int, tuple[int, ...]] | None = None
         super().__init__(canvas, detected_faces, control_text)
         # Clear selection box on an editor or frame change
-        self._canvas._tk_action_var.trace("w", lambda *e: self._reset_selection())
-        self._globals.var_frame_index.trace_add("write", lambda *e: self._reset_selection())
+        self._add_trace(self._canvas._tk_action_var, "write", lambda *e: self._reset_selection())
+        self._add_trace(self._globals.var_frame_index, "write", lambda *e: self._reset_selection())
 
     def _add_actions(self):
         """Add the optional action buttons to the viewer. Current actions are Point, Select
@@ -161,7 +161,9 @@ class Landmarks(Editor):
         trace_vars = self._control_vars.get("trace", {})
         for key in ("EditMode", "TraceRegion", "NumberedGuide"):
             if key in trace_vars:
-                trace_vars[key].trace("w", lambda *_args: self._trace_control_updated())
+                self._add_trace(
+                    trace_vars[key], "write", lambda *_args: self._trace_control_updated()
+                )
 
     # CALLBACKS
     def _toggle_zoom(self, *args):  # pylint:disable=unused-argument
@@ -761,7 +763,13 @@ class Landmarks(Editor):
         """
         if self._canvas.itemcget(self._selection_box, "state") == "hidden":
             self._canvas.itemconfig(self._selection_box, state="normal")
-        coords = (*self._drag_data["start_location"], event.x, event.y)
+        start_x, start_y = self._drag_data["start_location"]
+        coords = (
+            min(start_x, event.x),
+            min(start_y, event.y),
+            max(start_x, event.x),
+            max(start_y, event.y),
+        )
         self._canvas.coords(self._selection_box, *coords)
         enclosed = set(self._canvas.find_enclosed(*coords))
         landmarks = set(self._canvas.find_withtag("lm_dsp"))

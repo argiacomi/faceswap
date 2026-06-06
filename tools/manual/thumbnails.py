@@ -72,23 +72,24 @@ class ThumbsCreator:
         self._location = input_location
         self._alignments = detected_faces._alignments
         self._frame_faces = detected_faces._frame_faces
+        self._folder_reader: SingleFrameLoader | None = None
 
         self._is_video = self._meta is not None
 
         cpu_count = os.cpu_count()
-        self._num_threads = 1 if cpu_count is None or cpu_count <= 2 else cpu_count - 2
+        max_threads = 1 if cpu_count is None or cpu_count <= 2 else cpu_count - 2
 
         if self._is_video and single_process:
             self._num_threads = 1
         else:
-            self._num_threads = max(self._num_threads, 32)
+            self._num_threads = min(max_threads, 32)
         self._threads: list[MultiThread] = []
         logger.debug("[THUMBS] Initialized %s", self.__class__.__name__)
 
     @property
     def has_thumbs(self) -> bool:
         """``True`` if the alignments file holds thumbnail images otherwise ``False``."""
-        return self._alignments.thumbnails.has_thumbnails
+        return bool(self._alignments.thumbnails.has_thumbnails)
 
     def generate_cache(self) -> None:
         """Extract the face thumbnails from a video or folder of images into the
@@ -106,6 +107,10 @@ class ThumbsCreator:
                 break
             sleep(1)
         self._join_threads()
+        folder_reader = getattr(self, "_folder_reader", None)
+        if folder_reader is not None:
+            folder_reader.close()
+            self._folder_reader = None
         self._p_bar.p_bar.close()
         self._alignments.save()
 
@@ -122,31 +127,25 @@ class ThumbsCreator:
             thread.join()
 
     def _launch_video(self) -> None:
-        """Launch multiple :class:`lib.multithreading.MultiThread` objects to load faces from
-        a video file.
-
-        Splits the video into segments and passes each of these segments to separate background
-        threads for some speed up.
-        """
+        """Launch thumbnail workers for a video file."""
         assert self._meta is not None
-        if self._meta["keyframes"][0] != 0:
+        if self._meta["keyframes"] and self._meta["keyframes"][0] != 0:
             logger.warning("Your video does not start on a Key Frame. This can lead to issues.")
 
         frame_face_indices = [i for i, v in enumerate(self._alignments.data.values()) if v.faces]
         num_frames = len(frame_face_indices)
+        if num_frames == 0:
+            logger.debug("[THUMBS] No video frames with faces to cache")
+            return
+
         num_threads = min(num_frames, self._num_threads)
-        window = num_frames // num_threads
-        for idx in range(self._num_threads):
-            is_final = idx == self._num_threads - 1
-            start = idx * window
-            end = num_frames + 1 if is_final else start + window
-            indices = frame_face_indices[start:end]
+        for idx, chunk in enumerate(np.array_split(frame_face_indices, num_threads)):
+            indices = [int(index) for index in chunk.tolist()]
+            if not indices:
+                continue
             logger.debug(
-                "[THUMBS] thread index: %s, start_idx: %s, end_idx: %s, frame_start: %s, "
-                "frame_end: %s, segment_count: %s",
+                "[THUMBS] thread index: %s, frame_start: %s, frame_end: %s, segment_count: %s",
                 idx,
-                start,
-                end,
                 indices[0],
                 indices[-1],
                 len(indices),
@@ -156,13 +155,9 @@ class ThumbsCreator:
             self._threads.append(thread)
 
     def _launch_folder(self) -> None:
-        """Launch :class:`lib.multithreading.MultiThread` to retrieve faces from a
-        folder of images.
-
-        Goes through the file list one at a time, passing each file to a separate background
-        thread for some speed up.
-        """
+        """Launch thumbnail workers for a folder of images."""
         reader = SingleFrameLoader(self._location)
+        self._folder_reader = reader
         skip_list = [
             idx
             for idx, f in enumerate(reader.file_list)
@@ -170,46 +165,45 @@ class ThumbsCreator:
         ]
         if skip_list:
             reader.add_skip_list(skip_list)
+        if reader.process_count == 0:
+            logger.debug("[THUMBS] No image frames with faces to cache")
+            return
+
         num_threads = min(reader.process_count, self._num_threads)
-        frame_split = reader.process_count // self._num_threads
         logger.debug(
-            "[THUMBS] total images: %s, num_threads: %s, frames_per_thread: %s",
+            "[THUMBS] total images: %s, num_threads: %s",
             reader.process_count,
             num_threads,
-            frame_split,
         )
-        for idx in range(num_threads):
-            is_final = idx == num_threads - 1
-            start_idx = idx * frame_split
-            end_idx = reader.process_count if is_final else start_idx + frame_split
+        for chunk in np.array_split(np.arange(reader.process_count), num_threads):
+            if len(chunk) == 0:
+                continue
+            start_idx = int(chunk[0])
+            end_idx = int(chunk[-1]) + 1
             thread = MultiThread(self._load_from_folder, reader, start_idx, end_idx)
             thread.start()
             self._threads.append(thread)
 
     def _load_from_video(self, indices: list[int]) -> None:
-        """Loads faces from video for the given segment of the source video.
-
-        Each segment of the video is extracted from in a different background thread.
-
-        Parameters
-        ----------
-        indices
-            The frame indices to process for for this segment
-        """
+        """Loads faces from video for the given segment of the source video."""
+        if not indices:
+            return
         logger.debug(
             "[THUMBS] Segment start: frame_start: %s, frame_end: %s, segment_count: %s",
-            list(indices)[0],
-            list(indices)[-1],
+            indices[0],
+            indices[-1],
             len(indices),
         )
         assert self._meta is not None
         reader = SingleFrameLoader(self._location, video_meta_data=self._meta)
         proc_count = 0
-        for frame_index in indices:
-            filename, image = reader.image_from_index(frame_index)
-            self._set_thumbnail(filename, image, frame_index)
-            proc_count += 1
-        reader.close()
+        try:
+            for frame_index in indices:
+                filename, image = reader.image_from_index(frame_index)
+                self._set_thumbnail(filename, image, frame_index)
+                proc_count += 1
+        finally:
+            reader.close()
         logger.debug(
             "[THUMBS] Segment complete: (starting_frame_index: %s, processed_count: %s)",
             indices[0],
@@ -248,20 +242,31 @@ class ThumbsCreator:
         )
 
     def _set_thumbnail(self, filename: str, frame: np.ndarray, frame_index: int) -> None:
-        """Extracts the faces from the frame and adds to alignments file
-
-        Parameters
-        ----------
-        filename
-            The filename of the frame within the alignments file
-        frame
-            The frame that contains the faces
-        frame_index
-            The frame index of this frame in the :attr:`_frame_faces`
-        """
+        """Extracts the faces from the frame and adds to alignments file."""
         for face_idx, face in enumerate(self._frame_faces[frame_index]):
-            aligned = AlignedFace(face.landmarks_xy, image=frame, centering="head", size=96)
-            face.thumbnail = generate_thumbnail(aligned.face, size=96)
+            thumbnail_source = None
+            try:
+                aligned = AlignedFace(face.landmarks_xy, image=frame, centering="head", size=96)
+                thumbnail_source = aligned.face
+            except Exception:  # pylint:disable=broad-except
+                logger.debug(
+                    "[THUMBS] Could not build aligned thumbnail for %s face %s",
+                    filename,
+                    face_idx,
+                    exc_info=True,
+                )
+
+            if thumbnail_source is None:
+                height, width = frame.shape[:2]
+                x = max(0, int(round(getattr(face, "x", getattr(face, "left", 0)))))
+                y = max(0, int(round(getattr(face, "y", getattr(face, "top", 0)))))
+                w = max(1, int(round(getattr(face, "w", getattr(face, "width", width)))))
+                h = max(1, int(round(getattr(face, "h", getattr(face, "height", height)))))
+                x2 = min(width, x + w)
+                y2 = min(height, y + h)
+                thumbnail_source = frame if x >= x2 or y >= y2 else frame[y:y2, x:x2]
+
+            face.thumbnail = generate_thumbnail(thumbnail_source, size=96)
             assert face.thumbnail is not None
             self._alignments.thumbnails.add_thumbnail(filename, face_idx, face.thumbnail)
         with self._p_bar.lock:

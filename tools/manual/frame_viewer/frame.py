@@ -102,7 +102,8 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             "mode": _("Filter Frames to only those Containing the Selected Item (F)"),
             "distance": _(
                 "Set the distance threshold for the active landmark-distance filter. "
-                "Higher distances are more restrictive"
+                "For Misaligned Faces, use Min and Max to show scores between two values. "
+                "For Neighbor Outliers, use Distance as a single threshold."
             ),
             "fps": _("Set the playback speed in frames per second."),
         }
@@ -330,48 +331,71 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         nav_frame.pack(side=tk.RIGHT)
 
     def _add_filter_threshold_slider(self, frame):
-        """Add the optional filter threshold slider for misaligned filter to the filter frame.
-
-        Parameters
-        ----------
-        frame: :class:`tkinter.ttk.Frame`
-            The Filter Frame that holds the filter threshold slider
-        """
+        """Add optional filter threshold controls for landmark-distance filters."""
         slider_frame = ttk.Frame(frame)
-        tk_var = self._globals.var_filter_distance
-
         min_max = (5, 20)
-        ctl_frame = ttk.Frame(slider_frame)
-        ctl_frame.pack(padx=2, side=tk.RIGHT)
 
-        lbl = ttk.Label(ctl_frame, text="Distance:", anchor=tk.W)
-        lbl.pack(side=tk.LEFT, anchor=tk.N, expand=True)
+        def add_distance_control(label, tk_var):
+            ctl_frame = ttk.Frame(slider_frame)
 
-        tbox = ttk.Entry(ctl_frame, width=6, textvariable=tk_var, justify=tk.RIGHT)
-        tbox.pack(padx=(0, 5), side=tk.RIGHT)
+            lbl = ttk.Label(ctl_frame, text=label, anchor=tk.W)
+            lbl.pack(side=tk.LEFT, anchor=tk.N, expand=True)
 
-        ctl = ttk.Scale(
-            ctl_frame,
-            variable=tk_var,
-            command=lambda val, var=tk_var, dt=int, rn=1, mm=min_max: set_slider_rounding(
-                val, var, dt, rn, mm
-            ),
-        )
-        ctl["from_"] = min_max[0]
-        ctl["to"] = min_max[1]
-        ctl.pack(padx=5, fill=tk.X, expand=True)
-        for item in (tbox, ctl):
-            Tooltip(item, text=self._helptext["distance"], wrap_length=200)
-        tk_var.trace_add("write", self._navigation.nav_scale_callback)
+            tbox = ttk.Entry(ctl_frame, width=4, textvariable=tk_var, justify=tk.RIGHT)
+            tbox.pack(padx=(0, 5), side=tk.RIGHT)
+
+            ctl = ttk.Scale(
+                ctl_frame,
+                variable=tk_var,
+                command=lambda val, var=tk_var, dt=int, rn=1, mm=min_max: set_slider_rounding(
+                    val, var, dt, rn, mm
+                ),
+            )
+            ctl["from_"] = min_max[0]
+            ctl["to"] = min_max[1]
+            ctl.pack(padx=5, fill=tk.X, expand=True)
+
+            for item in (tbox, ctl):
+                Tooltip(item, text=self._helptext["distance"], wrap_length=240)
+
+            tk_var.trace_add("write", self._navigation.nav_scale_callback)
+            return ctl_frame
+
         self._optional_widgets["distance_slider"] = slider_frame
+        self._optional_widgets["distance_min"] = add_distance_control(
+            "Min:",
+            self._globals.var_filter_distance_min,
+        )
+        self._optional_widgets["distance_max"] = add_distance_control(
+            "Max:",
+            self._globals.var_filter_distance_max,
+        )
+        self._optional_widgets["distance_single"] = add_distance_control(
+            "Distance:",
+            self._globals.var_filter_distance,
+        )
 
     def pack_threshold_slider(self):
-        """Display or hide the threshold slider depending on the current filter mode. For
-        misaligned faces filter, display the slider. Hide for all other filters."""
-        if self._globals.var_filter_mode.get() in ("Misaligned Faces", "Neighbor Outliers"):
-            self._optional_widgets["distance_slider"].pack(side=tk.LEFT)
+        """Display threshold controls for the active landmark-distance filter."""
+        mode = self._globals.var_filter_mode.get()
+        slider = self._optional_widgets["distance_slider"]
+        min_ctl = self._optional_widgets["distance_min"]
+        max_ctl = self._optional_widgets["distance_max"]
+        single_ctl = self._optional_widgets["distance_single"]
+
+        for widget in (min_ctl, max_ctl, single_ctl):
+            widget.pack_forget()
+
+        if mode == "Misaligned Faces":
+            slider.pack(side=tk.LEFT)
+            # Pack right-to-left so the visual order is Min, Max.
+            max_ctl.pack(padx=2, side=tk.RIGHT)
+            min_ctl.pack(padx=2, side=tk.RIGHT)
+        elif mode == "Neighbor Outliers":
+            slider.pack(side=tk.LEFT)
+            single_ctl.pack(padx=2, side=tk.RIGHT)
         else:
-            self._optional_widgets["distance_slider"].pack_forget()
+            slider.pack_forget()
 
     def cycle_filter_mode(self):
         """Cycle the navigation mode combo entry"""
@@ -867,6 +891,14 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         logger.trace("offset_x: %s, offset_y: %s", offset_x, offset_y)
         return offset_x, offset_y
 
+    def destroy(self):
+        """Close editor-owned traces before destroying the canvas."""
+        for editor in getattr(self, "_editors", {}).values():
+            close = getattr(editor, "close", None)
+            if callable(close):
+                close()
+        super().destroy()
+
     def _get_editors(self):
         """Get the object editors for the canvas.
 
@@ -875,13 +907,17 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         dict
             The {`action`: :class:`Editor`} dictionary of editors for :attr:`_actions` name.
         """
+        editor_classes = {
+            "View": View,
+            "BoundingBox": BoundingBox,
+            "ExtractBox": ExtractBox,
+            "Landmarks": Landmarks,
+            "Mask": Mask,
+            "Mesh": Mesh,
+        }
         editors = {}
         for editor_name in self._actions + ("Mesh",):
-            editor = eval(editor_name)(
-                self,  # pylint:disable=eval-used
-                self._det_faces,
-            )
-            editors[editor_name] = editor
+            editors[editor_name] = editor_classes[editor_name](self, self._det_faces)
         logger.debug(editors)
         return editors
 

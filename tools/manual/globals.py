@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import tkinter as tk
 import typing as T
 from dataclasses import dataclass, field
@@ -48,7 +47,7 @@ class CurrentFrame:
             f"{k}={(v.shape, v.dtype) if isinstance(v, np.ndarray) else v}"
             for k, v in self.__dict__.items()
         ]
-        return f"{self.__class__.__name__} ({', '.join(properties)}"
+        return f"{self.__class__.__name__} ({', '.join(properties)})"
 
 
 @dataclass
@@ -62,6 +61,10 @@ class TKVars:
     have been applied """
     face_index: tk.IntVar
     """:class:`tkinter.IntVar`: The face index of the currently selected face"""
+    filter_distance_min: tk.IntVar
+    """:class:`tkinter.IntVar`: Lower bound for Misaligned Faces distance range."""
+    filter_distance_max: tk.IntVar
+    """:class:`tkinter.IntVar`: Upper bound for Misaligned Faces distance range."""
     filter_distance: tk.IntVar
     """:class:`tkinter.IntVar`: The amount to filter by distance"""
     playback_fps: tk.IntVar
@@ -135,6 +138,8 @@ class TkGlobals:
             frame_index=tk.IntVar(value=0),
             transport_index=tk.IntVar(value=0),
             face_index=tk.IntVar(value=0),
+            filter_distance_min=tk.IntVar(value=10),
+            filter_distance_max=tk.IntVar(value=20),
             filter_distance=tk.IntVar(value=10),
             playback_fps=tk.IntVar(value=24),
             update=tk.BooleanVar(value=False),
@@ -183,6 +188,16 @@ class TkGlobals:
         """:class:`tkinter.IntVar`: The current absolute frame index of the currently
         displayed frame."""
         return self._tk_vars.frame_index
+
+    @property
+    def var_filter_distance_min(self) -> tk.IntVar:
+        """:class:`tkinter.IntVar`: Lower bound for Misaligned Faces distance range."""
+        return self._tk_vars.filter_distance_min
+
+    @property
+    def var_filter_distance_max(self) -> tk.IntVar:
+        """:class:`tkinter.IntVar`: Upper bound for Misaligned Faces distance range."""
+        return self._tk_vars.filter_distance_max
 
     @property
     def var_filter_distance(self) -> tk.IntVar:
@@ -263,8 +278,7 @@ class TkGlobals:
         elif os.path.splitext(frames_location)[1].lower() in VIDEO_EXTENSIONS:
             retval = True
         else:
-            logger.error("The input location '%s' is not valid", frames_location)
-            sys.exit(1)
+            raise ValueError(f"The input location '{frames_location}' is not valid")
         logger.debug("Input '%s' is_video: %s", frames_location, retval)
         return retval
 
@@ -364,6 +378,7 @@ class TkGlobals:
         try:
             _filename, image = getter(frame_index)
         except Exception:  # pylint:disable=broad-except
+            logger.debug("Could not resolve frame image for index: %s", frame_index, exc_info=True)
             return None
         return image
 
@@ -417,8 +432,11 @@ class TkGlobals:
         height: int
             The height of the frame holding the video canvas in pixels
         """
-        self._frame_display_dims = (int(width), int(height))
+        self._frame_display_dims = (max(1, int(width)), max(1, int(height)))
         image = self._current_frame.image
+        if image.ndim < 2 or image.shape[0] <= 0 or image.shape[1] <= 0:
+            logger.debug("Frame display resized before a valid frame was loaded")
+            return
         scale = min(
             self.frame_display_dims[0] / image.shape[1],
             self.frame_display_dims[1] / image.shape[0],

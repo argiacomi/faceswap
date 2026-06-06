@@ -9,7 +9,6 @@ from functools import partial
 import numpy as np
 
 from lib.gui.custom_widgets import RightClickMenu
-from lib.utils import get_module_objects
 from tools.manual.aligners import available_aligners, default_aligner
 
 from ._base import ControlPanelOption, Editor, logger
@@ -35,8 +34,9 @@ class BoundingBox(Editor):
     def __init__(self, canvas, detected_faces):
         self._tk_aligner = None
         self._right_click_menu = RightClickMenu(
-            [_("Delete Face(s)")], [self._delete_current_face], ["Del"]
+            [_("Delete Face(s)")], [self._delete_context_face], ["Del"]
         )
+        self._context_face_index = None
         control_text = _(
             "Bounding Box Editor\nEdit the bounding box being fed into the aligner "
             "to recalculate the landmarks.\n\n"
@@ -75,20 +75,50 @@ class BoundingBox(Editor):
             if self._canvas.itemcget(item_id, "state") != "hidden"
         ]
 
+    def _current_faces(self):
+        """Return faces for the current frame, or an empty tuple for stale frame state."""
+        frame_index = self._globals.frame_index
+        current_faces = self._det_faces.current_faces
+        if frame_index < 0 or frame_index >= len(current_faces):
+            return ()
+        return current_faces[frame_index]
+
+    def _valid_face_index(self, face_index: int) -> bool:
+        """Return whether ``face_index`` exists on the current frame."""
+        return 0 <= int(face_index) < len(self._current_faces())
+
+    def _face_from_index(self, face_index: int):
+        """Return the current frame face for ``face_index``, or ``None`` if stale."""
+        if not self._valid_face_index(face_index):
+            logger.debug(
+                "Ignoring stale bounding-box face index. frame_index: %s face_index: %s faces: %s",
+                self._globals.frame_index,
+                face_index,
+                len(self._current_faces()),
+            )
+            return None
+        return self._current_faces()[face_index]
+
+    def _aligner_name(self) -> str:
+        """Return the selected aligner, falling back to the default before controls are ready."""
+        return self._tk_aligner.get() if self._tk_aligner is not None else default_aligner()
+
+    def _display_shift_to_source(self, shift: tuple[int, int], face_index: int) -> tuple[int, int]:
+        """Convert a display-space drag delta to source-frame pixels."""
+        if self._globals.is_zoomed:
+            face = self._face_from_index(face_index)
+            if face is None:
+                return (0, 0)
+            _, scale, _ = self._bbox_zoom_geometry(face)
+        else:
+            scale = self._globals.current_frame.scale
+
+        if not scale:
+            return (0, 0)
+        return (int(round(shift[0] / scale)), int(round(shift[1] / scale)))
+
     def _add_controls(self):
         """Controls for feeding the Aligner. Exposes Normalization Method as a parameter."""
-
-    def _add_actions(self):
-        """Add the zoom action for detailed bounding-box editing."""
-        self._add_action(
-            "magnify", "zoom", _("Magnify/Demagnify the View"), group=None, hotkey="M"
-        )
-        self._actions["magnify"]["tk_var"].trace("w", self._toggle_zoom)
-
-    def _toggle_zoom(self, *args):  # pylint:disable=unused-argument
-        """Trigger a redraw when zoom mode changes."""
-        self._globals.var_full_update.set(True)
-
         align_ctl = ControlPanelOption(
             "Aligner",
             str,
@@ -125,11 +155,23 @@ class BoundingBox(Editor):
             ),
         )
         var = norm_ctl.tk_var
-        var.trace(
-            "w",
+        self._add_trace(
+            var,
+            "write",
             lambda *e, v=var: self._det_faces.extractor.set_normalization_method(v.get()),
         )
         self._add_control(norm_ctl)
+
+    def _add_actions(self):
+        """Add the zoom action for detailed bounding-box editing."""
+        self._add_action(
+            "magnify", "zoom", _("Magnify/Demagnify the View"), group=None, hotkey="M"
+        )
+        self._add_trace(self._actions["magnify"]["tk_var"], "write", self._toggle_zoom)
+
+    def _toggle_zoom(self, *args):  # pylint:disable=unused-argument
+        """Trigger a redraw when zoom mode changes."""
+        self._globals.var_full_update.set(True)
 
     def update_annotation(self):
         """Get the latest bounding box data from alignments and update."""
@@ -189,7 +231,9 @@ class BoundingBox(Editor):
         )
 
         if self._globals.is_zoomed and face_idx is not None:
-            face = self._det_faces.current_faces[self._globals.frame_index][face_idx]
+            face = self._face_from_index(int(face_idx))
+            if face is None:
+                raise ValueError(f"Stale face index for bbox zoom conversion: {face_idx}")
             corners = self._scale_from_bbox_zoom(corners, face)
         else:
             corners = self.scale_from_display(corners)
@@ -266,23 +310,19 @@ class BoundingBox(Editor):
         self._mouse_location = None
 
     def _check_cursor_anchors(self):
-        """Check whether the cursor is over a corner anchor.
-
-        If it is, set the appropriate cursor type and set :attr:`_mouse_location` to
-        ("anchor", (`face index`, `anchor index`)
-
-        Returns
-        -------
-        bool
-            ``True`` if cursor is over an anchor point otherwise ``False``
-        """
+        """Check whether the cursor is over a corner anchor."""
         anchors = set(self._canvas.find_withtag("bb_anc_grb"))
         item_ids = set(self._canvas.find_withtag("current")).intersection(anchors)
         if not item_ids:
             return False
+
         item_id = list(item_ids)[0]
         tags = self._canvas.gettags(item_id)
         face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
+        if not self._valid_face_index(face_idx):
+            self._mouse_location = None
+            return False
+
         corner_idx = int(
             next(
                 tag for tag in tags if tag.startswith("bb_anc_grb_") and "face_" not in tag
@@ -294,25 +334,7 @@ class BoundingBox(Editor):
         return True
 
     def _check_cursor_bounding_box(self, event):
-        """Check whether the cursor is over a bounding box.
-
-        If it is, set the appropriate cursor type and set :attr:`_mouse_location` to:
-        ("box", `face index`)
-
-        Parameters
-        ----------
-        event: :class:`tkinter.Event`
-            The tkinter mouse event
-
-        Returns
-        -------
-        bool
-            ``True`` if cursor is over a bounding box otherwise ``False``
-
-        Notes
-        -----
-        We can't use tags on unfilled rectangles as the interior of the rectangle is not tagged.
-        """
+        """Check whether the cursor is over a bounding box."""
         item_ids = self._canvas.find_withtag("bb_box")
         for item_id in item_ids:
             if self._canvas.itemcget(item_id, "state") == "hidden":
@@ -321,6 +343,8 @@ class BoundingBox(Editor):
             if bbox[0] <= event.x <= bbox[2] and bbox[1] <= event.y <= bbox[3]:
                 tags = self._canvas.gettags(item_id)
                 face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
+                if not self._valid_face_index(face_idx):
+                    continue
                 self._canvas.config(cursor="fleur")
                 self._mouse_location = ("box", str(face_idx))
                 return True
@@ -398,17 +422,42 @@ class BoundingBox(Editor):
             self._drag_start(event)
 
     def _drag_stop(self, event):  # pylint:disable=unused-argument
-        """Trigger a viewport thumbnail update on click + drag release
+        """Realign moved bounding boxes once, then trigger thumbnail/grid updates."""
+        try:
+            if self._mouse_location is None:
+                return
+            if self._mouse_location[0] not in ("anchor", "box"):
+                return
 
-        Parameters
-        ----------
-        event: :class:`tkinter.Event`
-            The tkinter mouse event. Required but unused.
-        """
-        if self._mouse_location is None:
-            return
-        face_idx = int(self._mouse_location[1].split("_")[0])
-        self._det_faces.update.post_edit_trigger(self._globals.frame_index, face_idx)
+            face_idx = int(self._mouse_location[1].split("_")[0])
+            if not self._valid_face_index(face_idx):
+                self._mouse_location = None
+                return
+
+            frame_index = self._globals.frame_index
+            updated = True
+            if self._mouse_location[0] == "box" and self._drag_data.get("needs_realign"):
+                face_tag = f"bb_box_face_{face_idx}"
+                box = self._canvas.coords(face_tag)
+                if not box:
+                    logger.debug("Move realign ignored. No canvas coords for tag: %s", face_tag)
+                    return
+                try:
+                    bbox = self._coords_to_bounding_box(box, face_idx)
+                except ValueError:
+                    logger.debug("Move realign ignored due to stale zoom state.", exc_info=True)
+                    return
+                updated = self._det_faces.update.bounding_box(
+                    frame_index,
+                    face_idx,
+                    *bbox,
+                    aligner=self._aligner_name(),
+                )
+
+            if updated:
+                self._det_faces.update.post_edit_trigger(frame_index, face_idx)
+        finally:
+            super()._drag_stop(event)
 
     def _create_new_bounding_box(self, event):
         """Create a new bounding box when user clicks on image, outside of existing boxes.
@@ -427,24 +476,24 @@ class BoundingBox(Editor):
         self._det_faces.update.add(self._globals.frame_index, *self._coords_to_bounding_box(box))
 
     def _resize(self, event):
-        """Resizes a bounding box on a corner anchor drag event.
-
-        Parameters
-        ----------
-        event: :class:`tkinter.Event`
-            The tkinter mouse event.
-        """
+        """Resize a bounding box on a corner anchor drag event."""
         face_idx = int(self._mouse_location[1].split("_")[0])
+        if not self._valid_face_index(face_idx):
+            self._mouse_location = None
+            return
+
         face_tag = f"bb_box_face_{face_idx}"
         box = self._canvas.coords(face_tag)
+        if not box:
+            logger.debug("Resize ignored. No canvas coords for tag: %s", face_tag)
+            return
+
         logger.trace(
             "Face Index: %s, Corner Index: %s. Original ROI: %s",
             face_idx,
             self._drag_data["corner"],
             box,
         )
-        # Switch top/bottom and left/right and set partial so indices match and we don't
-        # need branching logic for min/max.
         limits = (
             partial(min, box[2] - 20),
             partial(min, box[3] - 20),
@@ -456,51 +505,81 @@ class BoundingBox(Editor):
         ]
         box[rect_xy_indices[1]] = limits[rect_xy_indices[1]](event.x)
         box[rect_xy_indices[0]] = limits[rect_xy_indices[0]](event.y)
-        logger.trace("New ROI: %s", box)
+
+        try:
+            bbox = self._coords_to_bounding_box(box, face_idx)
+        except ValueError:
+            logger.debug("Resize ignored due to stale zoom state.", exc_info=True)
+            return
+
         self._det_faces.update.bounding_box(
             self._globals.frame_index,
             face_idx,
-            *self._coords_to_bounding_box(box, face_idx),
-            aligner=self._tk_aligner.get(),
+            *bbox,
+            aligner=self._aligner_name(),
         )
 
     def _move(self, event):
-        """Moves the bounding box on a bounding box drag event.
-
-        Parameters
-        ----------
-        event: :class:`tkinter.Event`
-            The tkinter mouse event.
-        """
+        """Move a bounding box during drag and regenerate landmarks."""
         logger.trace("event: %s, mouse_location: %s", event, self._mouse_location)
         face_idx = int(self._mouse_location[1])
+        if not self._valid_face_index(face_idx):
+            self._mouse_location = None
+            return
+
         shift = (
             event.x - self._drag_data["current_location"][0],
             event.y - self._drag_data["current_location"][1],
         )
+        if shift == (0, 0):
+            return
+
         face_tag = f"bb_box_face_{face_idx}"
-        coords = np.array(self._canvas.coords(face_tag)) + (*shift, *shift)
-        logger.trace("face_tag: %s, shift: %s, new co-ords: %s", face_tag, shift, coords)
-        self._det_faces.update.bounding_box(
+        box = self._canvas.coords(face_tag)
+        if not box:
+            logger.debug("Move ignored. No canvas coords for tag: %s", face_tag)
+            return
+
+        moved_box = np.array(box) + (*shift, *shift)
+        try:
+            bbox = self._coords_to_bounding_box(moved_box, face_idx)
+        except ValueError:
+            logger.debug("Move ignored due to stale zoom state.", exc_info=True)
+            return
+
+        updated = self._det_faces.update.bounding_box(
             self._globals.frame_index,
             face_idx,
-            *self._coords_to_bounding_box(coords, face_idx),
-            aligner=self._tk_aligner.get(),
+            *bbox,
+            aligner=self._aligner_name(),
         )
-        self._drag_data["current_location"] = (event.x, event.y)
+        if updated:
+            # Keep the item responsive even if the redraw callback is delayed.
+            self._canvas.coords(face_tag, *moved_box)
+            self._drag_data["current_location"] = (event.x, event.y)
 
     def _nudge_face_index(self):
         """Return the face index to nudge from hover/selection state."""
         frame_index = self._globals.frame_index
-        if frame_index < 0:
+        current_faces = self._det_faces.current_faces
+        if frame_index < 0 or frame_index >= len(current_faces):
             return None
 
-        faces = self._det_faces.current_faces[frame_index]
+        faces = current_faces[frame_index]
         if not faces:
             return None
 
         if self._mouse_location is not None and self._mouse_location[0] == "box":
-            return int(self._mouse_location[1].split("_")[0])
+            face_index = int(self._mouse_location[1].split("_")[0])
+            if 0 <= face_index < len(faces):
+                return face_index
+            logger.debug(
+                "Ignoring stale bounding box hover index. frame_index: %s face_index: %s faces: %s",
+                frame_index,
+                face_index,
+                len(faces),
+            )
+            self._mouse_location = None
 
         face_index = self._globals.face_index
         if 0 <= face_index < len(faces):
@@ -533,22 +612,20 @@ class BoundingBox(Editor):
 
         shift_x, shift_y = shifts[direction]
         nudged = np.array(coords) + (shift_x, shift_y, shift_x, shift_y)
-        logger.trace(
-            "Nudging bounding box. frame_index: %s, face_idx: %s, direction: %s, "
-            "pixels: %s, coords: %s",
+        try:
+            bbox = self._coords_to_bounding_box(nudged, face_idx)
+        except ValueError:
+            logger.debug("Bounding box nudge ignored due to stale zoom state.", exc_info=True)
+            return
+
+        updated = self._det_faces.update.bounding_box(
             frame_index,
             face_idx,
-            direction,
-            pixels,
-            nudged,
+            *bbox,
+            aligner=self._aligner_name(),
         )
-        self._det_faces.update.bounding_box(
-            frame_index,
-            face_idx,
-            *self._coords_to_bounding_box(nudged, face_idx),
-            aligner=self._tk_aligner.get(),
-        )
-        self._det_faces.update.post_edit_trigger(frame_index, face_idx)
+        if updated:
+            self._det_faces.update.post_edit_trigger(frame_index, face_idx)
 
     def _coords_to_bounding_box(self, coords, face_idx=None):
         """Convert display coordinates to DetectedFace bounding-box format.
@@ -569,25 +646,64 @@ class BoundingBox(Editor):
             int(maxes[1] - mins[1]),
         )
 
+    def _face_index_from_bbox_event(self, event):
+        """Return the face index for the bounding box under a mouse event."""
+        for item_id in self._canvas.find_withtag("bb_box"):
+            if self._canvas.itemcget(item_id, "state") == "hidden":
+                continue
+            bbox = self._canvas.coords(item_id)
+            if len(bbox) < 4:
+                continue
+            left, top, right, bottom = bbox[:4]
+            if not (left <= event.x <= right and top <= event.y <= bottom):
+                continue
+            tags = self._canvas.gettags(item_id)
+            face_tag = next((tag for tag in tags if tag.startswith("face_")), None)
+            if face_tag is None:
+                continue
+            face_idx = int(face_tag.split("_")[-1])
+            if self._valid_face_index(face_idx):
+                return face_idx
+        return None
+
     def _context_menu(self, event):
-        """Create a right click context menu to delete the alignment that is being
-        hovered over."""
-        if self._mouse_location is None or self._mouse_location[0] != "box":
+        """Create a right-click context menu for the bounding box under the click."""
+        face_idx = self._face_index_from_bbox_event(event)
+        if face_idx is None:
+            self._context_face_index = None
             return
+        self._context_face_index = face_idx
+        self._mouse_location = ("box", str(face_idx))
         self._right_click_menu.popup(event)
 
-    def _delete_current_face(self, *args):  # pylint:disable=unused-argument
-        """Called by the right click delete event. Deletes the selected or hovered face(s).
+    def _delete_context_face(self, *args):  # pylint:disable=unused-argument
+        """Delete the face that was under the right-click event."""
+        face_index = self._context_face_index
+        if face_index is None:
+            logger.debug("Context delete ignored. No clicked face target.")
+            return
+        if not self._valid_face_index(face_index):
+            logger.debug("Context delete ignored for stale face index: %s", face_index)
+            self._context_face_index = None
+            return
 
-        Parameters
-        ----------
-        args: tuple (unused)
-            The event parameter is passed in by the hot key binding, so args is required
-        """
+        logger.debug(
+            "Deleting right-clicked face. frame_index: %s face_index: %s",
+            self._globals.frame_index,
+            face_index,
+        )
+        self._det_faces.update.delete_many(self._globals.frame_index, (int(face_index),))
+        self._globals.clear_selected_faces()
+        self._context_face_index = None
+        self._mouse_location = None
+
+    def _delete_current_face(self, *args):  # pylint:disable=unused-argument
+        """Delete the selected or hovered face(s)."""
         selected_faces = self._globals.selected_faces
         if selected_faces:
             logger.debug("Deleting selected faces: %s", selected_faces)
             self._det_faces.update.delete_many_frames(selected_faces)
+            self._mouse_location = None
             return
 
         if self._mouse_location is None or self._mouse_location[0] != "box":
@@ -597,7 +713,13 @@ class BoundingBox(Editor):
             )
             return
 
-        face_indices = (int(self._mouse_location[1]),)
+        face_index = int(self._mouse_location[1])
+        if not self._valid_face_index(face_index):
+            logger.debug("Delete ignored for stale face index: %s", face_index)
+            self._mouse_location = None
+            return
+
+        face_indices = (face_index,)
         logger.debug(
             "Deleting hovered face. frame_index: %s face_indices: %s",
             self._globals.frame_index,
@@ -605,6 +727,4 @@ class BoundingBox(Editor):
         )
         self._det_faces.update.delete_many(self._globals.frame_index, face_indices)
         self._globals.clear_selected_faces()
-
-
-__all__ = get_module_objects(__name__)
+        self._mouse_location = None

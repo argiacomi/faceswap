@@ -123,8 +123,10 @@ class Mask(Editor):
         self._add_action("draw", "draw", _("Draw Tool"), group="paint", hotkey="D")
         self._add_action("erase", "erase", _("Erase Tool"), group="paint", hotkey="E")
         self._add_action("lasso", "lasso", _("Lasso Fill Tool"), group=None, hotkey="L")
-        self._actions["magnify"]["tk_var"].trace(
-            "w", lambda *e: self._globals.var_full_update.set(True)
+        self._add_trace(
+            self._actions["magnify"]["tk_var"],
+            "write",
+            lambda *e: self._globals.var_full_update.set(True),
         )
 
     def _add_controls(self) -> None:
@@ -202,13 +204,13 @@ class Mask(Editor):
     def _set_tk_mask_change_callback(self) -> tk.StringVar:
         """Add a trace to change the displayed mask on a mask type change."""
         var = self._control_vars["display"]["MaskType"]
-        var.trace("w", lambda *e: self._on_mask_type_change())
+        self._add_trace(var, "write", lambda *e: self._on_mask_type_change())
         return var.get()  # type: ignore[no-any-return]
 
     def _set_tk_cursor_shape_change_callback(self) -> tk.StringVar:
         """Add a trace to change the displayed cursor on a cursor shape type change."""
         var = self._control_vars["display"]["CursorShape"]
-        var.trace("w", lambda *e: self._on_cursor_shape_change())
+        self._add_trace(var, "write", lambda *e: self._on_cursor_shape_change())
         return var.get()  # type: ignore[no-any-return]
 
     def _on_cursor_shape_change(self) -> None:
@@ -486,9 +488,12 @@ class Mask(Editor):
                 face_index,
             )
             self._tk_faces.append(ImageTk.PhotoImage(display_image))
-        elif self._tk_faces[face_index].width() != display_image.width:
+        elif (
+            self._tk_faces[face_index].width() != display_image.width
+            or self._tk_faces[face_index].height() != display_image.height
+        ):
             logger.trace(  # type:ignore[attr-defined]
-                "Replacing existing Photo Image on width change for face index: %s",
+                "Replacing existing Photo Image on size change for face index: %s",
                 face_index,
             )
             self._tk_faces[face_index] = ImageTk.PhotoImage(display_image)
@@ -569,8 +574,9 @@ class Mask(Editor):
         -------
         The full frame mask image formatted for display
         """
-        frame_dims = self._globals.current_frame.display_dims
-        frame = np.zeros(frame_dims + (1,), dtype="uint8")
+        width, height = self._globals.current_frame.display_dims
+        frame_dims = (width, height)
+        frame = np.zeros((height, width, 1), dtype="uint8")
         interpolator = self._meta["interpolator"][face_index]
         slices = self._meta["slices"][face_index]
         out = cv2.warpAffine(

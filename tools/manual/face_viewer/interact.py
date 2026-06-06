@@ -237,6 +237,8 @@ class Asset:
     boxes: list[int]
     """list[int]: Indices for a frame's bounding box object ids displayed in the active
     frame"""
+    face_indices: list[int]
+    """list[int]: Actual face indices for active-frame assets."""
 
 
 class ActiveFrame:
@@ -272,7 +274,7 @@ class ActiveFrame:
             "selected_editor": self._canvas._display_frame.tk_selected_action,
             "edited": tk_edited_variable,
         }
-        self._assets: Asset = Asset([], [], [], [])
+        self._assets: Asset = Asset([], [], [], [], [])
 
         self._globals.var_update_active_viewport.trace_add(
             "write", lambda *e: self._reload_callback()
@@ -308,35 +310,33 @@ class ActiveFrame:
             self.reload_annotations()
 
     def reload_annotations(self) -> None:
-        """Handles the reloading of annotations for the currently active faces.
-
-        Highlights the faces within the viewport of those faces that exist in the currently
-        displaying frame. Applies annotations based on the optional annotations and current
-        editor selections.
-        """
+        """Reload annotations for the currently active faces."""
         logger.trace("Reloading annotations")  # type:ignore[attr-defined]
-        if self._assets.images:
-            self._clear_previous()
+        try:
+            if self._assets.images:
+                self._clear_previous()
 
-        self._set_active_objects()
-        self._check_active_in_view()
+            self._set_active_objects()
+            self._check_active_in_view()
 
-        if not self._assets.images:
-            logger.trace("No active faces. Returning")  # type:ignore[attr-defined]
+            if not self._assets.images:
+                logger.trace("No active faces. Returning")  # type:ignore[attr-defined]
+                self._last_execution["frame_index"] = self.frame_index
+                return
+
+            if self._last_execution["frame_index"] != self.frame_index:
+                self.move_to_top()
+            self._create_new_boxes()
+
+            self._update_face()
+            self._canvas.tag_raise("active_highlighter")
             self._last_execution["frame_index"] = self.frame_index
-            return
-
-        if self._last_execution["frame_index"] != self.frame_index:
-            self.move_to_top()
-        self._create_new_boxes()
-
-        self._update_face()
-        self._canvas.tag_raise("active_highlighter")
-        self._globals.var_update_active_viewport.set(False)
-        self._last_execution["frame_index"] = self.frame_index
+        finally:
+            if self._globals.var_update_active_viewport.get():
+                self._globals.var_update_active_viewport.set(False)
 
     def _clear_previous(self) -> None:
-        """Reverts the previously selected annotations to their default state."""
+        """Revert the previously selected annotations to their default state."""
         logger.trace("Clearing previous active frame")  # type:ignore[attr-defined]
         self._canvas.itemconfig("active_highlighter", state="hidden")
 
@@ -345,18 +345,19 @@ class ActiveFrame:
             self._canvas.itemconfig(tag, **self._viewport.mesh_kwargs[key], width=1)
             self._canvas.dtag(tag)
 
-        if self._viewport.selected_editor == "mask" and not self._optional_annotations["mask"]:
+        if not self._optional_annotations["mask"]:
             for name, tk_face in self._tk_faces.items():
                 if name.startswith(f"{self._last_execution['frame_index']}_"):
                     tk_face.update_mask(None)
 
     def _set_active_objects(self) -> None:
-        """Collect the objects that exist in the currently active frame from the main grid."""
+        """Collect objects that exist in the currently active frame from the main grid."""
         if not self._grid.is_valid:
             logger.trace("No valid grid. Clearing active objects")  # type:ignore[attr-defined]
             self._assets.images = []
             self._assets.meshes = []
             self._assets.faces = []
+            self._assets.face_indices = []
             return
 
         rows, cols = np.where(
@@ -390,11 +391,13 @@ class ActiveFrame:
             self._assets.images = []
             self._assets.meshes = []
             self._assets.faces = []
+            self._assets.face_indices = []
             return
 
         self._assets.images = self._objects.images[rows, cols].tolist()
         self._assets.meshes = self._objects.meshes[rows, cols].tolist()
         self._assets.faces = self._objects.visible_faces[rows, cols].tolist()
+        self._assets.face_indices = self._objects.visible_grid[1, rows, cols].astype(int).tolist()
 
     def _refresh_viewport_after_scroll(self) -> None:
         """Refresh visible viewport objects after scrolling without recursive reload."""
@@ -495,22 +498,22 @@ class ActiveFrame:
         self._tk_vars["edited"].set(False)
 
     def _update_face(self) -> None:
-        """Update the highlighted annotations for faces in the currently selected frame."""
-        for (
-            face_idx,
-            (image_id, mesh_ids, box_id, det_face),
-        ) in enumerate(
-            zip(
-                self._assets.images,
-                self._assets.meshes,
-                self._assets.boxes,
-                self._assets.faces,
-                strict=False,
-            )
+        """Update highlighted annotations for faces in the currently selected frame."""
+        for image_id, mesh_ids, box_id, det_face, face_idx in zip(
+            self._assets.images,
+            self._assets.meshes,
+            self._assets.boxes,
+            self._assets.faces,
+            self._assets.face_indices,
+            strict=False,
         ):
-            if det_face is None:
+            if det_face is None or face_idx < 0:
                 continue
             top_left = self._canvas.coords(image_id)
+            if len(top_left) < 2:
+                logger.debug("Skipping active face with missing image coords: %s", image_id)
+                continue
+
             coords = [*top_left, *[x + self._size for x in top_left]]
             tk_face = self._viewport.get_tk_face(self.frame_index, face_idx, det_face)
             self._canvas.itemconfig(image_id, image=tk_face.photo)

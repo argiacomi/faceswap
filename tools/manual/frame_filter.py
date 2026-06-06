@@ -8,7 +8,8 @@ navigation slider + face viewer to a subset of frames:
 * ``Has Face(s)``        — frames with at least one face.
 * ``No Faces``           — frames with zero faces.
 * ``Single Face``        — frames with exactly one face.
-* ``Multiple Faces``     — frames with more than one face.
+* ``Multiple Faces``     — frames with more than two faces; ``Two Faces``
+  is tracked as its own mode.
 * ``Misaligned Faces``   — frames containing at least one face whose mean
   normalized-landmark distance from the canonical mean face exceeds a
   user-adjustable threshold (Tk's threshold is a 5..20 slider that is
@@ -130,29 +131,33 @@ def filtered_frame_indices(
 def frame_misaligned(
     faces: T.Sequence[EditableFace],
     threshold_raw: int,
+    threshold_upper_raw: int | None = None,
 ) -> bool:
-    """Return whether any face on the frame exceeds the misaligned threshold.
+    """Return whether any face is in the misaligned distance range.
 
-    Mirrors ``tools.manual.detected_faces.Filter._frame_meets_criteria``'s
-    Misaligned-Faces branch:
-
-    * The Tk shell scales the raw slider value ``5..20`` by ``/100`` and
-      compares against ``face.aligned.average_distance``.
-    * Faces without landmarks (e.g. freshly-added boxes that haven't
-      been run through an aligner yet) cannot have a sensible average
-      distance — Tk treats those as "not misaligned" so the slider
-      doesn't immediately pin a freshly-added face.
+    If ``threshold_upper_raw`` is ``None`` this preserves the legacy one-sided
+    behavior, where faces match when their average distance is greater than
+    ``threshold_raw / 100``. If an upper bound is provided, faces match when
+    their score is between the lower and upper values, inclusive.
     """
     if not faces:
         return False
-    threshold = float(threshold_raw) / 100.0
+
+    lower = float(threshold_raw) / 100.0
+    upper = None if threshold_upper_raw is None else float(threshold_upper_raw) / 100.0
+    if upper is not None:
+        lower, upper = sorted((lower, upper))
+
     for face in faces:
         if not face.landmarks:
             continue
         distance = face_average_distance(face)
         if distance is None:
             continue
-        if distance > threshold:
+        if upper is None:
+            if distance > lower:
+                return True
+        elif lower <= distance <= upper:
             return True
     return False
 
@@ -480,10 +485,14 @@ def neighbor_outlier_predicate_for_model(
     threshold_raw: int,
 ) -> T.Callable[[int], bool]:
     """Return a ``frame_index -> bool`` predicate for adjacent-frame outliers."""
+    cache: LandmarkCache = {}
 
     def _predicate(frame_index: int) -> bool:
         return frame_neighbor_landmark_outlier_from_provider(
-            model.faces, frame_index, threshold_raw
+            model.faces,
+            frame_index,
+            threshold_raw,
+            cache=cache,
         )
 
     return _predicate

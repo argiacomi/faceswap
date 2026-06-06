@@ -11,7 +11,7 @@ import platform
 import tkinter as tk
 import typing as T
 from math import ceil, floor
-from threading import Event, Thread
+from threading import Event
 from tkinter import ttk
 
 import numpy as np
@@ -20,7 +20,6 @@ from lib.gui.custom_widgets import RightClickMenu, Tooltip
 from lib.gui.utils import get_config, get_images
 from lib.image import hex_to_rgb, rgb_to_hex
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects
 
 from .viewport import Viewport
 
@@ -115,31 +114,20 @@ class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
     def canvas_scroll(self, direction: T.Literal["up", "down", "page-up", "page-down"]) -> None:
         """Scroll the canvas on an up/down or page-up/page-down key press.
 
-        Notes
-        -----
-        To protect against a held down key press stacking tasks and locking up the GUI
-        a background thread is launched and discards subsequent key presses whilst the
-        previous update occurs.
-
-        Parameters
-        ----------
-        direction: ["up", "down", "page-up", "page-down"]
-            The request page scroll direction and amount.
+        Tk calls must stay on the Tk main thread. This debounces repeated
+        keypresses with ``_event`` but schedules the real work with
+        ``after_idle`` instead of using a background thread.
         """
-
         if self._event.is_set():
             logger.trace("Update already running. Aborting repeated keypress")
             return
-        logger.trace(
-            "Running update on received key press: %s",
-            direction,
-        )
 
+        logger.trace("Running update on received key press: %s", direction)
         amount = 1 if direction.endswith("down") else -1
-        units = "pages" if direction.startswith("page") else "units"
+        units: T.Literal["pages", "units"] = "pages" if direction.startswith("page") else "units"
+
         self._event.set()
-        thread = Thread(target=self._canvas.canvas_scroll, args=(amount, units, self._event))
-        thread.start()
+        self.after_idle(lambda: self._canvas.canvas_scroll(amount, units, self._event))
 
     def set_annotation_display(self, key: str) -> None:
         """Set the optional annotation overlay based on keyboard shortcut.
@@ -426,18 +414,16 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
             self.bind("<MouseWheel>", self._scroll)
 
     def _scroll(self, event: tk.Event) -> None:
-        """Handle mouse wheel scrolling over the :class:`FacesViewer` canvas.
+        """Handle mouse wheel scrolling over the face viewer canvas.
 
-        Update is run in a thread to avoid repeated scroll actions stacking and locking up the GUI.
-
-        Parameters
-        ----------
-        event: :class:`tkinter.Event`
-            The event fired by the mouse scrolling
+        Tkinter is not thread-safe, so scrolling and viewport updates are
+        scheduled back onto the Tk event loop rather than run in a worker
+        thread.
         """
         if self._event.is_set():
             logger.trace("Update already running. Aborting repeated mousewheel")
             return
+
         if platform.system() == "Darwin":
             adjust = event.delta
         elif platform.system() == "Windows":
@@ -446,28 +432,19 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
             adjust = -1
         else:
             adjust = 1
+
         self._event.set()
-        thread = Thread(target=self.canvas_scroll, args=(-1 * adjust, "units", self._event))
-        thread.start()
+        self.after_idle(lambda: self.canvas_scroll(-1 * adjust, "units", self._event))
 
     def canvas_scroll(self, amount: int, units: T.Literal["pages", "units"], event: Event) -> None:
-        """Scroll the canvas on an up/down or page-up/page-down key press.
+        """Scroll the canvas and update viewport objects on the Tk main thread."""
+        try:
+            self.yview_scroll(int(amount), units)
+            self._view.update()
+            self._view.hover_box.on_hover(None)
+        finally:
+            event.clear()
 
-        Parameters
-        ----------
-        amount: int
-            The number of units to scroll the canvas
-        units: Literal["pages", "units"]
-            The unit type to scroll by
-        event: :class:`threading.Event`
-            event to indicate to the calling process whether the scroll is still updating
-        """
-        self.yview_scroll(int(amount), units)
-        self._view.update()
-        self._view.hover_box.on_hover(None)
-        event.clear()
-
-    # << OPTIONAL ANNOTATION METHODS >> #
     def _update_mesh_color(self) -> None:
         """Update the mesh color when user updates the control panel."""
         color = self.get_muted_color("Mesh")
@@ -491,27 +468,20 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         self._annotation_colors["box"] = color
 
     def get_muted_color(self, color_key: str) -> str:
-        """Creates a muted version of the given annotation color for non-active faces.
+        """Create a muted version of the given annotation color."""
+        rgb = np.asarray(hex_to_rgb(self.control_colors[color_key]), dtype="float32")
+        if np.max(rgb) > 1.0:
+            rgb = rgb / 255.0
 
-        Parameters
-        ----------
-        color_key: str
-            The annotation key to obtain the color for from :attr:`control_colors`
-
-        Returns
-        -------
-        str
-            The hex color code of the muted color
-        """
-        scale = 0.65
-        hls = np.array(colorsys.rgb_to_hls(*hex_to_rgb(self.control_colors[color_key])))
-        scale = (1 - scale) + 1 if hls[1] < 120 else scale
-        hls[1] = max(0.0, min(256.0, scale * hls[1]))
-        # Clip before astype: colorsys.hls_to_rgb can return 256-ish values for
-        # L clamped at 256, which would wrap with uint8 before the clip fires.
-        rgb = np.clip(np.rint(colorsys.hls_to_rgb(*hls)), 0, 255).astype("uint8")
-        retval = rgb_to_hex(rgb)
-        return retval  # type: ignore[no-any-return]
+        hue, lightness, saturation = colorsys.rgb_to_hls(*rgb)
+        muted_lightness = (
+            min(1.0, lightness + ((1.0 - lightness) * 0.35))
+            if lightness < 0.5
+            else max(0.0, lightness * 0.65)
+        )
+        muted = np.rint(np.asarray(colorsys.hls_to_rgb(hue, muted_lightness, saturation)) * 255.0)
+        retval = rgb_to_hex(np.clip(muted, 0, 255).astype("uint8"))
+        return str(retval)
 
     def _toggle_annotations(self, annotation: T.Literal["mesh", "mask"]) -> None:
         """Toggle optional annotations on or off after the user depresses an optional button.
@@ -595,9 +565,10 @@ class Grid:
 
     @property
     def _visible_row_indices(self) -> tuple[int, int]:
-        """tuple: A 1 dimensional array of the (`top_row_index`, `bottom_row_index`) of the grid
-        currently in the viewable area.
-        """
+        """Return top/bottom row indices currently visible in the canvas."""
+        if not self._is_valid:
+            return (0, 0)
+
         height = self.dimensions[1]
         visible = (
             max(0, floor(height * self._canvas.yview()[0]) - self._face_size),
@@ -611,7 +582,7 @@ class Grid:
             visible,
         )
         assert self._grid is not None
-        y_points = self._grid[3, :, 1]
+        y_points = self._grid[3, :, 0]
         top = np.searchsorted(y_points, visible[0], side="left")
         bottom = np.searchsorted(y_points, visible[1], side="right")
         return int(top), int(bottom)
@@ -733,22 +704,14 @@ class Grid:
         logger.debug(self._grid.shape)
 
     def _get_labels(self) -> np.ndarray | None:
-        """Get the frame and face index for each grid position for the current filter.
-
-        Returns
-        -------
-        :class:`numpy.ndarray` | None
-            Array of dimensions (2, rows, columns) corresponding to the display grid, with frame
-            index as the first dimension and face index within the frame as the 2nd dimension.
-
-            Any remaining placeholders at the end of the grid which are not populated with a face
-            are given the index -1
-        """
+        """Get frame and face labels for each grid position for the current filter."""
         face_count = len(self._raw_indices["frame"])
         self._is_valid = face_count != 0
         if not self._is_valid:
             return None
-        columns = self._canvas.winfo_width() // self._face_size
+
+        face_size = max(1, int(self._face_size))
+        columns = max(1, self._canvas.winfo_width() // face_size)
         rows = ceil(face_count / columns)
         remainder = face_count % columns
         padding = [] if remainder == 0 else [-1 for _ in range(columns - remainder)]
@@ -768,30 +731,36 @@ class Grid:
         return labels  # type: ignore[no-any-return]
 
     def _get_display_faces(self):
-        """Get the detected faces for the current filter, arrange to grid and set to
-        :attr:`_display_faces`. This is an array of dimensions (rows, columns) corresponding to the
-        display grid, containing the corresponding :class:`lib.align.DetectFace` object
-
-        Any remaining placeholders at the end of the grid which are not populated with a face are
-        replaced with ``None``"""
+        """Get detected faces for the current filter and arrange them into the grid."""
         if not self._is_valid:
             logger.debug("Setting display_faces to None for no faces.")
             self._display_faces = None
             return
+
         current_faces = self._detected_faces.current_faces
         columns, rows = self.columns_rows
         face_count = len(self._raw_indices["frame"])
         padding = [None for _ in range(face_count, columns * rows)]
+
+        def face_for(idx, face_idx):
+            if idx is None or face_idx is None:
+                return None
+            idx = int(idx)
+            face_idx = int(face_idx)
+            if idx < 0 or face_idx < 0:
+                return None
+            if idx >= len(current_faces) or face_idx >= len(current_faces[idx]):
+                logger.debug(
+                    "Skipping stale face grid entry. frame_index=%s face_index=%s",
+                    idx,
+                    face_idx,
+                )
+                return None
+            return current_faces[idx][face_idx]
+
         self._display_faces = np.array(
             [
-                # ``face_idx == -1`` is the new no-face-frame placeholder
-                # (issue #201 bug 3); ``idx is None`` / ``face_idx is None``
-                # is the trailing grid padding. Both resolve to ``None``
-                # here so the renderer reads the labels grid as the source
-                # of truth for what to draw.
-                None
-                if idx is None or face_idx is None or face_idx < 0
-                else current_faces[idx][face_idx]
+                face_for(idx, face_idx)
                 for idx, face_idx in zip(
                     self._raw_indices["frame"] + padding,
                     self._raw_indices["face"] + padding,
@@ -881,22 +850,40 @@ class ContextMenu:  # pylint:disable=too-few-public-methods
         self._menu.popup(event)
 
     def _delete_face(self):
-        """Delete the selected face on a right click mouse delete action."""
-        selected_faces = self._canvas._globals.selected_face_indices
-        delete_indices = (
-            selected_faces
-            if self._frame_index == self._canvas._globals.frame_index and selected_faces
-            else (self._face_index,)
-        )
-        logger.trace(
-            "Right click delete received. frame_id: %s, face_id: %s, selected_face_ids: %s",
-            self._frame_index,
-            self._face_index,
-            selected_faces,
-        )
-        self._detected_faces.update.delete_many(self._frame_index, delete_indices)
-        self._canvas._globals.clear_selected_face_indices()
+        """Delete selected faces or the right-clicked face after validating state."""
+        if self._frame_index is None or self._face_index is None:
+            logger.debug("Right click delete ignored. No stored face target.")
+            return
+
+        selected_faces = self._canvas._globals.selected_faces
+        current_faces = self._detected_faces.current_faces
+
+        valid_target = 0 <= int(self._frame_index) < len(current_faces) and 0 <= int(
+            self._face_index
+        ) < len(current_faces[int(self._frame_index)])
+        if not valid_target:
+            logger.debug(
+                "Right click delete ignored for stale target. frame_id=%s face_id=%s",
+                self._frame_index,
+                self._face_index,
+            )
+            self._frame_index = self._face_index = None
+            return
+
+        if selected_faces:
+            logger.trace("Right click delete selected faces: %s", selected_faces)
+            self._detected_faces.update.delete_many_frames(selected_faces)
+            self._canvas._globals.clear_selected_faces()
+        else:
+            logger.trace(
+                "Right click delete received. frame_id: %s, face_id: %s",
+                self._frame_index,
+                self._face_index,
+            )
+            self._detected_faces.update.delete_many(
+                int(self._frame_index),
+                (int(self._face_index),),
+            )
+            self._canvas._globals.clear_selected_face_indices()
+
         self._frame_index = self._face_index = None
-
-
-__all__ = get_module_objects(__name__)

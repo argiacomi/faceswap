@@ -13,7 +13,6 @@ from PIL import Image, ImageTk
 
 from lib.align import LANDMARK_PARTS, AlignedFace, LandmarkType
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects
 
 from .interact import ActiveFrame, HoverBox
 
@@ -94,16 +93,10 @@ class Viewport:
         self.update()
 
     def toggle_mask(self, state: T.Literal["hidden", "normal"], mask_type: str) -> None:
-        """Toggles the mask optional annotation on and off.
-
-        Parameters
-        ----------
-        state: Literal["hidden", "normal"]
-            Whether the mask should be displayed or hidden
-        mask_type: str
-            The type of mask to overlay onto the face
-        """
+        """Toggle the mask optional annotation on or off."""
         logger.debug("Toggling mask annotations to: %s. mask_type: %s", state, mask_type)
+        self.update()
+
         for (frame_idx, face_idx), det_face in zip(
             self._objects.visible_grid[:2].transpose(1, 2, 0).reshape(-1, 2),
             self._objects.visible_faces.flatten(),
@@ -115,9 +108,12 @@ class Viewport:
                 continue
 
             key = "_".join([str(frame_idx), str(face_idx)])
+            tk_face = self._tk_faces.get(key)
+            if tk_face is None:
+                tk_face = self.get_tk_face(frame_idx, face_idx, det_face)
+
             mask = None if state == "hidden" else self._obtain_mask(det_face, mask_type)
-            self._tk_faces[key].update_mask(mask)
-        self.update()
+            tk_face.update_mask(mask)
 
     @classmethod
     def _obtain_mask(cls, detected_face: DetectedFace, mask_type: str) -> np.ndarray | None:
@@ -149,6 +145,18 @@ class Viewport:
 
     def reset(self) -> None:
         """Reset all the cached objects on a face size change."""
+        # Detach canvas image items before dropping the Python PhotoImage
+        # references. Otherwise a later itemconfig on the canvas item can
+        # fail with: TclError: image "pyimage..." doesn't exist.
+        for image_id in self._canvas.find_withtag("viewport_image"):
+            try:
+                self._canvas.itemconfig(image_id, image="")
+            except tk.TclError:
+                logger.debug(
+                    "Ignoring stale viewport image during reset: %s",
+                    image_id,
+                    exc_info=True,
+                )
         self._landmarks = {}
         self._tk_faces = {}
         self._clear_selected_boxes()
@@ -376,24 +384,7 @@ class Viewport:
         )
 
     def get_tk_face(self, frame_index: int, face_index: int, face: DetectedFace) -> TKFace:
-        """Obtain the :class:`TKFace` object for the given face from the cache. If the face does
-        not exist in the cache, then it is generated and added prior to returning.
-
-        Parameters
-        ----------
-        frame_index: int
-            The frame index to obtain the face for
-        face_index: int
-            The face index of the face within the requested frame
-        face: :class:`~lib.align.DetectedFace`
-            The detected face object, containing the thumbnail jpg
-
-        Returns
-        -------
-        :class:`TKFace`
-            An object for displaying in the faces viewer canvas populated with the aligned mesh
-            landmarks and face thumbnail
-        """
+        """Obtain or create the TKFace object for the requested face."""
         is_active = frame_index == self._active_frame.frame_index
         key = "_".join([str(frame_index), str(face_index)])
         if key not in self._tk_faces or is_active:
@@ -403,22 +394,36 @@ class Viewport:
                 is_active,
             )
             if is_active:
+                source_image = self._active_frame.current_frame
                 image = AlignedFace(
                     face.landmarks_xy,
-                    image=self._active_frame.current_frame,
+                    image=source_image,
                     centering=self._centering,
                     size=self.face_size,
                 ).face
             else:
                 thumb = face.thumbnail
-                assert thumb is not None
-                image = AlignedFace(
-                    face.landmarks_xy,
-                    image=cv2.imdecode(thumb, cv2.IMREAD_UNCHANGED),
-                    centering=self._centering,
-                    size=self.face_size,
-                    is_aligned=True,
-                ).face
+                if thumb is not None:
+                    image = AlignedFace(
+                        face.landmarks_xy,
+                        image=cv2.imdecode(thumb, cv2.IMREAD_UNCHANGED),
+                        centering=self._centering,
+                        size=self.face_size,
+                        is_aligned=True,
+                    ).face
+                else:
+                    source_image = self._canvas._globals.frame_image(frame_index)
+                    image = (
+                        AlignedFace(
+                            face.landmarks_xy,
+                            image=source_image,
+                            centering=self._centering,
+                            size=self.face_size,
+                        ).face
+                        if source_image is not None
+                        else np.full((self.face_size, self.face_size, 3), 64, dtype=np.uint8)
+                    )
+
             assert image is not None
             tk_face = self._get_tk_face_object(face, image, is_active)
             self._tk_faces[key] = tk_face
@@ -557,35 +562,45 @@ class Viewport:
                 self._canvas.coords(mesh_id, *coords.flatten())
 
     def face_from_point(self, point_x: int, point_y: int) -> np.ndarray:
-        """Given an (x, y) point on the :class:`Viewport`, obtain the face information at that
-        location.
-
-        Parameters
-        ----------
-        point_x: int
-            The x position on the canvas of the point to retrieve the face for
-        point_y: int
-            The y position on the canvas of the point to retrieve the face for
-
-        Returns
-        -------
-        :class:`numpy.ndarray`
-            Array of shape (4, ) containing the (`frame index`, `face index`, `x_point of top left
-            corner`, `y point of top left corner`) of the face at the given coordinates.
-
-            If the given coordinates are not over a face, then the frame and face indices will be
-            -1
-        """
-        if not self._grid.is_valid or point_x > self._grid.dimensions[0]:
-            retval = np.array((-1, -1, -1, -1))
+        """Return grid face info under a canvas point, or ``(-1, -1, -1, -1)``."""
+        empty = np.array((-1, -1, -1, -1))
+        if (
+            not self._grid.is_valid
+            or self._objects.visible_grid.size == 0
+            or point_x < 0
+            or point_y < 0
+        ):
+            retval = empty
         else:
-            x_idx = np.searchsorted(self._objects.visible_grid[2, 0, :], point_x, side="left") - 1
-            y_idx = np.searchsorted(self._objects.visible_grid[3, :, 0], point_y, side="left") - 1
-            retval = (
-                np.array((-1, -1, -1, -1))
-                if x_idx < 0 or y_idx < 0
-                else self._objects.visible_grid[:, y_idx, x_idx]
-            )
+            grid = self._objects.visible_grid
+            rows, cols = grid.shape[1:]
+            if rows == 0 or cols == 0:
+                retval = empty
+            else:
+                left = int(grid[2, 0, 0])
+                top = int(grid[3, 0, 0])
+                right = int(grid[2, 0, cols - 1] + self.face_size)
+                bottom = int(grid[3, rows - 1, 0] + self.face_size)
+
+                if point_x < left or point_x >= right or point_y < top or point_y >= bottom:
+                    retval = empty
+                else:
+                    x_idx = np.searchsorted(grid[2, 0, :], point_x, side="right") - 1
+                    y_idx = np.searchsorted(grid[3, :, 0], point_y, side="right") - 1
+                    if x_idx < 0 or y_idx < 0 or x_idx >= cols or y_idx >= rows:
+                        retval = empty
+                    else:
+                        cell = grid[:, y_idx, x_idx]
+                        if (
+                            point_x < cell[2]
+                            or point_x >= cell[2] + self.face_size
+                            or point_y < cell[3]
+                            or point_y >= cell[3] + self.face_size
+                        ):
+                            retval = empty
+                        else:
+                            retval = cell
+
         logger.trace(retval)  # type:ignore[attr-defined]
         return retval  # type: ignore[no-any-return]
 
@@ -620,48 +635,75 @@ class Recycler:
         }
 
     def recycle_assets(self, asset_ids: list[int]) -> None:
-        """Recycle assets that are no longer required
-
-        Parameters
-        ----------
-        asset_ids: list[int]
-            The IDs of the assets to be recycled
-        """
+        """Recycle canvas assets that are no longer required."""
         logger.trace("Recycling %s objects", len(asset_ids))  # type:ignore[attr-defined]
         for asset_id in asset_ids:
-            asset_type = T.cast(T.Literal["image", "line", "polygon"], self._canvas.type(asset_id))
-            assert asset_type in self._assets
-            coords = (0, 0, 0, 0) if asset_type == "line" else (0, 0)
-            self._canvas.coords(asset_id, *coords)
+            try:
+                asset_type = T.cast(
+                    T.Literal["image", "line", "polygon"],
+                    self._canvas.type(asset_id),
+                )
+            except tk.TclError:
+                logger.debug("Skipping deleted canvas asset: %s", asset_id, exc_info=True)
+                continue
 
-            if asset_type == "image":
-                self._canvas.itemconfig(asset_id, image="")
+            if asset_type not in self._assets:
+                logger.debug("Skipping unknown/deleted canvas asset: %s", asset_id)
+                continue
+
+            try:
+                if asset_type == "image":
+                    # Clear stale PhotoImage references before any other itemconfig
+                    # call. Tk can otherwise fail when the old pyimage no longer
+                    # exists.
+                    self._canvas.itemconfig(asset_id, image="")
+
+                coords = (0, 0, 0, 0) if asset_type == "line" else (0, 0)
+                self._canvas.coords(asset_id, *coords)
+                self._canvas.itemconfig(asset_id, state="hidden")
+            except tk.TclError:
+                logger.debug(
+                    "Deleting unrecyclable stale canvas asset: %s",
+                    asset_id,
+                    exc_info=True,
+                )
+                try:
+                    self._canvas.delete(asset_id)
+                except tk.TclError:
+                    logger.debug("Canvas asset already deleted: %s", asset_id, exc_info=True)
+                continue
 
             self._assets[asset_type].append(asset_id)
         logger.trace("Recycled objects: %s", self._assets)  # type:ignore[attr-defined]
 
     def get_image(self, coordinates: tuple[float | int, float | int]) -> int:
-        """Obtain a recycled or new image object ID
-
-        Parameters
-        ----------
-        coordinates: tuple[float | int, float | int]
-            The co-ordinates that the image should be displayed at
-
-        Returns
-        -------
-        int
-            The canvas object id for the created image
-        """
-        if self._assets["image"]:
+        """Obtain a recycled or new image object ID."""
+        while self._assets["image"]:
             retval = self._assets["image"].pop()
-            self._canvas.coords(retval, *coordinates)
+            try:
+                if self._canvas.type(retval) != "image":
+                    logger.debug("Discarding non-image recycled asset: %s", retval)
+                    continue
+                self._canvas.coords(retval, *coordinates)
+                self._canvas.itemconfig(retval, image="", state="normal")
+            except tk.TclError:
+                logger.debug(
+                    "Discarding stale recycled image asset: %s",
+                    retval,
+                    exc_info=True,
+                )
+                try:
+                    self._canvas.delete(retval)
+                except tk.TclError:
+                    logger.debug("Recycled image asset already deleted: %s", retval, exc_info=True)
+                continue
             logger.trace("Recycled image: %s", retval)  # type:ignore[attr-defined]
-        else:
-            retval = self._canvas.create_image(
-                *coordinates, anchor=tk.NW, tags=["viewport", "viewport_image"]
-            )
-            logger.trace("Created new image: %s", retval)  # type:ignore[attr-defined]
+            return retval
+
+        retval = self._canvas.create_image(
+            *coordinates, anchor=tk.NW, tags=["viewport", "viewport_image"]
+        )
+        logger.trace("Created new image: %s", retval)  # type:ignore[attr-defined]
         return retval
 
     @staticmethod
@@ -691,8 +733,6 @@ class Recycler:
             return mesh_ids
 
         stale_ids = [asset_id for ids in mesh_ids.values() for asset_id in ids]
-        for asset_id in stale_ids:
-            self._canvas.itemconfig(asset_id, state="hidden")
         if stale_ids:
             self.recycle_assets(stale_ids)
 
@@ -1083,23 +1123,10 @@ class TKFace:
         return resized[..., 2::-1]  # type: ignore[no-any-return]
 
     def _generate_tk_face_data(self, mask: np.ndarray | None) -> Image.Image:
-        """Create the :class:`tkinter.PhotoImage` from the currant :attr:`_face`.
-
-        Parameters
-        ----------
-        mask: :class:`numpy.ndarray` or ``None``
-            The mask to add to the image. ``None`` if a mask is not being used
-
-        Returns
-        -------
-        :class:`PIL.Image.Image`
-            The face formatted for the  :class:`~tools.manual.faceviewer.frame.FacesViewer` canvas.
-        """
+        """Create the :class:`tkinter.PhotoImage` from the current face."""
         mask = np.full(self._face.shape[:2], 255, dtype="uint8") if mask is None else mask
-        if mask.shape[0] != self._size:
-            mask = cv2.resize(mask, self._face.shape[:2], interpolation=cv2.INTER_AREA)
+        if mask.shape[:2] != self._face.shape[:2]:
+            height, width = self._face.shape[:2]
+            mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_AREA)
         img = np.concatenate((self._face, mask[..., None]), axis=-1)
         return Image.fromarray(img)
-
-
-__all__ = get_module_objects(__name__)

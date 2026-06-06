@@ -112,8 +112,12 @@ class ManualVideoMetadata:
 
     @property
     def is_valid(self) -> bool:
-        """Return whether metadata is non-empty and aligned."""
-        return self.frame_count > 0
+        """Return whether metadata is non-empty and structurally usable."""
+        if self.frame_count <= 0:
+            return False
+        return all(isinstance(value, int) for value in self.pts_time) and all(
+            isinstance(value, int) for value in self.keyframes
+        )
 
 
 @dataclass
@@ -265,10 +269,15 @@ class ManualAlignmentsHandle:
         keyframes = meta.get("keyframes") or []
         if not pts_time:
             return None
-        return ManualVideoMetadata(
-            pts_time=tuple(pts_time),
-            keyframes=tuple(keyframes),
-        )
+        try:
+            metadata = ManualVideoMetadata(
+                pts_time=tuple(int(value) for value in pts_time),
+                keyframes=tuple(int(value) for value in keyframes),
+            )
+        except (TypeError, ValueError):
+            logger.debug("Manual Tool video metadata is malformed: %s", meta)
+            return None
+        return metadata if metadata.is_valid else None
 
     def has_thumbnails(self) -> bool:
         """Return whether the alignments file already stores thumbnails.
@@ -628,6 +637,7 @@ class ManualEditableAlignments:
         if face_index < 0 or face_index >= len(faces):
             return False
         removed = faces[face_index]
+        previous_aux = self._frame_aux_state(frame_index)
 
         def do() -> None:
             self._faces[frame_index].pop(face_index)
@@ -640,6 +650,7 @@ class ManualEditableAlignments:
             target = self._faces.setdefault(frame_index, [])
             target.insert(face_index, removed)
             self._reindex(frame_index)
+            self._restore_frame_aux_state(frame_index, previous_aux)
 
         self._apply(do, undo, frame_index)
         return True
@@ -649,13 +660,22 @@ class ManualEditableAlignments:
 
         Deletions are applied in descending face-index order per frame so
         reindexing cannot shift a later removal target.  The undo closure
-        restores the exact pre-delete face lists for every touched frame.
+        restores the exact pre-delete face lists and per-face mask state for
+        every touched frame.
         """
         by_frame: dict[int, set[int]] = {}
         for frame_index, face_index in selections:
             by_frame.setdefault(int(frame_index), set()).add(int(face_index))
         valid: dict[int, tuple[int, ...]] = {}
         before: dict[int, list[EditableFace]] = {}
+        before_aux: dict[
+            int,
+            tuple[
+                dict[tuple[int, int, str], T.Any],
+                set[tuple[int, int, str]],
+                dict[tuple[int, int, str], T.Any],
+            ],
+        ] = {}
         for frame_index, face_indices in by_frame.items():
             faces = self._faces.get(frame_index, [])
             indices = tuple(
@@ -668,6 +688,7 @@ class ManualEditableAlignments:
                 continue
             valid[frame_index] = indices
             before[frame_index] = list(faces)
+            before_aux[frame_index] = self._frame_aux_state(frame_index)
         if not valid:
             return 0
 
@@ -683,6 +704,7 @@ class ManualEditableAlignments:
             for frame_index, faces in before.items():
                 self._faces[frame_index] = list(faces)
                 self._reindex(frame_index)
+                self._restore_frame_aux_state(frame_index, before_aux[frame_index])
 
         first_frame = min(valid)
         do()
@@ -2018,9 +2040,101 @@ class ManualEditableAlignments:
             except Exception:  # pragma: no cover - defensive
                 logger.exception("Editable alignment listener raised")
 
+    @staticmethod
+    def _copy_aux_value(value: T.Any) -> T.Any:
+        """Return a defensive copy for mutable per-face auxiliary values."""
+        return value.copy() if hasattr(value, "copy") else value
+
+    def _frame_aux_state(
+        self,
+        frame_index: int,
+    ) -> tuple[
+        dict[tuple[int, int, str], T.Any],
+        set[tuple[int, int, str]],
+        dict[tuple[int, int, str], T.Any],
+    ]:
+        """Snapshot masks, touched flags and persisted blobs for one frame."""
+        frame_index = int(frame_index)
+        masks = {
+            key: self._copy_aux_value(value)
+            for key, value in self._mask_state.items()
+            if key[0] == frame_index
+        }
+        painted = {key for key in self._painted_masks if key[0] == frame_index}
+        blobs = {
+            key: value
+            for key, value in self._persisted_mask_blobs.items()
+            if key[0] == frame_index
+        }
+        return masks, painted, blobs
+
+    def _clear_frame_aux_state(self, frame_index: int) -> None:
+        """Remove all per-face auxiliary state for one frame."""
+        frame_index = int(frame_index)
+        for key in tuple(self._mask_state):
+            if key[0] == frame_index:
+                self._mask_state.pop(key, None)
+        for key in tuple(self._painted_masks):
+            if key[0] == frame_index:
+                self._painted_masks.discard(key)
+        for key in tuple(self._persisted_mask_blobs):
+            if key[0] == frame_index:
+                self._persisted_mask_blobs.pop(key, None)
+
+    def _restore_frame_aux_state(
+        self,
+        frame_index: int,
+        state: tuple[
+            dict[tuple[int, int, str], T.Any],
+            set[tuple[int, int, str]],
+            dict[tuple[int, int, str], T.Any],
+        ],
+    ) -> None:
+        """Restore a frame auxiliary-state snapshot."""
+        masks, painted, blobs = state
+        self._clear_frame_aux_state(frame_index)
+        self._mask_state.update({key: self._copy_aux_value(value) for key, value in masks.items()})
+        self._painted_masks.update(painted)
+        self._persisted_mask_blobs.update(blobs)
+
+    def _rekey_frame_aux_state(self, frame_index: int, index_map: dict[int, int]) -> None:
+        """Move per-face auxiliary state after positional face indices change."""
+        frame_index = int(frame_index)
+
+        def rekey(key: tuple[int, int, str]) -> tuple[int, int, str] | None:
+            if key[0] != frame_index:
+                return key
+            new_face_index = index_map.get(int(key[1]))
+            if new_face_index is None:
+                return None
+            return (frame_index, new_face_index, key[2])
+
+        new_masks: dict[tuple[int, int, str], T.Any] = {}
+        for key, value in self._mask_state.items():
+            new_key = rekey(key)
+            if new_key is not None:
+                new_masks[new_key] = value
+        self._mask_state = new_masks
+
+        new_painted: set[tuple[int, int, str]] = set()
+        for key in self._painted_masks:
+            new_key = rekey(key)
+            if new_key is not None:
+                new_painted.add(new_key)
+        self._painted_masks = new_painted
+
+        new_blobs: dict[tuple[int, int, str], T.Any] = {}
+        for key, value in self._persisted_mask_blobs.items():
+            new_key = rekey(key)
+            if new_key is not None:
+                new_blobs[new_key] = value
+        self._persisted_mask_blobs = new_blobs
+
     def _reindex(self, frame_index: int) -> None:
         """Reassign monotonically increasing ``face_index`` after add/delete."""
         faces = self._faces.get(frame_index, [])
+        index_map = {int(face.face_index): new_index for new_index, face in enumerate(faces)}
+        self._rekey_frame_aux_state(frame_index, index_map)
         for new_index, face in enumerate(faces):
             if face.face_index != new_index:
                 faces[new_index] = EditableFace(
@@ -2207,23 +2321,23 @@ class ManualSession:
     @staticmethod
     def _reject_extracted_faces(input_path: Path) -> None:
         """Refuse a folder of extracted Faceswap faces as Manual Tool input."""
-        png_candidate = next(
-            (path for path in input_path.iterdir() if path.suffix.lower() == ".png"),
-            None,
+        png_candidates = tuple(
+            path for path in input_path.iterdir() if path.suffix.lower() == ".png"
         )
-        if png_candidate is None:
+        if not png_candidates:
             return
         from lib.image import read_image_meta
 
-        try:
-            meta = read_image_meta(str(png_candidate))
-        except Exception:  # pragma: no cover - defensive
-            logger.debug("Could not read PNG header for %s", png_candidate, exc_info=True)
-            return
-        if isinstance(meta, dict) and "itxt" in meta and "alignments" in meta["itxt"]:
-            raise ValueError(
-                f"Input folder contains extracted faces, not source frames: {input_path}"
-            )
+        for png_candidate in png_candidates:
+            try:
+                meta = read_image_meta(str(png_candidate))
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("Could not read PNG header for %s", png_candidate, exc_info=True)
+                continue
+            if isinstance(meta, dict) and "itxt" in meta and "alignments" in meta["itxt"]:
+                raise ValueError(
+                    f"Input folder contains extracted faces, not source frames: {input_path}"
+                )
 
     @staticmethod
     def _string_value(value: object) -> str:

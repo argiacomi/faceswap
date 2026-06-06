@@ -85,22 +85,36 @@ def _regenerate_image_folder(
     targets: tuple[str, ...],
     progress: ProgressCallback | None,
 ) -> int:
-    """Regenerate thumbnails for an image-folder source."""
+    """Regenerate thumbnails for an image-folder source.
+
+    Missing frame names are skipped because the source file is absent from the
+    session frame list. Reader failures for existing source files are not
+    swallowed: they must propagate to ``regenerate_thumbnails()`` so its
+    snapshot rollback path restores the original in-memory thumb payloads.
+    """
     from lib.image import read_image
 
     frame_paths = {frame.name: frame.path for frame in session.frame_list}
     generated = 0
     total = len(targets)
+
     for done, frame_name in enumerate(targets, start=1):
         frame_path = frame_paths.get(frame_name)
         if frame_path is None:
             logger.warning("Manual Tool thumbnail source frame not found: %s", frame_name)
             _emit(progress, done, total, f"Skipped {frame_name}")
             continue
+
         image = read_image(frame_path, raise_error=True)
+        if image is None:
+            raise RuntimeError(
+                f"Manual Tool thumbnail source frame could not be read: {frame_name}"
+            )
+
         _attach_thumbnails(alignments, frame_name, image)
         generated += 1
         _emit(progress, done, total, f"Generated thumbnails for {frame_name}")
+
     return generated
 
 
@@ -133,7 +147,14 @@ def _regenerate_video(
                 logger.warning("Manual Tool thumbnail video frame not found: %s", frame_name)
                 _emit(progress, done, total, f"Skipped {frame_name}")
                 continue
-            _filename, image = loader.image_from_index(frame_index)
+            try:
+                _filename, image = loader.image_from_index(frame_index)
+            except Exception:  # noqa: BLE001 - skip unreadable frames during regeneration
+                logger.warning(
+                    "Manual Tool thumbnail video frame could not be read: %s", frame_name
+                )
+                _emit(progress, done, total, f"Skipped {frame_name}")
+                continue
             _attach_thumbnails(alignments, frame_name, image)
             generated += 1
             _emit(progress, done, total, f"Generated thumbnails for {frame_name}")

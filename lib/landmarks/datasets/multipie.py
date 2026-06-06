@@ -192,18 +192,20 @@ def _samples_from_list_file(
             logger.warning("Skipping missing MultiPIE image: %s", image)
             continue
 
-        rel = image.relative_to(root.resolve()).with_suffix("").as_posix()
+        rel_path = image.relative_to(root.resolve()).with_suffix("")
+        rel = rel_path.as_posix()
+        condition_path = Path(image_rel)
         normalizer, normalizer_source = _normalizer(points, rel)
-        labels = _conditions(dataset_name, image, points, scenario)
+        labels = _conditions(dataset_name, condition_path, points, scenario)
         metadata: dict[str, T.Any] = {
             "face_bbox": list(face_bbox),
             "face_bbox_source": "multipie_menpobenchmark_detection",
             "source_landmark_count": int(points.shape[0]),
             "source_annotation": str(list_file.resolve()),
             "normalizer_source": normalizer_source,
-            "menpo_benchmark_pose_group": _pose_group(image, points),
+            "menpo_benchmark_pose_group": _pose_group(condition_path, points),
         }
-        side = _yaw_side(image)
+        side = _yaw_side(condition_path)
         if side:
             metadata["yaw_side"] = side
 

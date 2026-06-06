@@ -50,6 +50,7 @@ class Editor:
         self._current_color = {}
         self._actions = OrderedDict()
         self._controls = {"header": control_text, "controls": []}
+        self._trace_tokens = []
         self._add_key_bindings(key_bindings)
 
         self._add_actions()
@@ -230,16 +231,46 @@ class Editor:
 
     @property
     def _face_iterator(self):
-        """list: The detected face objects to be iterated. This will either be all faces in the
-        frame (normal view) or the single zoomed in face (zoom mode)."""
-        if self._globals.frame_index == -1:
-            faces = []
-        else:
-            faces = self._det_faces.current_faces[self._globals.frame_index]
-            faces = (
-                [faces[self._globals.face_index]] if self._globals.is_zoomed and faces else faces
-            )
-        return faces
+        """Return faces for the current view without trusting stale indices."""
+        frame_index = self._globals.frame_index
+        if frame_index < 0 or frame_index >= len(self._det_faces.current_faces):
+            return []
+
+        faces = self._det_faces.current_faces[frame_index]
+        if not self._globals.is_zoomed:
+            return faces
+
+        face_index = self._globals.face_index
+        if 0 <= face_index < len(faces):
+            return [faces[face_index]]
+
+        logger.debug(
+            "Zoomed face iterator ignored stale face index. frame_index=%s face_index=%s faces=%s",
+            frame_index,
+            face_index,
+            len(faces),
+        )
+        return []
+
+    def _add_trace(self, tk_var, mode, callback):
+        """Register a Tcl variable trace and remember it for cleanup."""
+        token = tk_var.trace_add(mode, callback)
+        self._trace_tokens.append((tk_var, mode, token))
+        return token
+
+    def close(self):
+        """Remove variable traces registered by this editor."""
+        for tk_var, mode, token in reversed(self._trace_tokens):
+            try:
+                tk_var.trace_remove(mode, token)
+            except tk.TclError:
+                logger.debug(
+                    "Editor trace already removed. editor: %s token: %s",
+                    self.__class__.__name__,
+                    token,
+                    exc_info=True,
+                )
+        self._trace_tokens.clear()
 
     def _add_key_bindings(self, key_bindings):
         """Add the editor specific key bindings for the currently viewed editor.
@@ -773,6 +804,8 @@ class View(Editor):
         self._add_action(
             "magnify", "zoom", _("Magnify/Demagnify the View"), group=None, hotkey="M"
         )
-        self._actions["magnify"]["tk_var"].trace_add(
-            "write", lambda *e: self._globals.var_full_update.set(True)
+        self._add_trace(
+            self._actions["magnify"]["tk_var"],
+            "write",
+            lambda *e: self._globals.var_full_update.set(True),
         )

@@ -10,7 +10,7 @@ import typing as T
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import numpy as np
 
@@ -66,6 +66,7 @@ class Manual(tk.Tk):
     def __init__(self, arguments: Namespace) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
+        self._exit_on_close = True
         arguments = handle_deprecated_cli_opts(arguments)
         # Visible startup-progress logging — issue #201 bug 2 — so a slow
         # initialization phase can be distinguished from a hung UI in the
@@ -77,6 +78,13 @@ class Manual(tk.Tk):
             self._session = ManualSession.from_namespace(arguments)
         except ValueError as err:
             logger.error("%s", err)
+            try:
+                self.destroy()
+            except tk.TclError:
+                logger.debug(
+                    "Manual Tool: root window destroy raised during init failure",
+                    exc_info=True,
+                )
             sys.exit(1)
 
         logger.info("Manual Tool: initializing Tk...")
@@ -101,8 +109,9 @@ class Manual(tk.Tk):
         )
 
         video_meta_data = self._detected_faces.video_meta_data
-        valid_meta = video_meta_data is not None and all(
-            val is not None for val in video_meta_data.values()
+        valid_meta = self._has_valid_video_meta(
+            video_meta_data,
+            len(self._detected_faces.frame_list),
         )
 
         logger.info("Manual Tool: launching frame loader background thread...")
@@ -157,6 +166,32 @@ class Manual(tk.Tk):
         self._set_initial_layout()
         logger.info("Manual Tool: ready.")
         logger.debug("Initialized %s", self.__class__.__name__)
+
+    @staticmethod
+    def _has_valid_video_meta(
+        video_meta_data: dict[T.Literal["pts_time", "keyframes"], list[int]] | None,
+        frame_count: int,
+    ) -> bool:
+        """Return whether stored video metadata is complete enough to reuse."""
+        if video_meta_data is None:
+            return False
+        try:
+            pts_time = video_meta_data["pts_time"]
+            keyframes = video_meta_data["keyframes"]
+        except KeyError:
+            logger.debug("Video metadata missing required keys: %s", video_meta_data)
+            return False
+        if not isinstance(pts_time, list) or not isinstance(keyframes, list):
+            logger.debug("Video metadata has invalid types: %s", video_meta_data)
+            return False
+        if len(pts_time) != frame_count:
+            logger.debug(
+                "Video metadata frame count mismatch: metadata=%s, frames=%s",
+                len(pts_time),
+                frame_count,
+            )
+            return False
+        return True
 
     def _wait_for_threads(self, extractor: Aligner, loader: FrameLoader, valid_meta: bool) -> None:
         """The :class:`Aligner` and :class:`FramesLoader` are launched in background threads.
@@ -355,45 +390,115 @@ class Manual(tk.Tk):
         self._containers.main.sashpos(0, location)
         self.update_idletasks()
 
-    def _on_close(self) -> None:
-        """Window-manager close handler — issue #201 bug 1.
+    def _confirm_close_with_unsaved_changes(self) -> bool:
+        """Prompt before closing when alignment edits are unsaved."""
+        detected_faces = self.__dict__.get("_detected_faces")
+        if detected_faces is None:
+            return True
+        detected_faces = T.cast(DetectedFaces, detected_faces)
 
-        Closing the Manual Tool window via the title-bar X used to leave
-        non-daemon worker threads alive (the SingleFrameLoader's video
-        reader thread is the main culprit on video inputs), so the
-        process would never exit when the Manual Tool was launched
-        standalone. This handler:
+        tk_unsaved = getattr(detected_faces, "tk_unsaved", None)
+        if tk_unsaved is None:
+            return True
 
-        * Closes the SingleFrameLoader (releases the video reader and
-          joins the I/O thread).
-        * Destroys the root Tk window so any remaining ``after()``
-          callbacks no-op.
-        * Calls ``sys.exit(0)`` so the standalone process actually
-          terminates even when a background Aligner plugin thread
-          stayed non-daemon.
-
-        The "explicit Quit" path and the WM_DELETE_WINDOW path are now
-        the same callable, so any save-on-close prompt or post-shutdown
-        cleanup added later only needs one home.
-        """
-        logger.info("Manual Tool: shutting down...")
-        loader = getattr(self, "_frame_loader", None)
-        if loader is not None:
-            inner = getattr(loader, "_loader", None)
-            close = getattr(inner, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:  # pylint:disable=broad-except
-                    logger.debug("Manual Tool: frame loader close raised", exc_info=True)
         try:
-            self.destroy()
+            has_unsaved = bool(tk_unsaved.get())
+        except tk.TclError:
+            logger.debug("Manual Tool: could not read unsaved state", exc_info=True)
+            return True
+
+        if not has_unsaved:
+            return True
+
+        response = messagebox.askyesnocancel(
+            "Unsaved changes",
+            "Save alignment changes before closing?",
+            parent=self,
+        )
+        if response is None:
+            return False
+        if response is False:
+            logger.info("Manual Tool: closing with unsaved alignment changes discarded.")
+            return True
+
+        try:
+            detected_faces.save()
         except Exception:  # pylint:disable=broad-except
-            logger.debug("Manual Tool: root window destroy raised", exc_info=True)
+            logger.error("Manual Tool: failed to save alignments before close", exc_info=True)
+            messagebox.showerror(
+                "Save failed",
+                "The alignments could not be saved. The Manual Tool will remain open.",
+                parent=self,
+            )
+            return False
+
+        try:
+            still_unsaved = bool(detected_faces.tk_unsaved.get())
+        except tk.TclError:
+            logger.debug("Manual Tool: could not verify saved state", exc_info=True)
+            return True
+
+        if still_unsaved:
+            messagebox.showerror(
+                "Save failed",
+                "The alignments still have unsaved changes. The Manual Tool will remain open.",
+                parent=self,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _close_component(name: str, component: T.Any) -> None:
+        """Call a component close method, logging but not blocking other cleanup."""
+        if component is None:
+            return
+        close = getattr(component, "close", None)
+        if not callable(close):
+            # Compatibility for tests and older FrameLoader-like wrappers.
+            inner = getattr(component, "_loader", None)
+            close = getattr(inner, "close", None)
+        if not callable(close):
+            logger.debug("Manual Tool: %s has no close method", name)
+            return
+        try:
+            close()
+        except Exception:  # pylint:disable=broad-except
+            logger.debug("Manual Tool: %s close raised", name, exc_info=True)
+
+    def _on_close(self) -> None:
+        """Window-manager close handler.
+
+        Performs one cleanup path for title-bar close and explicit quit:
+        prompt for unsaved edits, stop background components, then close Tk.
+        """
+        if not self._confirm_close_with_unsaved_changes():
+            return
+
+        logger.info("Manual Tool: shutting down...")
+        self._close_component("aligner", self.__dict__.get("_aligner"))
+        self._close_component("frame loader", self.__dict__.get("_frame_loader"))
+
+        # ``Manual.__new__(Manual)`` test doubles do not have Tk initialized.
+        # Calling ``self.quit()`` on those objects recurses through Tk.__getattr__.
+        if "tk" in self.__dict__:
+            try:
+                self.quit()
+            except tk.TclError:
+                logger.debug("Manual Tool: root window quit raised", exc_info=True)
+
+        destroy = self.__dict__.get("destroy")
+        if not callable(destroy) and "tk" in self.__dict__:
+            destroy = self.destroy
+
+        if callable(destroy):
+            try:
+                destroy()
+            except tk.TclError:
+                logger.debug("Manual Tool: root window destroy raised", exc_info=True)
+
         logger.info("Manual Tool: shut down.")
-        # ``sys.exit`` lets atexit handlers run; the standalone tool launcher
-        # in ``tools/manual/cli.py`` then returns to its caller cleanly.
-        sys.exit(0)
+        if self.__dict__.get("_exit_on_close", True):
+            sys.exit(0)
 
     def process(self) -> None:
         """The entry point for the Visual Alignments tool from :mod:`lib.tools.manual.cli`.
@@ -535,6 +640,16 @@ class _Options(ttk.Frame):  # pylint:disable=too-many-ancestors
                 logger.debug("Hiding control panel for: %s", editor)
                 panel.pack_forget()
 
+    def destroy(self) -> None:
+        """Remove Tcl variable traces before destroying this frame."""
+        for tk_var, token in self._trace_tokens:
+            try:
+                tk_var.trace_remove("write", token)
+            except tk.TclError:
+                logger.debug("Control panel trace already removed", exc_info=True)
+        self._trace_tokens.clear()
+        super().destroy()
+
 
 class Aligner:
     """The :class:`Aligner` class sets up an extraction pipeline for each of the current Faceswap
@@ -612,6 +727,31 @@ class Aligner:
         """
         logger.debug("Linking detected_faces: %s", detected_faces)
         self._detected_faces = detected_faces
+
+    def close(self) -> None:
+        """Stop aligner runners and release their worker threads."""
+        init_thread = getattr(self, "_init_thread", None)
+        if init_thread is not None and init_thread.is_alive():
+            init_thread.join()
+
+        for plugin, runner in list(self._aligners.items()):
+            logger.debug("Stopping aligner: %s", plugin)
+            try:
+                runner.stop()
+            except KeyError:
+                logger.debug("Aligner runner already removed from registry: %s", plugin)
+            except Exception:  # pylint:disable=broad-except
+                logger.debug("Aligner runner stop raised for: %s", plugin, exc_info=True)
+
+            threads = getattr(runner, "_threads", None)
+            join = getattr(threads, "join", None)
+            if callable(join):
+                try:
+                    join()
+                except Exception:  # pylint:disable=broad-except
+                    logger.debug("Aligner runner join raised for: %s", plugin, exc_info=True)
+
+        self._aligners.clear()
 
     def get_landmarks(
         self,
@@ -700,8 +840,27 @@ class FrameLoader:
         self._init_thread = self._background_init_frames(
             frames_location, video_meta_data, file_list
         )
-        self._globals.var_frame_index.trace_add("write", self._set_frame)
+        self._frame_trace = self._globals.var_frame_index.trace_add("write", self._set_frame)
         logger.debug("Initialized %s", self.__class__.__name__)
+
+    def close(self) -> None:
+        """Remove callbacks and close the underlying frame loader."""
+        frame_trace = getattr(self, "_frame_trace", "")
+        if frame_trace:
+            try:
+                self._globals.var_frame_index.trace_remove("write", frame_trace)
+            except (tk.TclError, ValueError):
+                logger.debug("FrameLoader frame-index trace already removed", exc_info=True)
+            self._frame_trace = ""
+
+        init_thread = getattr(self, "_init_thread", None)
+        if init_thread is not None and init_thread.is_alive():
+            init_thread.join()
+
+        loader = getattr(self, "_loader", None)
+        if loader is not None:
+            loader.close()
+            self._loader = None
 
     @property
     def is_initialized(self) -> bool:
@@ -754,7 +913,7 @@ class FrameLoader:
     def _load_images(
         self,
         frames_location: str,
-        video_meta_data: dict[T.Literal["pts_time", "keyframes"], list[int]],
+        video_meta_data: dict[T.Literal["pts_time", "keyframes"], list[int]] | None,
         frame_list: list[str],
     ) -> None:
         """Load the images in a background thread.
@@ -798,6 +957,7 @@ class FrameLoader:
             Default: ``False``
         """
         position = self._globals.frame_index
+        loader = self._loader
         if not initialize and (position == self._current_idx and not self._globals.is_zoomed):
             logger.trace(  # type: ignore[attr-defined]
                 "Update criteria not met. Not updating: "
@@ -808,12 +968,24 @@ class FrameLoader:
                 self._globals.is_zoomed,
             )
             return
+        if position != -1 and loader is None:
+            logger.debug("Frame loader not initialized. Skipping frame update.")
+            return
+        if position != -1:
+            assert loader is not None
+            if position < 0 or position >= loader.process_count:
+                logger.warning("Ignoring invalid frame index: %s", position)
+                return
         if position == -1:
             filename = "No Frame"
             frame = np.ones(self._globals.frame_display_dims + (3,), dtype="uint8")
         else:
-            assert self._loader is not None
-            filename, frame = self._loader.image_from_index(position)
+            assert loader is not None
+            try:
+                filename, frame = loader.image_from_index(position)
+            except Exception:  # pylint:disable=broad-except
+                logger.error("Unable to load frame index %s", position, exc_info=True)
+                return
         logger.trace(  # type: ignore[attr-defined]
             "filename: %s, frame: %s, position: %s",
             filename,
