@@ -308,6 +308,70 @@ class Automation(GlobalSection):
             "would do. Ignored when 'training_automation' is 'off'."
         ),
     )
+    training_sampler = ConfigItem(
+        datatype=str,
+        default="random",
+        choices=["random", "faceqa_weighted", "faceqa_curriculum"],
+        gui_radio=True,
+        fixed=False,
+        group=_("data sampling"),
+        info=_(
+            "Training sample selection mode."
+            "\n\trandom - Preserve the standard random training sampler."
+            "\n\tfaceqa_weighted - Use FaceQA metadata to upweight useful underrepresented "
+            "buckets and downweight duplicate/outlier/low-quality samples."
+            "\n\tfaceqa_curriculum - Use the same FaceQA weighting with scheduler-controlled "
+            "strength when training automation is available."
+        ),
+    )
+    faceqa_sampler_strength = ConfigItem(
+        datatype=str,
+        default="auto",
+        fixed=False,
+        group=_("data sampling"),
+        info=_(
+            "Strength for FaceQA-aware sampling. Use 'auto' for a conservative value, or enter "
+            "a non-negative numeric value. 0.0 is equivalent to random sampling."
+        ),
+    )
+    faceqa_sampler_dimensions = ConfigItem(
+        datatype=str,
+        default="pose,expression,lighting",
+        fixed=False,
+        group=_("data sampling"),
+        info=_(
+            "Comma-separated FaceQA dimensions used to upweight underrepresented useful "
+            "buckets. Supported values include pose, pitch, expression, lighting, blur, "
+            "resolution and mask_qa."
+        ),
+    )
+    faceqa_downweight_duplicates = ConfigItem(
+        datatype=bool,
+        default=True,
+        fixed=False,
+        group=_("data sampling"),
+        info=_("Downweight FaceQA duplicate/prune candidates during FaceQA-aware sampling."),
+    )
+    faceqa_downweight_outliers = ConfigItem(
+        datatype=bool,
+        default=True,
+        fixed=False,
+        group=_("data sampling"),
+        info=_("Downweight FaceQA identity outliers/rejects during FaceQA-aware sampling."),
+    )
+    faceqa_min_quality = ConfigItem(
+        datatype=str,
+        default="usable",
+        choices=["off", "usable"],
+        gui_radio=True,
+        fixed=False,
+        group=_("data sampling"),
+        info=_(
+            "Minimum sample quality for FaceQA-aware amplification."
+            "\n\toff - Do not apply quality downweights."
+            "\n\tusable - Downweight unusable blur, tiny resolution and missing-mask samples."
+        ),
+    )
 
 
 def get_defaults() -> dict[str, GlobalSection]:

@@ -514,6 +514,9 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         state = self._phase_scheduler.at(self._model.iterations)
         self._phase_schedule_state = state
         self._plugin.loss_func.set_schedule(state.effective_multipliers.as_dict())
+        self._train_loader.set_faceqa_sampler_strength_multiplier(
+            state.effective_multipliers.secondary_loss
+        )
 
         if state.phase != self._phase_last_logged:
             logger.info(
@@ -756,9 +759,9 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         # Idempotent and a no-op for standard optimizers (issue #185).
         self._optimizer.train()
         try:
-            inputs, targets, meta = next(self._train_loader)
             self._plugin.loss_func.set_iteration(self._model.iterations)
             self._update_phase_schedule()
+            inputs, targets, meta = next(self._train_loader)
             loss = self._plugin.train_batch(
                 [i.to(self._device) for i in inputs],
                 [t.to(self._device) for t in targets],
@@ -775,6 +778,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                     self._model.iterations,
                 )
             )
+            self._train_loader.update_faceqa_sampler_loss_logs(self._faceqa_diagnostic_logs)
         except RuntimeError as err:
             if not is_accelerator_oom_error(err):
                 raise

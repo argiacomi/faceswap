@@ -7,12 +7,20 @@ import logging
 import os
 import typing as T
 
+import numpy as np
 import torch
 from torch.utils import data as tch_data
 from torch.utils.data import DataLoader
 
 from lib.logger import parse_class_init
 from lib.training.faceqa_diagnostics import FaceQAMetadataIndex
+from lib.training.faceqa_sampler import (
+    FaceQASamplerConfig,
+    FaceQASamplerSummary,
+    SamplerMode,
+    compute_faceqa_sample_weights,
+    normalize_dimensions,
+)
 from lib.utils import get_module_objects
 from plugins.train import train_config as mod_cfg
 from plugins.train.trainer import trainer_config as trn_cfg
@@ -27,6 +35,23 @@ if T.TYPE_CHECKING:
     from .collate import BatchMeta
 
 logger = logging.getLogger(__name__)
+_AUTO_FACEQA_SAMPLER_STRENGTH = 0.75
+
+
+def _auto_strength(value: object) -> float:
+    """Return a conservative sampler strength for ``auto`` or parse a configured value."""
+    text = str(value).strip().lower()
+    if text == "auto":
+        return _AUTO_FACEQA_SAMPLER_STRENGTH
+    try:
+        strength = float(text)
+    except ValueError as err:
+        raise ValueError(
+            f"faceqa_sampler_strength must be 'auto' or a non-negative number. Got {value!r}"
+        ) from err
+    if strength < 0.0:
+        raise ValueError(f"faceqa_sampler_strength must be >= 0.0. Got {strength}")
+    return strength
 
 
 class TrainLoader:  # pylint:disable=too-many-instance-attributes
@@ -73,6 +98,17 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         self._faceqa_metadata_paths = (
             [] if faceqa_metadata_paths is None else faceqa_metadata_paths
         )
+        self._faceqa_sampler = self._faceqa_sampler_config()
+        self._faceqa_sampler_multiplier = (
+            0.0
+            if (
+                self._faceqa_sampler.mode == "faceqa_curriculum"
+                and trn_cfg.Automation.training_automation() != "off"
+            )
+            else 1.0
+        )
+        self._faceqa_sampler_bucket_losses: dict[tuple[str, str, str], float] = {}
+        self._faceqa_sampler_summaries: list[FaceQASamplerSummary] = []
 
         if config.warp and config.cache_landmarks:
             self._landmarks = LandmarkMatcher(
@@ -95,6 +131,18 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         )
         self._epoch = 0
 
+    @staticmethod
+    def _faceqa_sampler_config() -> FaceQASamplerConfig:
+        """Build FaceQA sampler config from trainer options."""
+        return FaceQASamplerConfig(
+            mode=T.cast(SamplerMode, trn_cfg.Automation.training_sampler()),
+            strength=_auto_strength(trn_cfg.Automation.faceqa_sampler_strength()),
+            dimensions=normalize_dimensions(trn_cfg.Automation.faceqa_sampler_dimensions()),
+            downweight_duplicates=trn_cfg.Automation.faceqa_downweight_duplicates(),
+            downweight_outliers=trn_cfg.Automation.faceqa_downweight_outliers(),
+            min_quality=T.cast(T.Any, trn_cfg.Automation.faceqa_min_quality()),
+        )
+
     def __iter__(self) -> T.Self:  # type: ignore[name-defined]
         """This is an iterator"""
         return self
@@ -108,6 +156,117 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
+
+    @property
+    def faceqa_sampler_summaries(self) -> list[FaceQASamplerSummary]:
+        """Current FaceQA sampler summaries, one per side where available."""
+        return self._faceqa_sampler_summaries
+
+    def _active_faceqa_sampler_config(self) -> FaceQASamplerConfig:
+        """Return the sampler config with the current phase multiplier applied."""
+        if self._faceqa_sampler.mode != "faceqa_curriculum":
+            return self._faceqa_sampler
+        return self._faceqa_sampler.with_strength_multiplier(self._faceqa_sampler_multiplier)
+
+    def _faceqa_include_metadata(self) -> bool:
+        """Return whether TrainSet should expose FaceQA metadata."""
+        return self._faceqa_training_diagnostics or self._faceqa_sampler.mode != "random"
+
+    def _faceqa_index_for_side(self, side: str, index: int) -> FaceQAMetadataIndex | None:
+        """Return optional FaceQA fallback metadata index for a side."""
+        if not self._faceqa_include_metadata():
+            return None
+        return FaceQAMetadataIndex.from_path(
+            side,
+            self._faceqa_metadata_paths[index]
+            if index < len(self._faceqa_metadata_paths)
+            else None,
+        )
+
+    def _sample_weights(
+        self, data_sets: tuple[TrainSet, ...]
+    ) -> tuple[np.ndarray | None, ...] | None:
+        """Return side-specific sample weights, or ``None`` for exact random fallback."""
+        config = self._active_faceqa_sampler_config()
+        if not config.active:
+            self._faceqa_sampler_summaries = []
+            return None
+
+        weights: list[np.ndarray | None] = []
+        summaries: list[FaceQASamplerSummary] = []
+        for data_set in data_sets:
+            samples = data_set.faceqa_metadata_for_sampling()
+            side_weights, summary = compute_faceqa_sample_weights(
+                data_set.side,
+                samples,
+                config,
+                self._faceqa_sampler_bucket_losses,
+            )
+            weights.append(side_weights)
+            summaries.append(summary)
+
+        self._faceqa_sampler_summaries = summaries
+        for summary in summaries:
+            logger.info(
+                "FaceQA sampler side %s: metadata=%s/%s effective_samples=%.2f top_up=%s "
+                "top_down=%s",
+                summary.side,
+                summary.metadata_count,
+                summary.total_count,
+                summary.effective_sample_count,
+                summary.top_upweighted,
+                summary.top_downweighted,
+            )
+        return None if not any(weight is not None for weight in weights) else tuple(weights)
+
+    def set_faceqa_sampler_strength_multiplier(self, multiplier: float) -> None:
+        """Update curriculum sampler strength from the training phase scheduler."""
+        if self._faceqa_sampler.mode != "faceqa_curriculum":
+            return
+        multiplier = max(0.0, float(multiplier))
+        if multiplier == self._faceqa_sampler_multiplier:
+            return
+        self._faceqa_sampler_multiplier = multiplier
+        train_set = T.cast(MultiDataset, self._loader.dataset)
+        train_set.set_sample_weights(
+            self._sample_weights(T.cast(tuple[TrainSet, ...], train_set.datasets))
+        )
+
+    @staticmethod
+    def _bucket_loss_logs(logs: T.Mapping[str, T.Any]) -> dict[tuple[str, str, str], float]:
+        """Extract FaceQA bucket EMA losses from diagnostic log keys."""
+        prefix = "bucket/"
+        suffix = "/ema"
+        retval: dict[tuple[str, str, str], float] = {}
+        for key, value in logs.items():
+            if not key.startswith(prefix) or not key.endswith(suffix):
+                continue
+            parts = key[len(prefix) : -len(suffix)].split("/")
+            if len(parts) != 3:
+                continue
+            side, dimension, bucket = parts
+            if dimension in {"duplicate", "identity_outlier"}:
+                continue
+            try:
+                score = float(value)
+            except (TypeError, ValueError):
+                continue
+            if score > 0.0:
+                retval[(side, dimension, bucket)] = score
+        return retval
+
+    def update_faceqa_sampler_loss_logs(self, logs: T.Mapping[str, T.Any]) -> None:
+        """Update curriculum weights from FaceQA per-bucket loss diagnostics."""
+        if self._faceqa_sampler.mode != "faceqa_curriculum":
+            return
+        bucket_losses = self._bucket_loss_logs(logs)
+        if bucket_losses == self._faceqa_sampler_bucket_losses:
+            return
+        self._faceqa_sampler_bucket_losses = bucket_losses
+        train_set = T.cast(MultiDataset, self._loader.dataset)
+        train_set.set_sample_weights(
+            self._sample_weights(T.cast(tuple[TrainSet, ...], train_set.datasets))
+        )
 
     def get_loader(self) -> DataLoader:
         """Obtain the dataloaders for each input/output for the model
@@ -128,26 +287,22 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             )
             num_workers = max_proc - 1
 
+        include_faceqa = self._faceqa_include_metadata()
         data_sets = tuple(
             TrainSet(
                 get_label(i, len(self._config.folders)),
                 f,
                 self._process_size,
-                include_faceqa=self._faceqa_training_diagnostics,
-                faceqa_index=(
-                    None
-                    if not self._faceqa_training_diagnostics
-                    else FaceQAMetadataIndex.from_path(
-                        get_label(i, len(self._config.folders)),
-                        self._faceqa_metadata_paths[i]
-                        if i < len(self._faceqa_metadata_paths)
-                        else None,
-                    )
+                include_faceqa=include_faceqa,
+                faceqa_index=self._faceqa_index_for_side(
+                    get_label(i, len(self._config.folders)), i
                 ),
             )
             for i, f in enumerate(self._config.folders)
         )
-        train_set = MultiDataset(data_sets, is_random=True)
+        train_set = MultiDataset(
+            data_sets, is_random=True, sample_weights=self._sample_weights(data_sets)
+        )
         collate_fn = Collate(
             self._input_size,
             self._output_sizes,

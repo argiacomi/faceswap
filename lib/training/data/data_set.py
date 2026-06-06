@@ -15,7 +15,8 @@ import torch
 from torch.utils.data import Dataset
 
 from lib.align import AlignedFace, Mask
-from lib.image import read_image
+from lib.align.objects import PNGHeader
+from lib.image import read_image, read_image_meta_batch
 from lib.logger import format_array, parse_class_init
 from lib.training.faceqa_diagnostics import FaceQAMetadataIndex, FaceQASampleMetadata
 from lib.utils import FaceswapError, get_module_objects
@@ -25,7 +26,7 @@ if T.TYPE_CHECKING:
     import numpy.typing as npt
 
     from lib.align import CenteringType
-    from lib.align.objects import MaskAlignmentsFile, PNGAlignments, PNGHeader
+    from lib.align.objects import MaskAlignmentsFile, PNGAlignments
     from lib.align.pose import PoseEstimate
 
 logger = logging.getLogger(__name__)
@@ -387,6 +388,11 @@ class _BaseSet(Dataset, abc.ABC):
         """Number of items within this dataset"""
         return len(self._image_list)
 
+    @property
+    def side(self) -> str:
+        """Training side label for this dataset."""
+        return self._side
+
     @abc.abstractmethod
     def _get_configured_masks(self) -> list[str]:
         """Override to get the required masks
@@ -517,6 +523,37 @@ class TrainSet(_BaseSet):
         )
         self._faceqa_cache[index] = sample
         return sample
+
+    @staticmethod
+    def _png_header_from_meta(meta: dict[str, T.Any]) -> PNGHeader | None:
+        """Return a PNG header object from raw image metadata, if present."""
+        try:
+            payload = meta["itxt"]["alignments"]
+        except KeyError:
+            return None
+        if isinstance(payload, PNGHeader):
+            return payload
+        if not isinstance(payload, dict):
+            return None
+        return PNGHeader.from_dict(payload)
+
+    def faceqa_metadata_for_sampling(self) -> list[FaceQASampleMetadata]:
+        """Return FaceQA metadata for every sample without loading image pixels."""
+        samples = [
+            T.cast(FaceQASampleMetadata, FaceQASampleMetadata.missing(self._side, filename))
+            for filename in self._image_list
+        ]
+        if not self._include_faceqa:
+            return samples
+
+        index_by_filename = {filename: idx for idx, filename in enumerate(self._image_list)}
+        for filename, meta in read_image_meta_batch(self._image_list):
+            index = index_by_filename[filename]
+            header = self._png_header_from_meta(meta)
+            if header is None:
+                continue
+            samples[index] = self._faceqa_metadata(index, filename, header)
+        return samples
 
     def _get_configured_masks(self) -> list[str]:
         """Obtain a list of configured training masks
@@ -727,10 +764,23 @@ class MultiDataset(Dataset):
         datasets should return the item for the given index
     """
 
-    def __init__(self, datasets: tuple[_BaseSet, ...], is_random: bool = True) -> None:
+    def __init__(
+        self,
+        datasets: tuple[_BaseSet, ...],
+        is_random: bool = True,
+        sample_weights: tuple[npt.NDArray[np.float64] | None, ...] | None = None,
+    ) -> None:
         super().__init__()
         self._datasets = datasets
         self._len = max(len(d) for d in datasets)
+        self._sample_weights = (
+            tuple([None] * len(self._datasets)) if sample_weights is None else sample_weights
+        )
+        if len(self._sample_weights) != len(self._datasets):
+            raise ValueError(
+                "Sample weights must match dataset count. "
+                f"Got weights={len(self._sample_weights)} datasets={len(self._datasets)}"
+            )
 
         self._remainder = [np.empty(0, dtype=np.int64)] * len(self._datasets)  # type: ignore[var-annotated]
         self._indices = self._shuffle_indices()
@@ -738,12 +788,35 @@ class MultiDataset(Dataset):
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = f"datasets={self._datasets}, is_random={self._is_random}"
+        params = (
+            f"datasets={self._datasets}, is_random={self._is_random}, "
+            f"weighted={any(weight is not None for weight in self._sample_weights)}"
+        )
         return f"{self.__class__.__name__}({params})"
 
     def __len__(self):
         """Number of items within the largest dataset"""
         return self._len
+
+    @property
+    def datasets(self) -> tuple[_BaseSet, ...]:
+        """Contained side datasets."""
+        return self._datasets
+
+    @staticmethod
+    def _weighted_indices(
+        ds_len: int, weights: npt.NDArray[np.float64], size: int
+    ) -> npt.NDArray[np.int64]:
+        """Return weighted random indices for one side dataset."""
+        if weights.shape != (ds_len,):
+            raise ValueError(f"Sample weights shape must be ({ds_len},). Got {weights.shape}")
+        if not np.isfinite(weights).all() or weights.sum() <= 0.0:
+            return np.random.choice(ds_len, size=size, replace=True).astype(np.int64, copy=False)
+        probabilities = weights / weights.sum()
+        return np.random.choice(ds_len, size=size, replace=True, p=probabilities).astype(
+            np.int64,
+            copy=False,
+        )
 
     def _shuffle_indices(self) -> npt.NDArray[np.int64]:
         """At the end of each epoch build a new indices array for each input. The permutations
@@ -759,6 +832,10 @@ class MultiDataset(Dataset):
         retval = np.empty((len(self._datasets), self._len), dtype=np.int64)  # type: ignore[var-annotated]
         for idx, ds in enumerate(self._datasets):
             ds_len = len(ds)
+            weights = self._sample_weights[idx]
+            if weights is not None:
+                retval[idx] = self._weighted_indices(ds_len, weights, self._len)
+                continue
             filled = 0
             remainder = self._remainder[idx]
             if len(remainder):
@@ -781,6 +858,21 @@ class MultiDataset(Dataset):
     def shuffle(self) -> None:
         """Shuffle all of the contained dataset's data"""
         self._indices = self._shuffle_indices()
+
+    def set_sample_weights(
+        self, sample_weights: tuple[npt.NDArray[np.float64] | None, ...] | None
+    ) -> None:
+        """Update side-specific sample weights used for future shuffles."""
+        self._sample_weights = (
+            tuple([None] * len(self._datasets)) if sample_weights is None else sample_weights
+        )
+        if len(self._sample_weights) != len(self._datasets):
+            raise ValueError(
+                "Sample weights must match dataset count. "
+                f"Got weights={len(self._sample_weights)} datasets={len(self._datasets)}"
+            )
+        self._remainder = [np.empty(0, dtype=np.int64)] * len(self._datasets)  # type: ignore[var-annotated]
+        self.shuffle()
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, ...]:
         """Obtain the next item from each of the contained datasets
