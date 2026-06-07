@@ -90,6 +90,31 @@ def test_min_batch_size_uses_standard_mean() -> None:
     assert loss.brlw_stats is None
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        torch.zeros(4, dtype=torch.float16),
+        torch.full((4,), torch.finfo(torch.float16).tiny, dtype=torch.float16),
+    ],
+)
+def test_fp16_zero_and_tiny_losses_do_not_nan(values: torch.Tensor) -> None:
+    """BRLW should compute weights in a dtype that keeps fp16 zero/tiny batches finite."""
+    loss = _loss(
+        values,
+        BatchRelativeLossWeighting(
+            enabled=True,
+            strength=1.0,
+            min_batch_size=4,
+            min_weight=0.5,
+            max_weight=2.0,
+        ),
+    )
+
+    assert torch.isfinite(loss.total)
+    assert loss.brlw_stats is not None
+    assert torch.isfinite(loss.brlw_stats.weights).all()
+
+
 def test_protected_samples_are_not_overweighted() -> None:
     """Metadata-protected samples may contribute but should not receive >1.0 weight."""
     values = torch.tensor([1.0, 1.0, 1.0, 100.0])
@@ -111,6 +136,29 @@ def test_protected_samples_are_not_overweighted() -> None:
     assert loss.brlw_stats is not None
     assert loss.brlw_stats.weights[-1].item() <= 1.0
     assert loss.brlw_stats.weights.mean().item() == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("strength", float("nan")),
+        ("strength", float("inf")),
+        ("min_weight", float("nan")),
+        ("max_weight", float("inf")),
+    ],
+)
+def test_non_finite_brlw_config_values_are_rejected(field: str, value: float) -> None:
+    """Non-finite BRLW config values should fail before producing NaN weights."""
+    kwargs = {
+        "enabled": True,
+        "strength": 1.0,
+        "min_weight": 0.5,
+        "max_weight": 2.0,
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match="finite"):
+        BatchRelativeLossWeighting(**kwargs)
 
 
 def test_detached_weights_do_not_backpropagate_through_weight_calculation() -> None:

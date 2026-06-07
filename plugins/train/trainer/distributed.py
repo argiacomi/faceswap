@@ -228,6 +228,40 @@ class Trainer(OriginalTrainer):
             }
         raise NotImplementedError(f"Unsupported type in loss structure: {type(value)}")
 
+    @staticmethod
+    def _is_brlw_protected_sample(sample: T.Any) -> bool:
+        """Return whether metadata marks a sample as unsafe to overweight."""
+        return getattr(sample, "has_faceqa", False) and (
+            getattr(sample, "duplicate_bucket", "unknown") == "duplicate"
+            or getattr(sample, "identity_outlier_bucket", "unknown") in ("outlier", "reject")
+        )
+
+    @classmethod
+    def _brlw_protected_samples(
+        cls,
+        meta: BatchMeta,
+        side_index: int,
+        reduced_loss: dict[str, T.Any],
+    ) -> torch.Tensor | None:
+        """Return the host-computed protected mask for one gathered side loss."""
+        if meta.faceqa is None or side_index >= len(meta.faceqa):
+            return None
+        reference = reduced_loss.get("mask")
+        for output_losses in reduced_loss.get("weighted", []):
+            if output_losses:
+                reference = next(iter(output_losses.values()))
+                break
+        if not isinstance(reference, torch.Tensor) or reference.ndim == 0:
+            return None
+
+        samples = meta.faceqa[side_index]
+        if len(samples) != reference.numel():
+            return None
+        protected = [cls._is_brlw_protected_sample(sample) for sample in samples]
+        if not any(protected):
+            return None
+        return torch.tensor(protected, dtype=torch.bool, device=reference.device)
+
     def _forward(
         self, inputs: list[torch.Tensor], targets: list[torch.Tensor], meta: BatchMeta
     ) -> list[BatchLoss]:
@@ -258,13 +292,23 @@ class Trainer(OriginalTrainer):
             if isinstance(brlw_candidate, BatchRelativeLossWeighting)
             else BatchRelativeLossWeighting()
         )
-        loss = [
-            BatchLoss(
-                **T.cast(dict, self._mean_loss(loss_dict, preserve_tensors=brlw.active)),
-                brlw=brlw,
+        loss: list[BatchLoss] = []
+        for side_index, loss_dict in enumerate(loss_dicts):
+            reduced_loss = T.cast(
+                dict[str, T.Any],
+                self._mean_loss(
+                    loss_dict,
+                    preserve_tensors=brlw.active,
+                ),
             )
-            for loss_dict in loss_dicts
-        ]
+            loss.append(
+                BatchLoss(
+                    **reduced_loss,
+                    brlw=brlw.with_protected_samples(
+                        self._brlw_protected_samples(meta, side_index, reduced_loss)
+                    ),
+                )
+            )
         return loss
 
 

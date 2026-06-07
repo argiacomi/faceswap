@@ -6,7 +6,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lib.training.data.data_set import MultiDataset
+from lib.training.data.data_set import MultiDataset, TrainSet
+from lib.training.data.loader import TrainLoader
 from lib.training.faceqa_diagnostics import FaceQASampleMetadata
 from lib.training.faceqa_sampler import (
     FaceQASamplerConfig,
@@ -139,6 +140,65 @@ def test_missing_metadata_falls_back_to_random_sampling() -> None:
     assert summary.total_count == 2
 
 
+def test_uniform_metadata_preserves_random_sampling_fallback() -> None:
+    """Uniform FaceQA signals should not switch MultiDataset into replacement sampling."""
+    samples = [_sample(idx) for idx in range(4)]
+    weights, summary = compute_faceqa_sample_weights(
+        "A",
+        samples,
+        FaceQASamplerConfig(
+            mode="faceqa_weighted",
+            strength=1.0,
+            dimensions=("yaw_pose",),
+        ),
+    )
+
+    assert weights is None
+    assert summary.metadata_count == 4
+    assert summary.effective_sample_count == pytest.approx(4.0)
+
+
+def test_protected_samples_stay_below_missing_metadata() -> None:
+    """Protected rows should not be normalized back to neutral when mixed with missing rows."""
+    samples = [
+        _sample(0, duplicate="duplicate"),
+        _sample(1, outlier="outlier"),
+        _sample(2, has_faceqa=False),
+    ]
+    weights, _summary = compute_faceqa_sample_weights(
+        "A",
+        samples,
+        FaceQASamplerConfig(
+            mode="faceqa_weighted",
+            strength=1.0,
+            dimensions=("yaw_pose",),
+        ),
+    )
+
+    assert weights is not None
+    assert weights[0] < weights[2]
+    assert weights[1] < weights[2]
+    assert weights[2] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("kwargs", [{"duplicate": "duplicate"}, {"outlier": "outlier"}])
+def test_all_protected_uniform_samples_preserve_random_fallback(kwargs: dict[str, str]) -> None:
+    """Uniformly protected datasets should not switch to replacement sampling."""
+    samples = [_sample(idx, **kwargs) for idx in range(4)]
+    weights, summary = compute_faceqa_sample_weights(
+        "A",
+        samples,
+        FaceQASamplerConfig(
+            mode="faceqa_weighted",
+            strength=1.0,
+            dimensions=("yaw_pose",),
+        ),
+    )
+
+    assert weights is None
+    assert summary.effective_sample_count == pytest.approx(4.0)
+
+
 def test_curriculum_strength_multiplier_changes_weights() -> None:
     """Phase scheduler multipliers should scale curriculum sampler strength."""
     samples = [
@@ -204,6 +264,87 @@ def test_multidataset_uses_side_specific_sample_weights() -> None:
     )
 
     assert np.count_nonzero(dataset._indices[0] == 7) > 90  # pylint:disable=protected-access
+
+
+def test_multidataset_preserves_unweighted_remainder_when_weights_change() -> None:
+    """Sampler changes should not discard no-replacement coverage for unweighted sides."""
+    dataset = MultiDataset(
+        (  # type: ignore[arg-type]
+            _DummySet(3),
+            _DummySet(5),
+        ),
+        is_random=True,
+    )
+    dataset._remainder = [  # pylint:disable=protected-access
+        np.array([1, 2], dtype=np.int64),
+        np.array([3, 4], dtype=np.int64),
+    ]
+
+    dataset.set_sample_weights((np.array([1.0, 2.0, 3.0], dtype=np.float64), None))
+
+    assert dataset._remainder[0].size == 0  # pylint:disable=protected-access
+    assert np.array_equal(dataset._remainder[1], np.array([3, 4]))  # pylint:disable=protected-access
+
+
+def test_trainset_sampling_metadata_is_cached(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sampler recomputes should reuse parsed metadata instead of scanning PNG headers again."""
+    filenames = [tmp_path / f"face_{idx}.png" for idx in range(3)]
+    for filename in filenames:
+        filename.touch()
+    calls = 0
+
+    def fake_read_image_meta_batch(file_list: list[str]):
+        nonlocal calls
+        calls += 1
+        return [(filename, {}) for filename in file_list]
+
+    monkeypatch.setattr(
+        "lib.training.data.data_set.read_image_meta_batch",
+        fake_read_image_meta_batch,
+    )
+    data_set = TrainSet("A", str(tmp_path), 64, include_faceqa=True)
+
+    first = data_set.faceqa_metadata_for_sampling()
+    second = data_set.faceqa_metadata_for_sampling()
+
+    assert first is second
+    assert calls == 1
+
+
+def test_curriculum_strength_update_is_queued_for_epoch_boundary() -> None:
+    """Phase changes should be queued so active DataLoader workers keep a stable epoch view."""
+    loader = TrainLoader.__new__(TrainLoader)
+    loader._faceqa_sampler = FaceQASamplerConfig(  # pylint:disable=protected-access
+        mode="faceqa_curriculum",
+        strength=1.0,
+    )
+    loader._faceqa_sampler_multiplier = 0.0  # pylint:disable=protected-access
+    loader._faceqa_sampler_weights_dirty = False  # pylint:disable=protected-access
+    loader._sample_weights = pytest.fail  # type: ignore[method-assign]  # pylint:disable=protected-access
+
+    loader.set_faceqa_sampler_strength_multiplier(1.0)
+
+    assert loader._faceqa_sampler_multiplier == 1.0  # pylint:disable=protected-access
+    assert loader._faceqa_sampler_weights_dirty is True  # pylint:disable=protected-access
+
+
+def test_curriculum_loss_updates_are_queued_for_epoch_boundary() -> None:
+    """Diagnostic bucket-loss updates should not recompute active worker weights mid-epoch."""
+    loader = TrainLoader.__new__(TrainLoader)
+    loader._faceqa_sampler = FaceQASamplerConfig(  # pylint:disable=protected-access
+        mode="faceqa_curriculum",
+        strength=1.0,
+    )
+    loader._faceqa_sampler_bucket_losses = {}  # pylint:disable=protected-access
+    loader._faceqa_sampler_weights_dirty = False  # pylint:disable=protected-access
+    loader._sample_weights = pytest.fail  # type: ignore[method-assign]  # pylint:disable=protected-access
+
+    loader.update_faceqa_sampler_loss_logs({"bucket/A/yaw_pose/frontal/ema": 1.25})
+
+    assert loader._faceqa_sampler_bucket_losses == {  # pylint:disable=protected-access
+        ("A", "yaw_pose", "frontal"): 1.25
+    }
+    assert loader._faceqa_sampler_weights_dirty is True  # pylint:disable=protected-access
 
 
 def test_training_sampler_config_defaults_are_random_fallback() -> None:

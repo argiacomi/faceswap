@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from lib.training.data.data_set import configured_training_masks
+from lib.training.train import _auto_float
 from plugins.train import train_config as cfg
 
 _EXPECTED_DEFAULTS = {
@@ -41,6 +42,13 @@ _EXPECTED_DEFAULTS = {
 def test_advanced_loss_config_defaults(name: str, expected: object) -> None:
     """Every advanced-loss option must default to a disabled / neutral value."""
     assert getattr(cfg.Loss, name)() == expected
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_auto_float_rejects_non_finite_values(value: str) -> None:
+    """Numeric config parsing should reject non-finite BRLW values."""
+    with pytest.raises(ValueError, match="finite"):
+        _auto_float(value, name="brlw_strength")
 
 
 def test_configured_masks_default_order() -> None:

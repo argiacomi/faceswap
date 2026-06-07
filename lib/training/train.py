@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 import typing as T
@@ -64,8 +65,8 @@ def _auto_float(value: object, *, name: str) -> float | None:
         parsed = float(text)
     except ValueError as err:
         raise ValueError(f"{name} must be 'auto' or a non-negative number. Got {value!r}") from err
-    if parsed < 0.0:
-        raise ValueError(f"{name} must be >= 0.0. Got {parsed}")
+    if not math.isfinite(parsed) or parsed < 0.0:
+        raise ValueError(f"{name} must be a finite value >= 0.0. Got {parsed}")
     return parsed
 
 

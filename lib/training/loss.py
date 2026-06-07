@@ -5,6 +5,7 @@ training Faceswap models"""
 from __future__ import annotations
 
 import logging
+import math
 import typing as T
 from dataclasses import dataclass, field, replace
 
@@ -55,6 +56,10 @@ class BatchRelativeLossWeighting:
     """Boolean mask for samples that must not receive a weight above 1.0."""
 
     def __post_init__(self) -> None:
+        for name in ("strength", "min_weight", "max_weight", "eps"):
+            value = T.cast(float, getattr(self, name))
+            if not math.isfinite(value):
+                raise ValueError(f"BRLW {name} must be finite. Got {value}")
         if self.strength < 0.0:
             raise ValueError(f"BRLW strength must be >= 0.0. Got {self.strength}")
         if self.min_batch_size < 1:
@@ -97,6 +102,7 @@ class BatchRelativeLossWeighting:
 
     def _normalize_clamped(self, weights: torch.Tensor) -> torch.Tensor:
         """Normalize weights to sum to batch size without exceeding configured bounds."""
+        eps = max(self.eps, torch.finfo(weights.dtype).eps)
         max_weights = self._max_weights(weights)
         normalized = torch.maximum(weights, torch.full_like(weights, self.min_weight))
         normalized = torch.minimum(normalized, max_weights)
@@ -107,11 +113,11 @@ class BatchRelativeLossWeighting:
 
         for _ in range(normalized.numel()):
             active_sum = normalized[active].sum()
-            if not bool(active.any()) or active_sum.abs() < self.eps:
+            if not bool(active.any()) or active_sum.abs() < eps:
                 break
 
             remaining = target - normalized[~active].sum()
-            candidate = normalized[active] * (remaining / active_sum.clamp_min(self.eps))
+            candidate = normalized[active] * (remaining / active_sum.clamp_min(eps))
             too_low = candidate < self.min_weight
             active_max = max_weights[active]
             too_high = candidate > active_max
@@ -135,10 +141,13 @@ class BatchRelativeLossWeighting:
         if not self.active or sample_loss.ndim == 0 or sample_loss.numel() < self.min_batch_size:
             return sample_loss.mean(), None
 
-        relative = sample_loss / sample_loss.mean().clamp_min(self.eps)
+        work_loss = sample_loss.to(dtype=torch.float32)
+        eps = max(self.eps, torch.finfo(work_loss.dtype).eps)
+        relative = work_loss / work_loss.mean().clamp_min(eps)
         weights = 1.0 + self.strength * (relative - 1.0)
         weights = self._normalize_clamped(weights)
-        loss_weights = weights.detach() if self.detach_weights else weights
+        loss_weights = weights.to(dtype=sample_loss.dtype)
+        loss_weights = loss_weights.detach() if self.detach_weights else loss_weights
         loss = (sample_loss * loss_weights).mean()
 
         stats = BRLWStats(
@@ -147,8 +156,7 @@ class BatchRelativeLossWeighting:
             mean_weight=weights.mean(),
             max_weight=weights.max(),
             std_weight=weights.std(unbiased=False),
-            effective_batch_size=weights.sum().square()
-            / weights.square().sum().clamp_min(self.eps),
+            effective_batch_size=weights.sum().square() / weights.square().sum().clamp_min(eps),
         )
         return loss, stats
 

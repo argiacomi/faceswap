@@ -9,6 +9,8 @@ import pytest_mock
 import torch
 
 from lib.training.data.collate import BatchMeta
+from lib.training.faceqa_diagnostics import FaceQASampleMetadata
+from lib.training.loss import BatchRelativeLossWeighting
 from plugins.train.trainer import base as mod_base
 from plugins.train.trainer import distributed as mod_distributed
 from plugins.train.trainer import original as mod_original
@@ -20,6 +22,19 @@ class DummyLoss:  # pylint:disable=too-few-public-methods
     """Dummy loss return"""
 
     total = 1.0
+
+
+def _faceqa_sample(idx: int, *, duplicate: str = "unique") -> FaceQASampleMetadata:
+    """Build compact FaceQA sample metadata for distributed BRLW tests."""
+    return FaceQASampleMetadata(
+        side="A",
+        filename=f"face_{idx}.png",
+        source_file=f"src_{idx}.png",
+        source_id=f"src_{idx}.png:0",
+        face_index=0,
+        has_faceqa=True,
+        duplicate_bucket=duplicate,
+    )
 
 
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
@@ -120,3 +135,36 @@ def test_Trainer_forward(gpu_count, batch_size, outputs, _trainer_mocked, mocker
     call_args, call_kwargs = instance._distributed_model.call_args
     assert not call_kwargs
     assert len(call_args) == 3
+
+
+def test_Trainer_forward_preserves_brlw_protected_samples(_trainer_mocked, mocker):
+    """Distributed BRLW should restore protected sample masks from host FaceQA metadata."""
+    instance, _ = _trainer_mocked(gpus=2, batch_size=4)
+    instance.model.model.loss_func.batch_relative_loss_weighting = BatchRelativeLossWeighting(
+        enabled=True,
+        strength=1.0,
+        min_batch_size=4,
+    )
+    instance._distributed_model = mocker.MagicMock(
+        return_value=[
+            {
+                "unweighted": [{"mae": torch.tensor([1.0, 1.0, 1.0, 100.0])}],
+                "weighted": [{"mae": torch.tensor([1.0, 1.0, 1.0, 100.0])}],
+            }
+        ]
+    )
+    meta = BatchMeta(
+        faceqa=[
+            [
+                _faceqa_sample(0),
+                _faceqa_sample(1),
+                _faceqa_sample(2),
+                _faceqa_sample(3, duplicate="duplicate"),
+            ]
+        ]
+    )
+
+    loss = instance._forward([], [], meta)
+
+    assert loss[0].brlw.protected_samples is not None
+    assert loss[0].brlw.protected_samples.tolist() == [False, False, False, True]

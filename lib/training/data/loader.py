@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import typing as T
 
@@ -49,8 +50,8 @@ def _auto_strength(value: object) -> float:
         raise ValueError(
             f"faceqa_sampler_strength must be 'auto' or a non-negative number. Got {value!r}"
         ) from err
-    if strength < 0.0:
-        raise ValueError(f"faceqa_sampler_strength must be >= 0.0. Got {strength}")
+    if not math.isfinite(strength) or strength < 0.0:
+        raise ValueError(f"faceqa_sampler_strength must be a finite value >= 0.0. Got {strength}")
     return strength
 
 
@@ -109,6 +110,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         )
         self._faceqa_sampler_bucket_losses: dict[tuple[str, str, str], float] = {}
         self._faceqa_sampler_summaries: list[FaceQASamplerSummary] = []
+        self._faceqa_sampler_weights_dirty = False
 
         if config.warp and config.cache_landmarks:
             self._landmarks = LandmarkMatcher(
@@ -184,7 +186,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         )
 
     def _sample_weights(
-        self, data_sets: tuple[TrainSet, ...]
+        self, data_sets: tuple[TrainSet, ...], *, log_summary: bool = False
     ) -> tuple[np.ndarray | None, ...] | None:
         """Return side-specific sample weights, or ``None`` for exact random fallback."""
         config = self._active_faceqa_sampler_config()
@@ -206,18 +208,31 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             summaries.append(summary)
 
         self._faceqa_sampler_summaries = summaries
-        for summary in summaries:
-            logger.info(
-                "FaceQA sampler side %s: metadata=%s/%s effective_samples=%.2f top_up=%s "
-                "top_down=%s",
-                summary.side,
-                summary.metadata_count,
-                summary.total_count,
-                summary.effective_sample_count,
-                summary.top_upweighted,
-                summary.top_downweighted,
-            )
+        if log_summary:
+            for summary in summaries:
+                logger.info(
+                    "FaceQA sampler side %s: metadata=%s/%s effective_samples=%.2f top_up=%s "
+                    "top_down=%s",
+                    summary.side,
+                    summary.metadata_count,
+                    summary.total_count,
+                    summary.effective_sample_count,
+                    summary.top_upweighted,
+                    summary.top_downweighted,
+                )
         return None if not any(weight is not None for weight in weights) else tuple(weights)
+
+    def _apply_pending_faceqa_sampler_weights(self, train_set: MultiDataset) -> None:
+        """Apply queued sampler updates before creating the next DataLoader iterator."""
+        if not self._faceqa_sampler_weights_dirty:
+            return
+        train_set.set_sample_weights(
+            self._sample_weights(
+                T.cast(tuple[TrainSet, ...], train_set.datasets),
+                log_summary=True,
+            )
+        )
+        self._faceqa_sampler_weights_dirty = False
 
     def set_faceqa_sampler_strength_multiplier(self, multiplier: float) -> None:
         """Update curriculum sampler strength from the training phase scheduler."""
@@ -227,10 +242,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         if multiplier == self._faceqa_sampler_multiplier:
             return
         self._faceqa_sampler_multiplier = multiplier
-        train_set = T.cast(MultiDataset, self._loader.dataset)
-        train_set.set_sample_weights(
-            self._sample_weights(T.cast(tuple[TrainSet, ...], train_set.datasets))
-        )
+        self._faceqa_sampler_weights_dirty = True
 
     @staticmethod
     def _bucket_loss_logs(logs: T.Mapping[str, T.Any]) -> dict[tuple[str, str, str], float]:
@@ -263,10 +275,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         if bucket_losses == self._faceqa_sampler_bucket_losses:
             return
         self._faceqa_sampler_bucket_losses = bucket_losses
-        train_set = T.cast(MultiDataset, self._loader.dataset)
-        train_set.set_sample_weights(
-            self._sample_weights(T.cast(tuple[TrainSet, ...], train_set.datasets))
-        )
+        self._faceqa_sampler_weights_dirty = True
 
     def get_loader(self) -> DataLoader:
         """Obtain the dataloaders for each input/output for the model
@@ -301,7 +310,9 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             for i, f in enumerate(self._config.folders)
         )
         train_set = MultiDataset(
-            data_sets, is_random=True, sample_weights=self._sample_weights(data_sets)
+            data_sets,
+            is_random=True,
+            sample_weights=self._sample_weights(data_sets, log_summary=True),
         )
         collate_fn = Collate(
             self._input_size,
@@ -347,7 +358,9 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
 
             if isinstance(self._loader.sampler, tch_data.DistributedSampler):
                 self._loader.sampler.set_epoch(epoch + 1)
-            T.cast(MultiDataset, self._loader.dataset).shuffle()
+            train_set = T.cast(MultiDataset, self._loader.dataset)
+            self._apply_pending_faceqa_sampler_weights(train_set)
+            train_set.shuffle()
             self._iterator = iter(self._loader)
             inputs, targets, meta = next(self._iterator)
             self._epoch += 1

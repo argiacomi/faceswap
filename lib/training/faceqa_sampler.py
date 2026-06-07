@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import typing as T
 from dataclasses import dataclass, field
 
@@ -67,6 +68,10 @@ class FaceQASamplerConfig:
     def __post_init__(self) -> None:
         if self.mode not in ("random", "faceqa_weighted", "faceqa_curriculum"):
             raise ValueError(f"Unsupported FaceQA sampler mode: {self.mode!r}")
+        for name in ("strength", "downweight_factor", "max_weight"):
+            value = T.cast(float, getattr(self, name))
+            if not math.isfinite(value):
+                raise ValueError(f"FaceQA sampler {name} must be finite. Got {value}")
         if self.strength < 0.0:
             raise ValueError(f"FaceQA sampler strength must be >= 0.0. Got {self.strength}")
         if self.min_quality not in ("off", "usable"):
@@ -86,9 +91,10 @@ class FaceQASamplerConfig:
 
     def with_strength_multiplier(self, multiplier: float) -> FaceQASamplerConfig:
         """Return a copy with strength scaled by a non-negative scheduler multiplier."""
-        if multiplier < 0.0:
+        if not math.isfinite(multiplier) or multiplier < 0.0:
             raise ValueError(
-                f"FaceQA sampler strength multiplier must be >= 0.0. Got {multiplier}"
+                "FaceQA sampler strength multiplier must be a finite value >= 0.0. "
+                f"Got {multiplier}"
             )
         return FaceQASamplerConfig(
             mode=self.mode,
@@ -190,16 +196,17 @@ def _blend_and_normalize(
     """Blend raw weights by strength, apply safeguards, and normalize metadata weights."""
     weights = 1.0 + config.strength * (raw - 1.0)
     protected = np.array([_is_protected_sample(sample, config) for sample in samples], dtype=bool)
+    metadata = np.array([sample.has_faceqa for sample in samples], dtype=bool)
+
+    weights = np.clip(weights, config.downweight_factor, config.max_weight)
+    unprotected_metadata = metadata & ~protected
+    if unprotected_metadata.any():
+        mean = float(weights[unprotected_metadata].mean())
+        if mean > 0.0:
+            weights[unprotected_metadata] /= mean
+    weights = np.clip(weights, config.downweight_factor, config.max_weight)
     weights[protected] = np.minimum(weights[protected], 1.0) * config.downweight_factor
     weights = np.clip(weights, config.downweight_factor, config.max_weight)
-
-    metadata = np.array([sample.has_faceqa for sample in samples], dtype=bool)
-    if metadata.any():
-        mean = float(weights[metadata].mean())
-        if mean > 0.0:
-            weights[metadata] /= mean
-            weights[protected] = np.minimum(weights[protected], 1.0)
-            weights = np.clip(weights, config.downweight_factor, config.max_weight)
     return weights.astype(np.float64, copy=False)
 
 
@@ -249,6 +256,9 @@ def compute_faceqa_sample_weights(
 
     raw = _rarity_weights(samples, config, bucket_loss_scores)
     weights = _blend_and_normalize(raw, samples, config)
+    summary = _summary(side, samples, weights)
+    if weights.size == 0 or np.allclose(weights, weights[0]):
+        return None, summary
     logger.debug(
         "[FaceQASampler] side=%s metadata=%s/%s effective=%.2f top_up=%s top_down=%s",
         side,
@@ -258,7 +268,7 @@ def compute_faceqa_sample_weights(
         sorted(weights, reverse=True)[:5],
         sorted(weights)[:5],
     )
-    return weights, _summary(side, samples, weights)
+    return weights, summary
 
 
 __all__ = get_module_objects(__name__)

@@ -475,6 +475,7 @@ class TrainSet(_BaseSet):
         self._include_faceqa = include_faceqa
         self._faceqa_index = faceqa_index
         self._faceqa_cache: dict[int, FaceQASampleMetadata] = {}
+        self._faceqa_sampling_cache: list[FaceQASampleMetadata] | None = None
         self._out_shape = (self._size, self._size, 3 + len(self._mask_types))
         self._mask = _MaskProcessing(
             self._side, self._size, self._coverage, self._centering, self._y_offset
@@ -539,11 +540,14 @@ class TrainSet(_BaseSet):
 
     def faceqa_metadata_for_sampling(self) -> list[FaceQASampleMetadata]:
         """Return FaceQA metadata for every sample without loading image pixels."""
+        if self._faceqa_sampling_cache is not None:
+            return self._faceqa_sampling_cache
         samples = [
             T.cast(FaceQASampleMetadata, FaceQASampleMetadata.missing(self._side, filename))
             for filename in self._image_list
         ]
         if not self._include_faceqa:
+            self._faceqa_sampling_cache = samples
             return samples
 
         index_by_filename = {filename: idx for idx, filename in enumerate(self._image_list)}
@@ -553,6 +557,7 @@ class TrainSet(_BaseSet):
             if header is None:
                 continue
             samples[index] = self._faceqa_metadata(index, filename, header)
+        self._faceqa_sampling_cache = samples
         return samples
 
     def _get_configured_masks(self) -> list[str]:
@@ -863,16 +868,19 @@ class MultiDataset(Dataset):
         self, sample_weights: tuple[npt.NDArray[np.float64] | None, ...] | None
     ) -> None:
         """Update side-specific sample weights used for future shuffles."""
-        self._sample_weights = (
+        next_weights = (
             tuple([None] * len(self._datasets)) if sample_weights is None else sample_weights
         )
-        if len(self._sample_weights) != len(self._datasets):
+        if len(next_weights) != len(self._datasets):
             raise ValueError(
                 "Sample weights must match dataset count. "
-                f"Got weights={len(self._sample_weights)} datasets={len(self._datasets)}"
+                f"Got weights={len(next_weights)} datasets={len(self._datasets)}"
             )
-        self._remainder = [np.empty(0, dtype=np.int64)] * len(self._datasets)  # type: ignore[var-annotated]
-        self.shuffle()
+        self._sample_weights = next_weights
+        self._remainder = [
+            np.empty(0, dtype=np.int64) if weight is not None else remainder
+            for weight, remainder in zip(self._sample_weights, self._remainder, strict=True)
+        ]
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, ...]:
         """Obtain the next item from each of the contained datasets
