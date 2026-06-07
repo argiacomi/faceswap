@@ -10,6 +10,7 @@ import warnings
 import torch
 
 from lib.training.data import BatchMeta
+from lib.training.faceqa_sampler import is_faceqa_protected_sample
 from lib.training.loss import BatchLoss, BatchRelativeLossWeighting
 from lib.utils import get_module_objects
 
@@ -228,14 +229,6 @@ class Trainer(OriginalTrainer):
             }
         raise NotImplementedError(f"Unsupported type in loss structure: {type(value)}")
 
-    @staticmethod
-    def _is_brlw_protected_sample(sample: T.Any) -> bool:
-        """Return whether metadata marks a sample as unsafe to overweight."""
-        return getattr(sample, "has_faceqa", False) and (
-            getattr(sample, "duplicate_bucket", "unknown") == "duplicate"
-            or getattr(sample, "identity_outlier_bucket", "unknown") in ("outlier", "reject")
-        )
-
     @classmethod
     def _brlw_protected_samples(
         cls,
@@ -257,7 +250,7 @@ class Trainer(OriginalTrainer):
         samples = meta.faceqa[side_index]
         if len(samples) != reference.numel():
             return None
-        protected = [cls._is_brlw_protected_sample(sample) for sample in samples]
+        protected = [is_faceqa_protected_sample(sample) for sample in samples]
         if not any(protected):
             return None
         return torch.tensor(protected, dtype=torch.bool, device=reference.device)

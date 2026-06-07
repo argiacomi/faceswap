@@ -25,6 +25,7 @@ def _sample(
     lighting: str = "balanced",
     blur: str = "good",
     resolution: str = "good",
+    mask_qa: str = "present",
     duplicate: str = "unique",
     outlier: str = "inlier",
     has_faceqa: bool = True,
@@ -42,6 +43,7 @@ def _sample(
         lighting_bucket=lighting,
         blur_bucket=blur,
         resolution_bucket=resolution,
+        mask_qa_bucket=mask_qa,
         duplicate_bucket=duplicate,
         identity_outlier_bucket=outlier,
     )
@@ -102,6 +104,7 @@ def test_faceqa_weighting_upweights_underrepresented_useful_bucket() -> None:
         {"outlier": "outlier"},
         {"blur": "unusable"},
         {"resolution": "tiny"},
+        {"mask_qa": "missing"},
     ],
 )
 def test_bad_samples_are_downweighted_and_not_amplified(kwargs: dict[str, str]) -> None:
@@ -250,6 +253,30 @@ def test_curriculum_bucket_loss_scores_emphasize_valid_high_loss_bucket() -> Non
     assert weights[2] <= 1.0
 
 
+def test_non_finite_curriculum_bucket_loss_preserves_random_fallback() -> None:
+    """Invalid diagnostic scores should not create replacement weighted sampling."""
+    samples = [
+        _sample(0, yaw="frontal"),
+        _sample(1, yaw="right_profile"),
+    ]
+    weights, summary = compute_faceqa_sample_weights(
+        "A",
+        samples,
+        FaceQASamplerConfig(
+            mode="faceqa_curriculum",
+            strength=1.0,
+            dimensions=("yaw_pose",),
+        ),
+        {
+            ("A", "yaw_pose", "frontal"): 1.0,
+            ("A", "yaw_pose", "right_profile"): float("inf"),
+        },
+    )
+
+    assert weights is None
+    assert summary.metadata_count == 2
+
+
 def test_multidataset_uses_side_specific_sample_weights() -> None:
     """Weighted side shuffling should draw high-weighted side samples more often."""
     np.random.seed(0)
@@ -328,6 +355,19 @@ def test_curriculum_strength_update_is_queued_for_epoch_boundary() -> None:
     assert loader._faceqa_sampler_weights_dirty is True  # pylint:disable=protected-access
 
 
+@pytest.mark.parametrize("multiplier", [float("nan"), float("inf"), -1.0])
+def test_curriculum_strength_update_rejects_non_finite_multiplier(multiplier: float) -> None:
+    """TrainLoader should enforce the same multiplier validation as the sampler config."""
+    loader = TrainLoader.__new__(TrainLoader)
+    loader._faceqa_sampler = FaceQASamplerConfig(  # pylint:disable=protected-access
+        mode="faceqa_curriculum",
+        strength=1.0,
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        loader.set_faceqa_sampler_strength_multiplier(multiplier)
+
+
 def test_curriculum_loss_updates_are_queued_for_epoch_boundary() -> None:
     """Diagnostic bucket-loss updates should not recompute active worker weights mid-epoch."""
     loader = TrainLoader.__new__(TrainLoader)
@@ -345,6 +385,64 @@ def test_curriculum_loss_updates_are_queued_for_epoch_boundary() -> None:
         ("A", "yaw_pose", "frontal"): 1.25
     }
     assert loader._faceqa_sampler_weights_dirty is True  # pylint:disable=protected-access
+
+
+def test_curriculum_loss_updates_ignore_non_finite_bucket_scores() -> None:
+    """Non-finite diagnostics should be ignored before sampler weight calculation."""
+    logs = {
+        "bucket/A/yaw_pose/frontal/ema": 1.0,
+        "bucket/A/yaw_pose/right_profile/ema": float("inf"),
+        "bucket/A/expression/smile/ema": float("nan"),
+    }
+
+    assert TrainLoader._bucket_loss_logs(logs) == {  # pylint:disable=protected-access
+        ("A", "yaw_pose", "frontal"): 1.0
+    }
+
+
+def test_next_applies_queued_sampler_update_at_epoch_boundary() -> None:
+    """Pending sampler updates should apply once before the next iterator is created."""
+    calls: list[str] = []
+    fake_input = type("FakeTensor", (), {"shape": (1,)})()
+    fake_target = type("FakeTensor", (), {"shape": (1,)})()
+    fake_batch = ([fake_input], [fake_target], "meta")
+
+    class FakeDataset:
+        """Small dataset recording epoch-bound sampler calls."""
+
+        datasets = ()  # type: ignore[var-annotated]
+
+        def set_sample_weights(self, weights: object) -> None:
+            calls.append(f"set_sample_weights:{weights}")
+
+        def shuffle(self) -> None:
+            calls.append("shuffle")
+
+    class FakeLoader:
+        """Small loader whose iterator records when worker state would be rebuilt."""
+
+        sampler = object()
+
+        def __init__(self) -> None:
+            self.dataset = FakeDataset()
+
+        def __iter__(self):
+            calls.append("iter")
+            return iter([fake_batch])
+
+    loader = TrainLoader.__new__(TrainLoader)
+    loader._iterator = iter(())  # pylint:disable=protected-access
+    loader._loader = FakeLoader()  # pylint:disable=protected-access
+    loader._epoch = 0  # pylint:disable=protected-access
+    loader._learn_mask = False  # pylint:disable=protected-access
+    loader._faceqa_sampler_weights_dirty = True  # pylint:disable=protected-access
+    loader._sample_weights = lambda _datasets, *, log_summary=False: "weights"  # type: ignore[method-assign]  # pylint:disable=protected-access
+
+    assert next(loader) == fake_batch
+
+    assert calls == ["set_sample_weights:weights", "shuffle", "iter"]
+    assert loader._faceqa_sampler_weights_dirty is False  # pylint:disable=protected-access
+    assert loader._epoch == 1  # pylint:disable=protected-access
 
 
 def test_training_sampler_config_defaults_are_random_fallback() -> None:

@@ -238,7 +238,12 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         """Update curriculum sampler strength from the training phase scheduler."""
         if self._faceqa_sampler.mode != "faceqa_curriculum":
             return
-        multiplier = max(0.0, float(multiplier))
+        multiplier = float(multiplier)
+        if not math.isfinite(multiplier) or multiplier < 0.0:
+            raise ValueError(
+                "FaceQA sampler strength multiplier must be a finite value >= 0.0. "
+                f"Got {multiplier}"
+            )
         if multiplier == self._faceqa_sampler_multiplier:
             return
         self._faceqa_sampler_multiplier = multiplier
@@ -263,7 +268,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
                 score = float(value)
             except (TypeError, ValueError):
                 continue
-            if score > 0.0:
+            if math.isfinite(score) and score > 0.0:
                 retval[(side, dimension, bucket)] = score
         return retval
 

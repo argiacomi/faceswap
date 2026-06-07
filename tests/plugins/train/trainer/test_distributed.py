@@ -24,7 +24,14 @@ class DummyLoss:  # pylint:disable=too-few-public-methods
     total = 1.0
 
 
-def _faceqa_sample(idx: int, *, duplicate: str = "unique") -> FaceQASampleMetadata:
+def _faceqa_sample(
+    idx: int,
+    *,
+    blur: str = "good",
+    resolution: str = "good",
+    mask_qa: str = "present",
+    duplicate: str = "unique",
+) -> FaceQASampleMetadata:
     """Build compact FaceQA sample metadata for distributed BRLW tests."""
     return FaceQASampleMetadata(
         side="A",
@@ -33,6 +40,9 @@ def _faceqa_sample(idx: int, *, duplicate: str = "unique") -> FaceQASampleMetada
         source_id=f"src_{idx}.png:0",
         face_index=0,
         has_faceqa=True,
+        blur_bucket=blur,
+        resolution_bucket=resolution,
+        mask_qa_bucket=mask_qa,
         duplicate_bucket=duplicate,
     )
 
@@ -137,7 +147,18 @@ def test_Trainer_forward(gpu_count, batch_size, outputs, _trainer_mocked, mocker
     assert len(call_args) == 3
 
 
-def test_Trainer_forward_preserves_brlw_protected_samples(_trainer_mocked, mocker):
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"duplicate": "duplicate"},
+        {"blur": "unusable"},
+        {"resolution": "tiny"},
+        {"mask_qa": "missing"},
+    ],
+)
+def test_Trainer_forward_preserves_brlw_protected_samples(
+    kwargs: dict[str, str], _trainer_mocked, mocker
+):
     """Distributed BRLW should restore protected sample masks from host FaceQA metadata."""
     instance, _ = _trainer_mocked(gpus=2, batch_size=4)
     instance.model.model.loss_func.batch_relative_loss_weighting = BatchRelativeLossWeighting(
@@ -159,7 +180,7 @@ def test_Trainer_forward_preserves_brlw_protected_samples(_trainer_mocked, mocke
                 _faceqa_sample(0),
                 _faceqa_sample(1),
                 _faceqa_sample(2),
-                _faceqa_sample(3, duplicate="duplicate"),
+                _faceqa_sample(3, **kwargs),
             ]
         ]
     )

@@ -135,12 +135,28 @@ def _is_bad_quality(sample: FaceQASampleMetadata, min_quality: MinQuality) -> bo
     )
 
 
+def is_faceqa_protected_sample(
+    sample: FaceQASampleMetadata,
+    *,
+    downweight_duplicates: bool = True,
+    downweight_outliers: bool = True,
+    min_quality: MinQuality = "usable",
+) -> bool:
+    """Return whether FaceQA metadata marks a sample as unsafe to amplify."""
+    return sample.has_faceqa and (
+        (downweight_duplicates and sample.duplicate_bucket == "duplicate")
+        or (downweight_outliers and sample.identity_outlier_bucket in ("outlier", "reject"))
+        or _is_bad_quality(sample, min_quality)
+    )
+
+
 def _is_protected_sample(sample: FaceQASampleMetadata, config: FaceQASamplerConfig) -> bool:
     """Return whether a sample should be downweighted and never amplified."""
-    return sample.has_faceqa and (
-        (config.downweight_duplicates and sample.duplicate_bucket == "duplicate")
-        or (config.downweight_outliers and sample.identity_outlier_bucket in ("outlier", "reject"))
-        or _is_bad_quality(sample, config.min_quality)
+    return is_faceqa_protected_sample(
+        sample,
+        downweight_duplicates=config.downweight_duplicates,
+        downweight_outliers=config.downweight_outliers,
+        min_quality=config.min_quality,
     )
 
 
@@ -175,12 +191,17 @@ def _rarity_weights(
             raw[idx] *= np.sqrt(mean_count / counts[bucket])
             if bucket_loss_scores is not None:
                 loss_score = bucket_loss_scores.get((sample.side, dimension, bucket))
-                if loss_score is None or loss_score <= 0.0:
+                if loss_score is None or not math.isfinite(loss_score) or loss_score <= 0.0:
                     continue
                 dimension_scores = [
                     score
                     for (side, dim, _bucket), score in bucket_loss_scores.items()
-                    if side == sample.side and dim == dimension and score > 0.0
+                    if (
+                        side == sample.side
+                        and dim == dimension
+                        and math.isfinite(score)
+                        and score > 0.0
+                    )
                 ]
                 if not dimension_scores:
                     continue
@@ -257,7 +278,12 @@ def compute_faceqa_sample_weights(
     raw = _rarity_weights(samples, config, bucket_loss_scores)
     weights = _blend_and_normalize(raw, samples, config)
     summary = _summary(side, samples, weights)
-    if weights.size == 0 or np.allclose(weights, weights[0]):
+    if (
+        weights.size == 0
+        or not np.isfinite(weights).all()
+        or weights.sum() <= 0.0
+        or np.allclose(weights, weights[0])
+    ):
         return None, summary
     logger.debug(
         "[FaceQASampler] side=%s metadata=%s/%s effective=%.2f top_up=%s top_down=%s",

@@ -6,6 +6,8 @@ from __future__ import annotations
 import pytest
 import torch
 
+from lib.training.data.collate import BatchMeta
+from lib.training.faceqa_diagnostics import FaceQASampleMetadata
 from lib.training.loss import BatchLoss, BatchRelativeLossWeighting, LossCollator
 
 
@@ -21,6 +23,27 @@ def _loss(
         weighted=[{"mae": values}],
         mask=mask,
         brlw=BatchRelativeLossWeighting() if brlw is None else brlw,
+    )
+
+
+def _faceqa_sample(
+    idx: int,
+    *,
+    blur: str = "good",
+    resolution: str = "good",
+    mask_qa: str = "present",
+) -> FaceQASampleMetadata:
+    """Build compact FaceQA metadata for BRLW protection tests."""
+    return FaceQASampleMetadata(
+        side="A",
+        filename=f"face_{idx}.png",
+        source_file=f"src_{idx}.png",
+        source_id=f"src_{idx}.png:0",
+        face_index=0,
+        has_faceqa=True,
+        blur_bucket=blur,
+        resolution_bucket=resolution,
+        mask_qa_bucket=mask_qa,
     )
 
 
@@ -136,6 +159,53 @@ def test_protected_samples_are_not_overweighted() -> None:
     assert loss.brlw_stats is not None
     assert loss.brlw_stats.weights[-1].item() <= 1.0
     assert loss.brlw_stats.weights.mean().item() == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"blur": "unusable"},
+        {"resolution": "tiny"},
+        {"mask_qa": "missing"},
+    ],
+)
+def test_bad_quality_faceqa_samples_are_brlw_protected(kwargs: dict[str, str]) -> None:
+    """BRLW should share the sampler's low-quality FaceQA protection rules."""
+    values = torch.tensor([1.0, 1.0, 1.0, 100.0])
+    meta = BatchMeta(
+        faceqa=[
+            [
+                _faceqa_sample(0),
+                _faceqa_sample(1),
+                _faceqa_sample(2),
+                _faceqa_sample(3, **kwargs),
+            ]
+        ]
+    )
+    collator = LossCollator.__new__(LossCollator)
+    protected = collator._brlw_protected_samples(  # pylint:disable=protected-access
+        meta,
+        [{"mae": values}],
+        None,
+    )
+    assert protected is not None
+    assert protected.tolist() == [False, False, False, True]
+
+    loss = _loss(
+        values,
+        BatchRelativeLossWeighting(
+            enabled=True,
+            strength=1.0,
+            min_batch_size=4,
+            min_weight=0.5,
+            max_weight=2.0,
+            protected_samples=protected,
+        ),
+    )
+    _ = loss.total
+
+    assert loss.brlw_stats is not None
+    assert loss.brlw_stats.weights[-1].item() <= 1.0
 
 
 @pytest.mark.parametrize(

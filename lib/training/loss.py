@@ -14,6 +14,7 @@ from torch import nn
 
 from lib.logger import parse_class_init
 from lib.model.losses import get_loss_function
+from lib.training.faceqa_sampler import is_faceqa_protected_sample
 from lib.utils import get_module_objects
 
 from .extra_losses import (
@@ -445,14 +446,6 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
             return self._schedule["primary_loss"]
         return self._schedule["secondary_loss"]
 
-    @staticmethod
-    def _is_brlw_protected_sample(sample: T.Any) -> bool:
-        """Return whether metadata marks a sample as unsafe to overweight."""
-        return getattr(sample, "has_faceqa", False) and (
-            getattr(sample, "duplicate_bucket", "unknown") == "duplicate"
-            or getattr(sample, "identity_outlier_bucket", "unknown") in ("outlier", "reject")
-        )
-
     def _brlw_protected_samples(
         self,
         meta: BatchMeta,
@@ -473,7 +466,7 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         samples = meta.faceqa[0]
         if len(samples) != reference.numel():
             return None
-        protected = [self._is_brlw_protected_sample(sample) for sample in samples]
+        protected = [is_faceqa_protected_sample(sample) for sample in samples]
         if not any(protected):
             return None
         return torch.tensor(protected, dtype=torch.bool, device=reference.device)
