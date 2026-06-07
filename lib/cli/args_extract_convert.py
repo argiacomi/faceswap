@@ -211,6 +211,8 @@ class ExtractArgs(ExtractConvertArgs):
                     "\nL|cv2-dnn: A CPU only landmark detector. Faster, less resource intensive, "
                     "but "
                     "less accurate. Only use this if not using a GPU and time is important."
+                    "\nL|cd-vit: CD-ViT 68-point landmark aligner. High quality, but resource "
+                    "intensive on CPU."
                     "\nL|fan: Good aligner. Fast on GPU, slow on CPU."
                     "\nL|hrnet: Best aligner. Faster and more performant than FAN. Trained on a "
                     "custom set of fully rotated faces. Fast on GPU, slow on CPU"
