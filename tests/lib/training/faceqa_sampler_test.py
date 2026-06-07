@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import typing as T
+
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from lib.training.data.data_set import MultiDataset, TrainSet
@@ -107,7 +110,7 @@ def test_faceqa_weighting_upweights_underrepresented_useful_bucket() -> None:
         {"mask_qa": "missing"},
     ],
 )
-def test_bad_samples_are_downweighted_and_not_amplified(kwargs: dict[str, str]) -> None:
+def test_bad_samples_are_downweighted_and_not_amplified(kwargs: dict[str, T.Any]) -> None:
     """Known duplicate/outlier/low-quality samples should never be amplified."""
     samples = [
         _sample(0, yaw="frontal"),
@@ -185,7 +188,7 @@ def test_protected_samples_stay_below_missing_metadata() -> None:
 
 
 @pytest.mark.parametrize("kwargs", [{"duplicate": "duplicate"}, {"outlier": "outlier"}])
-def test_all_protected_uniform_samples_preserve_random_fallback(kwargs: dict[str, str]) -> None:
+def test_all_protected_uniform_samples_preserve_random_fallback(kwargs: dict[str, T.Any]) -> None:
     """Uniformly protected datasets should not switch to replacement sampling."""
     samples = [_sample(idx, **kwargs) for idx in range(4)]
     weights, summary = compute_faceqa_sample_weights(
@@ -280,7 +283,7 @@ def test_non_finite_curriculum_bucket_loss_preserves_random_fallback() -> None:
 def test_multidataset_uses_side_specific_sample_weights() -> None:
     """Weighted side shuffling should draw high-weighted side samples more often."""
     np.random.seed(0)
-    weights = np.full(100, 0.01, dtype=np.float64)
+    weights: npt.NDArray[np.float64] = np.full(100, 0.01, dtype=np.float64)
     weights[7] = 100.0
     dataset = MultiDataset(
         (  # type: ignore[arg-type]
@@ -410,7 +413,7 @@ def test_next_applies_queued_sampler_update_at_epoch_boundary() -> None:
     class FakeDataset:
         """Small dataset recording epoch-bound sampler calls."""
 
-        datasets = ()  # type: ignore[var-annotated]
+        datasets: tuple[TrainSet, ...] = ()
 
         def set_sample_weights(self, weights: object) -> None:
             calls.append(f"set_sample_weights:{weights}")
@@ -436,11 +439,19 @@ def test_next_applies_queued_sampler_update_at_epoch_boundary() -> None:
     loader._epoch = 0  # pylint:disable=protected-access
     loader._learn_mask = False  # pylint:disable=protected-access
     loader._faceqa_sampler_weights_dirty = True  # pylint:disable=protected-access
-    loader._sample_weights = lambda _datasets, *, log_summary=False: "weights"  # type: ignore[method-assign]  # pylint:disable=protected-access
+
+    def sample_weights(
+        _datasets: tuple[TrainSet, ...],
+        *,
+        log_summary: bool = False,  # noqa: ARG001
+    ) -> tuple[npt.NDArray[np.float64] | None, ...] | None:
+        return None
+
+    loader._sample_weights = sample_weights  # type: ignore[assignment]  # pylint:disable=protected-access
 
     assert next(loader) == fake_batch
 
-    assert calls == ["set_sample_weights:weights", "shuffle", "iter"]
+    assert calls == ["set_sample_weights:None", "shuffle", "iter"]
     assert loader._faceqa_sampler_weights_dirty is False  # pylint:disable=protected-access
     assert loader._epoch == 1  # pylint:disable=protected-access
 

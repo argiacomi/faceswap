@@ -641,7 +641,7 @@ class Filter:
 
         lower = read_int(getattr(self._globals, "var_filter_distance_min", None), 10)
         upper = read_int(getattr(self._globals, "var_filter_distance_max", None), 20)
-        return tuple(sorted((lower, upper)))
+        return (lower, upper) if lower <= upper else (upper, lower)
 
     @property
     def _filter_distance_range(self) -> tuple[float, float]:

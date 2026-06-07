@@ -536,7 +536,7 @@ class TrainSet(_BaseSet):
             return payload
         if not isinstance(payload, dict):
             return None
-        return PNGHeader.from_dict(payload)
+        return T.cast(PNGHeader, PNGHeader.from_dict(payload))
 
     def faceqa_metadata_for_sampling(self) -> list[FaceQASampleMetadata]:
         """Return FaceQA metadata for every sample without loading image pixels."""

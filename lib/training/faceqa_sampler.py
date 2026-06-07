@@ -9,6 +9,7 @@ import typing as T
 from dataclasses import dataclass, field
 
 import numpy as np
+import numpy.typing as npt
 
 from lib.training.faceqa_diagnostics import FaceQASampleMetadata
 from lib.utils import get_module_objects
@@ -164,9 +165,9 @@ def _rarity_weights(
     samples: list[FaceQASampleMetadata],
     config: FaceQASamplerConfig,
     bucket_loss_scores: T.Mapping[tuple[str, str, str], float] | None = None,
-) -> np.ndarray:
+) -> npt.NDArray[np.float64]:
     """Return raw rarity weights from selected FaceQA dimensions."""
-    raw = np.ones(len(samples), dtype=np.float64)
+    raw: npt.NDArray[np.float64] = np.ones(len(samples), dtype=np.float64)
     useful = np.array(
         [sample.has_faceqa and not _is_protected_sample(sample, config) for sample in samples],
         dtype=bool,
@@ -212,8 +213,10 @@ def _rarity_weights(
 
 
 def _blend_and_normalize(
-    raw: np.ndarray, samples: list[FaceQASampleMetadata], config: FaceQASamplerConfig
-) -> np.ndarray:
+    raw: npt.NDArray[np.float64],
+    samples: list[FaceQASampleMetadata],
+    config: FaceQASamplerConfig,
+) -> npt.NDArray[np.float64]:
     """Blend raw weights by strength, apply safeguards, and normalize metadata weights."""
     weights = 1.0 + config.strength * (raw - 1.0)
     protected = np.array([_is_protected_sample(sample, config) for sample in samples], dtype=bool)
@@ -228,7 +231,7 @@ def _blend_and_normalize(
     weights = np.clip(weights, config.downweight_factor, config.max_weight)
     weights[protected] = np.minimum(weights[protected], 1.0) * config.downweight_factor
     weights = np.clip(weights, config.downweight_factor, config.max_weight)
-    return weights.astype(np.float64, copy=False)
+    return T.cast("npt.NDArray[np.float64]", weights.astype(np.float64, copy=False))
 
 
 def _summary(
@@ -269,14 +272,14 @@ def compute_faceqa_sample_weights(
     ``None`` weights mean callers should retain exact random sampling behavior.
     """
     if not config.active or not samples:
-        weights = np.ones(len(samples), dtype=np.float64)
-        return None, _summary(side, samples, weights)
+        unit_weights: npt.NDArray[np.float64] = np.ones(len(samples), dtype=np.float64)
+        return None, _summary(side, samples, unit_weights)
     if not any(sample.has_faceqa for sample in samples):
-        weights = np.ones(len(samples), dtype=np.float64)
-        return None, _summary(side, samples, weights)
+        unit_weights = np.ones(len(samples), dtype=np.float64)
+        return None, _summary(side, samples, unit_weights)
 
     raw = _rarity_weights(samples, config, bucket_loss_scores)
-    weights = _blend_and_normalize(raw, samples, config)
+    weights: npt.NDArray[np.float64] = _blend_and_normalize(raw, samples, config)
     summary = _summary(side, samples, weights)
     if (
         weights.size == 0

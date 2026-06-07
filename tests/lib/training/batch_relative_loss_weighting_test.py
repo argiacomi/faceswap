@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import typing as T
+
 import pytest
 import torch
 
@@ -219,7 +221,7 @@ def test_bad_quality_faceqa_samples_are_brlw_protected(kwargs: dict[str, str]) -
 )
 def test_non_finite_brlw_config_values_are_rejected(field: str, value: float) -> None:
     """Non-finite BRLW config values should fail before producing NaN weights."""
-    kwargs = {
+    kwargs: dict[str, T.Any] = {
         "enabled": True,
         "strength": 1.0,
         "min_weight": 0.5,
