@@ -280,14 +280,16 @@ def compute_faceqa_sample_weights(
 
     raw = _rarity_weights(samples, config, bucket_loss_scores)
     weights: npt.NDArray[np.float64] = _blend_and_normalize(raw, samples, config)
-    summary = _summary(side, samples, weights)
     if (
         weights.size == 0
         or not np.isfinite(weights).all()
         or weights.sum() <= 0.0
         or np.allclose(weights, weights[0])
     ):
+        fallback_weights: npt.NDArray[np.float64] = np.ones(len(samples), dtype=np.float64)
+        summary = _summary(side, samples, fallback_weights)
         return None, summary
+    summary = _summary(side, samples, weights)
     logger.debug(
         "[FaceQASampler] side=%s metadata=%s/%s effective=%.2f top_up=%s top_down=%s",
         side,

@@ -433,8 +433,10 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         """
         for name in self._schedule:
             value = 1.0 if multipliers is None else float(multipliers.get(name, 1.0))
-            if value < 0.0:
-                raise ValueError(f"Scheduled multiplier '{name}' must be >= 0.0. Got {value}")
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    f"Scheduled multiplier '{name}' must be a finite value >= 0.0. Got {value}"
+                )
             self._schedule[name] = value
         self._brlw_schedule_multiplier = (
             None if multipliers is None else float(multipliers.get("secondary_loss", 1.0))

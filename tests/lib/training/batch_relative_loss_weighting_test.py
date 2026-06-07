@@ -292,3 +292,20 @@ def test_collator_auto_strength_uses_phase_schedule_multiplier() -> None:
     collator.set_schedule({"secondary_loss": 0.5})
 
     assert collator.batch_relative_loss_weighting.strength == pytest.approx(0.125)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1.0])
+def test_collator_schedule_rejects_invalid_multipliers(value: float) -> None:
+    """Phase scheduler multipliers must be finite non-negative values."""
+    collator = LossCollator(
+        ["mae", "none", "none", "none"],
+        [1.0, 0.0, 0.0, 0.0],
+        "bgr",
+        False,
+        1.0,
+        1.0,
+        8,
+    )
+
+    with pytest.raises(ValueError, match="finite value >= 0.0"):
+        collator.set_schedule({"secondary_loss": value})

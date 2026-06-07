@@ -9,6 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from lib.training import faceqa_sampler
 from lib.training.data.data_set import MultiDataset, TrainSet
 from lib.training.data.loader import TrainLoader
 from lib.training.faceqa_diagnostics import FaceQASampleMetadata
@@ -278,6 +279,37 @@ def test_non_finite_curriculum_bucket_loss_preserves_random_fallback() -> None:
 
     assert weights is None
     assert summary.metadata_count == 2
+
+
+def test_invalid_final_weights_return_finite_random_fallback_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal invalid-weight fallback should not leak NaN diagnostics."""
+    samples = [
+        _sample(0, yaw="frontal"),
+        _sample(1, yaw="right_profile"),
+    ]
+    monkeypatch.setattr(
+        faceqa_sampler,
+        "_blend_and_normalize",
+        lambda *_args, **_kwargs: np.array([np.nan, 1.0], dtype=np.float64),
+    )
+
+    weights, summary = compute_faceqa_sample_weights(
+        "A",
+        samples,
+        FaceQASamplerConfig(
+            mode="faceqa_curriculum",
+            strength=1.0,
+            dimensions=("yaw_pose",),
+        ),
+    )
+
+    assert weights is None
+    assert np.isfinite(summary.effective_sample_count)
+    assert summary.effective_sample_count == pytest.approx(2.0)
+    assert all(np.isfinite(weight) for _label, weight in summary.top_upweighted)
+    assert all(np.isfinite(weight) for _label, weight in summary.top_downweighted)
 
 
 def test_multidataset_uses_side_specific_sample_weights() -> None:
