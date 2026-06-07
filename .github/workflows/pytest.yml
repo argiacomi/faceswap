@@ -48,7 +48,11 @@ jobs:
             - name: Cleanup space
               if: runner.os == 'Linux' && matrix.backend == 'rocm'
               run: |
-                  sudo rm -rf "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+                  df -h
+                  sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+                  sudo rm -rf /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+                  sudo apt-get clean
+                  df -h
 
             - name: Install Linux GUI dependencies
               if: runner.os == 'Linux'
@@ -77,7 +81,7 @@ jobs:
               with:
                   python-version: ${{ matrix.python-version }}
                   miniconda-version: latest
-                  auto-update-conda: true
+                  auto-update-conda: false
                   activate-environment: faceswap
 
             - name: Conda info
@@ -87,16 +91,22 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  python setup.py --installer --dev --${{ matrix.backend }}
                   python -m pip install --upgrade pip
-                  python -m pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
+                  if [[ "${{ matrix.backend }}" == "rocm" ]]; then
+                    python setup.py --installer --${{ matrix.backend }}
+                  else
+                    python setup.py --installer --dev --${{ matrix.backend }}
+                    python -m pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
+                  fi
 
             - name: Lint with flake8
+              if: matrix.backend != 'rocm'
               run: |
                   flake8 . --select=E9,F63,F7,F82 --show-source
                   flake8 . --exit-zero
 
             - name: MyPy typing
+              if: matrix.backend != 'rocm'
               continue-on-error: true
               run: mypy .
 
