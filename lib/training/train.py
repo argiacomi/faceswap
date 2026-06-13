@@ -301,7 +301,12 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         if mod_cfg.Loss.identity_loss() == "arcface":
             from plugins.extract.identity._model_adapter import trainable_arcface_module
 
-            logger.info("Enabling frozen ArcFace identity loss")
+            logger.info(
+                "Enabling frozen ArcFace identity loss (crop=%s, start_iteration=%s, weight=%s)",
+                mod_cfg.Loss.identity_loss_crop(),
+                mod_cfg.Loss.identity_loss_start_iteration(),
+                mod_cfg.Loss.identity_loss_weight(),
+            )
             recognizer, input_size = trainable_arcface_module()
             identity_loss = IdentityLoss(
                 recognizer,
@@ -521,12 +526,13 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
 
         if state.phase != self._phase_last_logged:
             logger.info(
-                "[Phase scheduler] %s -> %s at iteration %s (%s)%s",
+                "[Phase scheduler] %s -> %s at iteration %s (%s)%s | effective multipliers: %s",
                 self._phase_last_logged or "start",
                 state.phase,
                 state.iteration,
                 state.transition_reason,
                 " [dry-run]" if state.dry_run else "",
+                state.effective_multipliers.as_dict(),
             )
             self._phase_last_logged = state.phase
 
@@ -720,30 +726,36 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             max_batch_size=max_available,
             target_effective_batch_size=target_effective_batch_size,
         )
-        recommendation = finder.find()
-        self._model.state.add_training_batch_size_finder(recommendation.to_state())
-        self._model.state.save()
+        # Probes mutate the active batch size and rebuild the train loader. Guarantee the trainer
+        # is left at either the original or the deliberately applied size, even if the search
+        # raises a non-OOM error mid-probe.
+        applied = False
+        try:
+            recommendation = finder.find()
+            self._model.state.add_training_batch_size_finder(recommendation.to_state())
+            self._model.state.save()
 
-        if auto_apply and recommendation.suggested_batch_size > 0:
-            if recommendation.gradient_accumulation_recommended:
-                logger.warning(
-                    "Batch-size finder recommended batch size %s with gradient accumulation "
-                    "steps %s to reach effective batch size %s. Auto-apply only updates batch "
-                    "size, so the recommendation has been recorded but not applied.",
-                    recommendation.suggested_batch_size,
-                    recommendation.gradient_accumulation_steps,
-                    recommendation.effective_batch_size,
-                )
-            else:
-                self._set_training_batch_size(recommendation.suggested_batch_size)
-                self._model.state.add_session_batchsize(recommendation.suggested_batch_size)
-                logger.info(
-                    "Applied recommended training batch size: %s",
-                    recommendation.suggested_batch_size,
-                )
-                return
-
-        self._set_training_batch_size(original_batch_size)
+            if auto_apply and recommendation.suggested_batch_size > 0:
+                if recommendation.gradient_accumulation_recommended:
+                    logger.warning(
+                        "Batch-size finder recommended batch size %s with gradient accumulation "
+                        "steps %s to reach effective batch size %s. Auto-apply only updates batch "
+                        "size, so the recommendation has been recorded but not applied.",
+                        recommendation.suggested_batch_size,
+                        recommendation.gradient_accumulation_steps,
+                        recommendation.effective_batch_size,
+                    )
+                else:
+                    self._set_training_batch_size(recommendation.suggested_batch_size)
+                    self._model.state.add_session_batchsize(recommendation.suggested_batch_size)
+                    logger.info(
+                        "Applied recommended training batch size: %s",
+                        recommendation.suggested_batch_size,
+                    )
+                    applied = True
+        finally:
+            if not applied:
+                self._set_training_batch_size(original_batch_size)
 
     def toggle_mask(self) -> None:
         """Toggle the mask overlay on or off based on user input."""
@@ -926,13 +938,15 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             (feed.shape[0], feed.shape[1], self._out_size, self._out_size, ndim), dtype=np.float32
         )
         for idx in range(0, feed.shape[1], batch_size):
-            feed_batch = feed[:, idx : idx + batch_size]
+            feed_batch = feed[:, idx : idx + batch_size].to(self._device)
             feed_size = feed_batch.shape[1]
             is_padded = feed_size < batch_size
 
             if is_padded:
                 holder = torch.empty(
-                    (feed_batch.shape[0], batch_size, *feed_batch.shape[2:]), dtype=feed.dtype
+                    (feed_batch.shape[0], batch_size, *feed_batch.shape[2:]),
+                    dtype=feed_batch.dtype,
+                    device=feed_batch.device,
                 )
                 logger.debug(
                     "[Trainer] Padding undersized batch of shape %s to %s",
@@ -1116,8 +1130,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         finally:
             if not is_exit:
                 self._optimizer.train()
-        assert self._tensorboard is not None
-        self._tensorboard.on_save()
+        if self._tensorboard is not None:
+            self._tensorboard.on_save()
         if is_exit:
             self._clear_tensorboard()
 
