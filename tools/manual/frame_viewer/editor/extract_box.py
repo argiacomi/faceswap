@@ -246,6 +246,7 @@ class ExtractBox(Editor):
             self._drag_data = {}
             self._drag_callback = None
             return
+        self._select_face(self._mouse_location[1])
         self._drag_data["current_location"] = np.array((event.x, event.y))
         callback = {"anchor": self._resize, "rotate": self._rotate, "box": self._move}
         self._drag_callback = callback[self._mouse_location[0]]

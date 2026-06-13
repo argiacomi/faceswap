@@ -623,6 +623,7 @@ class Landmarks(Editor):
 
         sel_box = T.cast(list[float], self._canvas.coords(self._selection_box))
         if self._mouse_location is not None:  # Point edit mode
+            self._select_face(self._mouse_location[0])
             self._drag_data["start_location"] = (event.x, event.y)
             self._drag_callback = self._move_point
         elif not self._drag_data:  # Initial point selection box
@@ -701,6 +702,7 @@ class Landmarks(Editor):
             return
 
         self._drag_data["face_index"] = face_idx.pop()
+        self._select_face(self._drag_data["face_index"])
         self._drag_data["landmarks"] = landmark_indices
         self._canvas.itemconfig(self._selection_box, stipple="", fill="", outline="#ffff00")
         self._snap_selection_to_points()

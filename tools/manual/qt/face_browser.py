@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import QListWidgetItem
 
-from tools.manual.session import FaceThumbnail
+from tools.manual.session import EditableFace, FaceThumbnail
 
 from .face_viewer.viewport import _FACE_GRID_SIZES, FaceGridEntry
 
@@ -60,6 +60,8 @@ class FaceBrowserMixin:
     def _face_grid_entries(self) -> tuple[FaceGridEntry, ...]:
         """Build one grid entry per visible face in the active filtered session."""
         entries: list[FaceGridEntry] = []
+        misaligned_filter = self._editor_state.filter_mode == "Misaligned Faces"  # type: ignore[attr-defined]
+        misaligned_threshold = float(self._editor_state.filter_distance) / 100.0  # type: ignore[attr-defined]
         for frame_index in self.filtered_frame_indices():  # type: ignore[attr-defined]
             frame_name = self._frame_name_for_index(frame_index) or f"frame_{frame_index:06d}"  # type: ignore[attr-defined]
             thumbs = {
@@ -67,6 +69,11 @@ class FaceBrowserMixin:
                 for thumb in self._face_thumbnail_entries_for_frame(frame_index)
             }
             for face in self._editable.faces(frame_index):  # type: ignore[attr-defined]
+                is_misaligned = self._face_grid_misaligned_state(
+                    face,
+                    enabled=misaligned_filter,
+                    threshold=misaligned_threshold,
+                )
                 entries.append(
                     FaceGridEntry(
                         frame_index=frame_index,
@@ -75,9 +82,25 @@ class FaceBrowserMixin:
                         thumbnail=thumbs.get(int(face.face_index)),
                         bbox=face.bbox,
                         landmarks=face.landmarks,
+                        is_misaligned=is_misaligned,
                     )
                 )
         return tuple(entries)
+
+    @staticmethod
+    def _face_grid_misaligned_state(
+        face: EditableFace,
+        *,
+        enabled: bool,
+        threshold: float,
+    ) -> bool | None:
+        """Return per-face misalignment state when the Misaligned Faces filter is active."""
+        if not enabled:
+            return None
+        from tools.manual.frame_filter import face_average_distance
+
+        distance = face_average_distance(face)
+        return bool(distance is not None and distance > threshold)
 
     def _refresh_face_grid(self) -> None:
         """Rebuild the cross-frame face grid from filters, state and annotations."""
@@ -240,6 +263,7 @@ class FaceBrowserMixin:
             return
         self._editor_state.set("face_index", face_index)  # type: ignore[attr-defined]
         self._face_panel.select_face(face_index)  # type: ignore[attr-defined]
+        self._refresh_face_grid_active()
 
     def _active_face_index(self) -> int | None:
         """Return the currently selected face index or ``None``."""

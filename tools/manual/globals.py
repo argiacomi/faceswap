@@ -190,6 +190,11 @@ class TkGlobals:
         return self._tk_vars.frame_index
 
     @property
+    def var_face_index(self) -> tk.IntVar:
+        """:class:`tkinter.IntVar`: The currently selected face index."""
+        return self._tk_vars.face_index
+
+    @property
     def var_filter_distance_min(self) -> tk.IntVar:
         """:class:`tkinter.IntVar`: Lower bound for Misaligned Faces distance range."""
         return self._tk_vars.filter_distance_min

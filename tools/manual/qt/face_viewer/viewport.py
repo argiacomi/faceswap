@@ -55,6 +55,8 @@ class FaceGridEntry:
     thumbnail: FaceThumbnail | None
     bbox: tuple[float, float, float, float]
     landmarks: tuple[tuple[float, float], ...] = ()
+    is_misaligned: bool | None = None
+    """Per-face status when the Misaligned Faces filter is active."""
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,7 @@ class FaceGridRenderRequest:
     show_mask: bool
     mask_type: str
     mask_opacity: int
+    is_misaligned: bool | None
 
 
 class FaceGridThumbnailRenderer:
@@ -76,6 +79,8 @@ class FaceGridThumbnailRenderer:
     _MASK_TINT = QColor("#ff0000")
     _MESH_PEN = QColor("#00ffff")
     _LANDMARK_FILL = QColor("#ff00ff")
+    _MISALIGNED_BORDER = QColor("#ff3b30")
+    _ALIGNED_BORDER = QColor("#2ecc71")
 
     def __init__(self, editable: ManualEditableAlignments) -> None:
         self._editable = editable
@@ -97,6 +102,7 @@ class FaceGridThumbnailRenderer:
             self._paint_mask(painter, entry, icon_size, mask_type, mask_opacity)
         if show_mesh:
             self._paint_mesh(painter, entry, icon_size)
+        self._paint_misaligned_status(painter, entry, icon_size)
         painter.end()
         return QIcon(base)
 
@@ -181,6 +187,40 @@ class FaceGridThumbnailRenderer:
         for group in (*groups["polygon"], *groups["line"]):
             for point in group:
                 painter.drawEllipse(point, radius, radius)
+        painter.restore()
+
+    def _paint_misaligned_status(
+        self,
+        painter: QPainter,
+        entry: FaceGridEntry,
+        icon_size: int,
+    ) -> None:
+        """Paint per-face aligned/misaligned status for the Misaligned Faces filter."""
+        if entry.is_misaligned is None:
+            return
+        painter.save()
+        color = self._MISALIGNED_BORDER if entry.is_misaligned else self._ALIGNED_BORDER
+        pen = QPen(color)
+        pen.setWidthF(max(3.0, icon_size / 18.0))
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)  # type: ignore[attr-defined]
+        inset = pen.widthF() / 2.0
+        painter.drawRect(
+            QRectF(
+                inset,
+                inset,
+                float(icon_size) - pen.widthF(),
+                float(icon_size) - pen.widthF(),
+            )
+        )
+        painter.setPen(Qt.NoPen)  # type: ignore[attr-defined]
+        painter.setBrush(QBrush(color))
+        radius = max(4.0, icon_size / 12.0)
+        painter.drawEllipse(
+            QPointF(float(icon_size) - radius - 3.0, radius + 3.0),
+            radius,
+            radius,
+        )
         painter.restore()
 
     @classmethod

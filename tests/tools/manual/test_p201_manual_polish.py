@@ -443,3 +443,124 @@ def test_grid_frame_has_faces_ignores_no_face_placeholders() -> None:
 
     assert Grid.frame_has_faces(grid, 0)
     assert not Grid.frame_has_faces(grid, 1)
+
+
+class _FaceGridSelectionGlobals:
+    def __init__(
+        self,
+        frame_index: int,
+        face_index: int,
+        selected_faces: tuple[tuple[int, int], ...] = (),
+    ) -> None:
+        self.frame_index = frame_index
+        self.face_index = face_index
+        self._selected_faces = selected_faces
+
+    @property
+    def selected_faces(self) -> tuple[tuple[int, int], ...]:
+        return self._selected_faces
+
+    def set_selected_faces(self, faces: T.Iterable[tuple[int, int]]) -> None:
+        self._selected_faces = tuple(faces)
+
+    def clear_selected_faces(self) -> None:
+        self._selected_faces = ()
+
+
+def test_tk_face_grid_syncs_selected_face_from_preview_state() -> None:
+    """The bottom grid mirrors the active preview frame/face pair."""
+    from tools.manual.face_viewer.frame import FacesViewer
+
+    viewer = T.cast(T.Any, FacesViewer.__new__(FacesViewer))
+    refresh = MagicMock()
+    viewer._globals = _FaceGridSelectionGlobals(3, 1)
+    viewer._detected_faces = SimpleNamespace(face_count_per_index=[0, 0, 0, 2])
+    viewer._view = SimpleNamespace(refresh_selection_highlights=refresh)
+
+    FacesViewer._sync_selected_face_from_globals(viewer, force=True)
+
+    assert viewer._globals.selected_faces == ((3, 1),)
+    refresh.assert_called_once()
+
+
+def test_tk_face_grid_face_index_trace_does_not_overwrite_pending_grid_click() -> None:
+    """A grid-originated click can set the target selection before transport catches up."""
+    from tools.manual.face_viewer.frame import FacesViewer
+
+    viewer = T.cast(T.Any, FacesViewer.__new__(FacesViewer))
+    refresh = MagicMock()
+    viewer._globals = _FaceGridSelectionGlobals(0, 1, selected_faces=((3, 1),))
+    viewer._detected_faces = SimpleNamespace(face_count_per_index=[2, 0, 0, 2])
+    viewer._view = SimpleNamespace(refresh_selection_highlights=refresh)
+
+    FacesViewer._sync_selected_face_from_globals(viewer, force=False)
+
+    assert viewer._globals.selected_faces == ((3, 1),)
+    refresh.assert_called_once()
+
+
+class _TkValue:
+    def __init__(self, value: T.Any) -> None:
+        self._value = value
+
+    def get(self) -> T.Any:
+        return self._value
+
+
+class _FakeGridCanvas:
+    def __init__(self) -> None:
+        self._globals = SimpleNamespace(
+            var_filter_mode=_TkValue("Misaligned Faces"),
+            var_filter_distance_min=_TkValue(10),
+            var_filter_distance_max=_TkValue(20),
+        )
+        self.items: dict[int, dict[str, T.Any]] = {}
+        self._next_id = 1
+
+    def create_rectangle(self, *coords: float, **kwargs: T.Any) -> int:
+        item_id = self._next_id
+        self._next_id += 1
+        self.items[item_id] = {"coords": coords, **kwargs}
+        return item_id
+
+    def coords(self, item_id: int, *coords: float) -> tuple[float, ...]:
+        if coords:
+            self.items[item_id]["coords"] = coords
+        return T.cast(tuple[float, ...], self.items[item_id]["coords"])
+
+    def itemconfig(self, item_id: int, **kwargs: T.Any) -> None:
+        self.items[item_id].update(kwargs)
+
+
+def test_tk_misaligned_filter_marks_mixed_faces_in_same_frame() -> None:
+    """Misaligned-filter thumbnails distinguish flagged and unflagged faces."""
+    from tools.manual.face_viewer.viewport import Viewport
+
+    misaligned = SimpleNamespace(aligned=SimpleNamespace(average_distance=0.15))
+    aligned = SimpleNamespace(aligned=SimpleNamespace(average_distance=0.02))
+    canvas = _FakeGridCanvas()
+    viewport = T.cast(T.Any, Viewport.__new__(Viewport))
+    viewport._canvas = canvas
+    viewport._grid = SimpleNamespace(
+        is_valid=True,
+        face_size=64,
+        _detected_faces=SimpleNamespace(current_faces=[[misaligned, aligned]]),
+    )
+    viewport._objects = SimpleNamespace(
+        visible_grid=np.array(
+            [
+                [[0, 0]],  # frame ids
+                [[0, 1]],  # face ids
+                [[0, 64]],
+                [[0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        visible_faces=np.array([[misaligned, aligned]], dtype=object),
+    )
+    viewport._misalignment_boxes = {}
+
+    Viewport._update_misalignment_highlighters(viewport)
+
+    outlines = [item["outline"] for item in canvas.items.values()]
+    assert outlines == [Viewport._MISALIGNED_BOX_COLOR, Viewport._ALIGNED_BOX_COLOR]

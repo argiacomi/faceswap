@@ -349,6 +349,22 @@ class Editor:
         logger.trace("Hiding annotations for tag: %s", tag)
         self._canvas.itemconfig(tag, state="hidden")
 
+    def _select_face(self, face_index: int | str | None) -> None:
+        """Promote a preview-face interaction to the shared selected-face state."""
+        if face_index is None:
+            return
+        frame_index = int(self._globals.frame_index)
+        if frame_index < 0 or frame_index >= len(self._det_faces.current_faces):
+            return
+
+        face_idx = int(face_index)
+        if not 0 <= face_idx < len(self._det_faces.current_faces[frame_index]):
+            return
+
+        self._globals.set_selected_faces(((frame_index, face_idx),))
+        self._globals.set_face_index(face_idx)
+        self._globals.var_update_active_viewport.set(True)
+
     def _object_tracker(self, key, object_type, face_index, coordinates, object_kwargs):
         """Create an annotation object and add it to :attr:`_objects` or update an existing
         annotation if it has already been created.

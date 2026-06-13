@@ -705,6 +705,7 @@ class Mask(Editor):
             self._drag_data = {}
             self._drag_callback = None
         else:
+            self._select_face(face_idx)
             self._drag_data["control_click"] = control_click
             self._drag_data["color"] = np.array(
                 tuple(int(self._control_color[1:][i : i + 2], 16) for i in (0, 2, 4))

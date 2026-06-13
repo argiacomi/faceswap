@@ -47,10 +47,12 @@ def _seed_face(
 ) -> int:
     """Seed one editable face on ``frame_index``."""
     face_offset = window.editable_alignments.face_count(frame_index) * 4.0
-    return window.editable_alignments.add_face(
-        frame_index,
-        (10.0 + face_offset, 10.0, 24.0, 24.0),
-        landmarks=landmarks,
+    return int(
+        window.editable_alignments.add_face(
+            frame_index,
+            (10.0 + face_offset, 10.0, 24.0, 24.0),
+            landmarks=landmarks,
+        )
     )
 
 
@@ -163,6 +165,28 @@ def test_face_grid_click_navigates_frame_and_face(qtbot, tmp_path: Path) -> None
     assert panel.active_entry() == (3, 1)
 
 
+def test_frame_click_updates_bottom_grid_active_face(qtbot, tmp_path: Path) -> None:
+    """Clicking a face in the preview keeps the bottom grid selection in sync."""
+    window = _make_window(qtbot, tmp_path, count=2)
+    _seed_face(window, 0)
+    _seed_face(window, 0)
+    window._thumbnail_panel.setCurrentRow(0)
+
+    window._on_frame_clicked(QPointF(12.0, 18.0))
+    assert window.editor_state.face_index == 0
+    assert window.face_grid_panel.active_entry() == (0, 0)
+    first_item = window.face_grid_panel.item_for(0, 0)
+    assert first_item is not None
+    assert first_item.isSelected() is True
+
+    window._on_frame_clicked(QPointF(36.0, 18.0))
+    assert window.editor_state.face_index == 1
+    assert window.face_grid_panel.active_entry() == (0, 1)
+    second_item = window.face_grid_panel.item_for(0, 1)
+    assert second_item is not None
+    assert second_item.isSelected() is True
+
+
 def test_face_grid_active_and_hover_state_are_testable(qtbot, tmp_path: Path) -> None:
     """Active frame/face and hover state are exposed through item state."""
     window = _make_window(qtbot, tmp_path, count=4)
@@ -183,7 +207,9 @@ def test_face_grid_active_and_hover_state_are_testable(qtbot, tmp_path: Path) ->
     qtbot.mouseMove(panel.viewport(), panel.visualItemRect(hover_item).center())
 
     assert panel.hovered_entry() == (2, 0)
-    assert panel.item_for(2, 0).data(Qt.UserRole + 3) is True  # type: ignore[attr-defined, union-attr]
+    hover_state_item = panel.item_for(2, 0)
+    assert hover_state_item is not None
+    assert hover_state_item.data(Qt.UserRole + 3) is True  # type: ignore[attr-defined]
     assert window.statusBar().currentMessage() == "Frame 3 / Face 1"
 
 
@@ -430,6 +456,39 @@ def test_face_grid_delete_key_removes_multi_selection_across_frames(
     assert window.editable_alignments.face_count(0) == 1
     assert window.editable_alignments.face_count(1) == 2
     assert window.editable_alignments.face_count(3) == 1
+
+
+def test_misaligned_filter_marks_mixed_faces_in_same_frame(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A filtered multi-face frame distinguishes matching and non-matching faces."""
+    from tools.manual import frame_filter
+
+    window = _make_window(qtbot, tmp_path, count=2)
+    landmarks = tuple((float(index), float(index)) for index in range(17))
+    _seed_face(window, 0, landmarks=landmarks)
+    _seed_face(window, 0, landmarks=landmarks)
+
+    def _distance(face) -> float:
+        return 0.20 if int(face.face_index) == 0 else 0.02
+
+    monkeypatch.setattr(frame_filter, "face_average_distance", _distance)
+    window.editor_state.set("filter_mode", "Misaligned Faces")
+    window.editor_state.set("filter_distance", 10)
+
+    assert window.filtered_frame_indices() == (0,)
+    assert tuple(entry.is_misaligned for entry in window.face_grid_panel.entries) == (
+        True,
+        False,
+    )
+    assert tuple(
+        request.is_misaligned for request in window.face_grid_panel.render_requests()
+    ) == (
+        True,
+        False,
+    )
 
 
 def test_face_grid_refreshes_after_non_current_edit_with_filter(

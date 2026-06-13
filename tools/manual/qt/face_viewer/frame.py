@@ -181,6 +181,7 @@ class CrossFrameFaceGridPanel(QListWidget):
                     show_mask=self._show_mask,
                     mask_type=self._mask_type,
                     mask_opacity=self._mask_opacity,
+                    is_misaligned=entry.is_misaligned,
                 )
                 requests.append(request)
                 item.setIcon(

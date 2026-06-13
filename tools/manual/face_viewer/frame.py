@@ -285,6 +285,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         self._tk_optional_annotations = tk_action_vars
         self._event = event
         self._display_frame = display_frame
+        self._detected_faces = detected_faces
         self._grid = Grid(self, detected_faces)
         self._view = Viewport(self, detected_faces.tk_edited)
         self._annotation_colors = {
@@ -353,6 +354,12 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         boolvar.trace_add(
             "write", lambda *e, v=boolvar: self.refresh_grid(v, retain_position=True)
         )
+        self._globals.var_frame_index.trace_add(
+            "write", lambda *e: self._sync_selected_face_from_globals(force=True)
+        )
+        self._globals.var_face_index.trace_add(
+            "write", lambda *e: self._sync_selected_face_from_globals(force=False)
+        )
 
         self._display_frame.tk_control_colors["Mesh"].trace_add(
             "write", lambda *e: self._update_mesh_color()
@@ -368,6 +375,36 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
             var.trace_add("write", lambda *e, o=opt: self._toggle_annotations(o))  # pyright:ignore[reportArgumentType]
 
         self.bind("<Configure>", lambda *e: self._view.update())
+
+    def _sync_selected_face_from_globals(self, *, force: bool) -> None:
+        """Mirror the active preview face into the bottom-grid selection."""
+        frame_index = int(self._globals.frame_index)
+        selected_faces = self._globals.selected_faces
+        if (
+            not force
+            and selected_faces
+            and all(selected_frame != frame_index for selected_frame, _ in selected_faces)
+        ):
+            self._view.refresh_selection_highlights()
+            return
+
+        if (
+            frame_index < 0
+            or frame_index >= len(self._detected_faces.face_count_per_index)
+            or self._detected_faces.face_count_per_index[frame_index] <= 0
+        ):
+            self._globals.clear_selected_faces()
+            self._view.refresh_selection_highlights()
+            return
+
+        face_index = int(self._globals.face_index)
+        if not 0 <= face_index < self._detected_faces.face_count_per_index[frame_index]:
+            self._globals.clear_selected_faces()
+            self._view.refresh_selection_highlights()
+            return
+
+        self._globals.set_selected_faces(((frame_index, face_index),))
+        self._view.refresh_selection_highlights()
 
     def refresh_grid(self, trigger_var: tk.BooleanVar, retain_position: bool = False) -> None:
         """Recalculate the full grid and redraw. Used when the active filter pull down is used, a

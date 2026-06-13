@@ -101,7 +101,7 @@ class BoundingBox(Editor):
 
     def _aligner_name(self) -> str:
         """Return the selected aligner, falling back to the default before controls are ready."""
-        return self._tk_aligner.get() if self._tk_aligner is not None else default_aligner()
+        return str(self._tk_aligner.get()) if self._tk_aligner is not None else default_aligner()
 
     def _display_shift_to_source(self, shift: tuple[int, int], face_index: int) -> tuple[int, int]:
         """Convert a display-space drag delta to source-frame pixels."""
@@ -410,9 +410,11 @@ class BoundingBox(Editor):
             return
         if self._mouse_location[0] == "anchor":
             corner_idx = int(self._mouse_location[1].split("_")[-1])
+            self._select_face(self._mouse_location[1].split("_")[0])
             self._drag_data["corner"] = self._corner_order[corner_idx]
             self._drag_callback = self._resize
         elif self._mouse_location[0] == "box":
+            self._select_face(self._mouse_location[1])
             self._drag_data["current_location"] = (event.x, event.y)
             self._drag_callback = self._move
         elif self._mouse_location[0] == "image":

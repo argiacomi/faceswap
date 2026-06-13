@@ -37,6 +37,8 @@ class Viewport:
 
     _SELECTED_BOX_COLOR = "#ffcc00"
     _ACTIVE_SELECTED_BOX_COLOR = "#ff00ff"
+    _MISALIGNED_BOX_COLOR = "#ff3b30"
+    _ALIGNED_BOX_COLOR = "#2ecc71"
 
     def __init__(self, canvas: FacesViewer, tk_edited_variable: tk.BooleanVar) -> None:
         logger.debug(parse_class_init(locals()))
@@ -47,6 +49,7 @@ class Viewport:
         self._landmarks: dict[str, dict[T.Literal["polygon", "line"], list[np.ndarray]]] = {}
         self._tk_faces: dict[str, TKFace] = {}
         self._selected_boxes: dict[tuple[int, int], int] = {}
+        self._misalignment_boxes: dict[tuple[int, int], int] = {}
         self._objects = VisibleObjects(self)
         self._hoverbox = HoverBox(self)
         self._active_frame = ActiveFrame(self, tk_edited_variable)
@@ -56,7 +59,7 @@ class Viewport:
     @property
     def face_size(self) -> int:
         """int: The pixel size of each thumbnail"""
-        return self._grid.face_size
+        return int(self._grid.face_size)
 
     @property
     def mesh_kwargs(self) -> dict[T.Literal["polygon", "line"], dict[str, T.Any]]:
@@ -141,7 +144,8 @@ class Viewport:
                 face.pose.offset["face"],
                 centering="face",
             )
-        return mask.mask.squeeze()
+        retval: np.ndarray = mask.mask.squeeze()
+        return retval
 
     def reset(self) -> None:
         """Reset all the cached objects on a face size change."""
@@ -160,6 +164,7 @@ class Viewport:
         self._landmarks = {}
         self._tk_faces = {}
         self._clear_selected_boxes()
+        self._clear_misalignment_boxes()
 
     def update(
         self,
@@ -184,18 +189,21 @@ class Viewport:
         self._update_viewport(refresh_annotations)
         if reload_active:
             self._active_frame.reload_annotations()
+        self._update_misalignment_highlighters()
         self._update_selected_highlighters()
 
         self._raise_highlight_layers()
 
     def refresh_selection_highlights(self) -> None:
         """Refresh selection outlines without rebuilding the whole viewport."""
+        self._update_misalignment_highlighters()
         self._update_selected_highlighters()
         self._raise_highlight_layers()
 
     def _raise_highlight_layers(self) -> None:
         """Keep thumbnails visible and layer outline-only highlights deterministically."""
         has_images = bool(self._canvas.find_withtag("viewport_image"))
+        has_misaligned = bool(self._canvas.find_withtag("viewport_misalignment_highlighter"))
         has_active = bool(self._canvas.find_withtag("active_highlighter"))
         has_selected = bool(self._canvas.find_withtag("viewport_selected_highlighter"))
 
@@ -203,14 +211,24 @@ class Viewport:
             self._canvas.tag_raise("viewport_mesh", "viewport_image")
             self._canvas.tag_raise("active_mesh_polygon", "viewport_image")
             self._canvas.tag_raise("active_mesh_line", "viewport_image")
+            if has_misaligned:
+                self._canvas.tag_raise("viewport_misalignment_highlighter", "viewport_image")
 
             if has_active:
-                self._canvas.tag_raise("active_highlighter", "viewport_image")
+                above = "viewport_misalignment_highlighter" if has_misaligned else "viewport_image"
+                self._canvas.tag_raise("active_highlighter", above)
 
             if has_selected:
-                above = "active_highlighter" if has_active else "viewport_image"
+                if has_active:
+                    above = "active_highlighter"
+                elif has_misaligned:
+                    above = "viewport_misalignment_highlighter"
+                else:
+                    above = "viewport_image"
                 self._canvas.tag_raise("viewport_selected_highlighter", above)
         else:
+            if has_misaligned:
+                self._canvas.tag_raise("viewport_misalignment_highlighter")
             if has_active:
                 self._canvas.tag_raise("active_highlighter")
             if has_selected:
@@ -351,9 +369,103 @@ class Viewport:
             if key not in visible:
                 self._canvas.itemconfig(box_id, state="hidden")
 
+    def _update_misalignment_highlighters(self) -> None:
+        """Display misaligned/aligned status when the Misaligned Faces filter is active."""
+        if (
+            not self._grid.is_valid
+            or self._canvas._globals.var_filter_mode.get() != "Misaligned Faces"
+        ):
+            self._hide_misalignment_boxes()
+            return
+
+        visible: set[tuple[int, int]] = set()
+        current_faces = self._grid._detected_faces.current_faces
+        for (frame_idx, face_idx, pnt_x, pnt_y), face in zip(
+            self._objects.visible_grid.transpose(1, 2, 0).reshape(-1, 4),
+            self._objects.visible_faces.flatten(),
+            strict=False,
+        ):
+            frame_idx = int(frame_idx)
+            face_idx = int(face_idx)
+            if frame_idx == -1 or face_idx == -1 or face is None:
+                continue
+            if frame_idx >= len(current_faces) or len(current_faces[frame_idx]) <= 1:
+                continue
+
+            key = (frame_idx, face_idx)
+            visible.add(key)
+            box_id = self._misalignment_boxes.get(key)
+            if box_id is None:
+                box_id = self._canvas.create_rectangle(
+                    0.0,
+                    0.0,
+                    float(self.face_size),
+                    float(self.face_size),
+                    outline=self._ALIGNED_BOX_COLOR,
+                    width=3,
+                    fill="",
+                    state="hidden",
+                    tags=["viewport", "viewport_misalignment_highlighter"],
+                )
+                self._misalignment_boxes[key] = box_id
+
+            inset = 6
+            coords = (
+                int(pnt_x + inset),
+                int(pnt_y + inset),
+                int(pnt_x + self.face_size - inset),
+                int(pnt_y + self.face_size - inset),
+            )
+            self._canvas.coords(box_id, *coords)
+            self._canvas.itemconfig(
+                box_id,
+                state="normal",
+                outline=(
+                    self._MISALIGNED_BOX_COLOR
+                    if self._face_is_misaligned(face)
+                    else self._ALIGNED_BOX_COLOR
+                ),
+                width=3,
+                fill="",
+            )
+
+        for key, box_id in self._misalignment_boxes.items():
+            if key not in visible:
+                self._canvas.itemconfig(box_id, state="hidden")
+
+    def _face_is_misaligned(self, face: DetectedFace) -> bool:
+        """Return whether ``face`` matches the active Misaligned Faces range."""
+        try:
+            distance = float(face.aligned.average_distance)
+        except (AssertionError, AttributeError, TypeError, ValueError):
+            return False
+
+        lower, upper = self._misalignment_range
+        return lower <= distance <= upper
+
+    @property
+    def _misalignment_range(self) -> tuple[float, float]:
+        """Return the active Misaligned Faces lower/upper range."""
+
+        def read_int(tk_var: tk.IntVar, default: int) -> int:
+            try:
+                return int(tk_var.get())
+            except (tk.TclError, TypeError, ValueError):
+                return default
+
+        lower = read_int(self._canvas._globals.var_filter_distance_min, 10)
+        upper = read_int(self._canvas._globals.var_filter_distance_max, 20)
+        lower, upper = sorted((lower, upper))
+        return float(lower) / 100.0, float(upper) / 100.0
+
     def _hide_selected_boxes(self) -> None:
         """Hide all viewport selected-face highlight boxes."""
         for box_id in self._selected_boxes.values():
+            self._canvas.itemconfig(box_id, state="hidden")
+
+    def _hide_misalignment_boxes(self) -> None:
+        """Hide all viewport misalignment status boxes."""
+        for box_id in self._misalignment_boxes.values():
             self._canvas.itemconfig(box_id, state="hidden")
 
     def _clear_selected_boxes(self) -> None:
@@ -361,6 +473,12 @@ class Viewport:
         for box_id in self._selected_boxes.values():
             self._canvas.delete(box_id)
         self._selected_boxes = {}
+
+    def _clear_misalignment_boxes(self) -> None:
+        """Delete all viewport misalignment status boxes."""
+        for box_id in self._misalignment_boxes.values():
+            self._canvas.delete(box_id)
+        self._misalignment_boxes = {}
 
     def _discard_tk_faces(self) -> None:
         """Remove cached TKFace objects that are not currently displayed."""
@@ -704,7 +822,7 @@ class Recycler:
             *coordinates, anchor=tk.NW, tags=["viewport", "viewport_image"]
         )
         logger.trace("Created new image: %s", retval)  # type:ignore[attr-defined]
-        return retval
+        return int(retval)
 
     @staticmethod
     def _mesh_counts_for_face(
@@ -864,9 +982,12 @@ class VisibleObjects:
         """:class:`numpy.ndarray`: The canvas (`x`, `y`) position of the face currently in the
         viewable area's top left position."""
         retval = (
-            [0.0, 0.0] if not np.any(self._images) else self._canvas.coords(self._images[0][0])  # type: ignore[call-overload]
+            [0.0, 0.0]
+            if not np.any(self._images)
+            else self._canvas.coords(int(self._images[0][0]))
         )
-        return np.array(retval, dtype="int")  # type: ignore[no-any-return]
+        top_left: np.ndarray = np.array(retval, dtype="int")
+        return top_left
 
     def update(self) -> None:
         """Load and unload thumbnails in the visible area of the faces viewer."""
