@@ -467,18 +467,29 @@ class IdentityLoss(nn.Module):
         """
         size = image.shape[-1]
         binary = mask[:, 0] >= 0.5
+        height, width = binary.shape[1], binary.shape[2]
+        # Compute every bounding box in a single vectorized pass so that the variable-size
+        # crops below only require one device-to-host transfer. Doing the index extraction
+        # per item (with ``int(...)`` conversions) forces a GPU sync on every bound, which
+        # serializes the training step.
+        rows = torch.any(binary, dim=2)  # (N, H)
+        cols = torch.any(binary, dim=1)  # (N, W)
+        has_any = rows.any(dim=1) & cols.any(dim=1)  # (N, )
+        row_ids = torch.arange(height, device=binary.device)
+        col_ids = torch.arange(width, device=binary.device)
+        top = torch.where(rows, row_ids, height).amin(dim=1)
+        bottom = torch.where(rows, row_ids, -1).amax(dim=1) + 1
+        left = torch.where(cols, col_ids, width).amin(dim=1)
+        right = torch.where(cols, col_ids, -1).amax(dim=1) + 1
+        bounds = torch.stack([top, bottom, left, right], dim=1).tolist()
+        flags = has_any.tolist()
         cropped: list[torch.Tensor] = []
         for idx in range(image.shape[0]):
-            rows = torch.any(binary[idx], dim=1)
-            cols = torch.any(binary[idx], dim=0)
-            if not bool(rows.any()) or not bool(cols.any()):
+            if not flags[idx]:
                 cropped.append(image[idx])
                 continue
-            row_idx = torch.where(rows)[0]
-            col_idx = torch.where(cols)[0]
-            top, bottom = int(row_idx[0]), int(row_idx[-1]) + 1
-            left, right = int(col_idx[0]), int(col_idx[-1]) + 1
-            patch = image[idx : idx + 1, :, top:bottom, left:right]
+            top_i, bottom_i, left_i, right_i = bounds[idx]
+            patch = image[idx : idx + 1, :, top_i:bottom_i, left_i:right_i]
             cropped.append(
                 F.interpolate(patch, size=(size, size), mode="bilinear", align_corners=False)[0]
             )
@@ -551,7 +562,8 @@ class IdentityLoss(nn.Module):
         The per-item identity distance (``1 - cosine similarity``) in ``(N, )`` order
         """
         recognizer = self.recognizer
-        if next(recognizer.parameters(), torch.empty(0)).device != y_pred.device:
+        param = next(recognizer.parameters(), None)
+        if param is not None and param.device != y_pred.device:
             recognizer.to(y_pred.device)
         with torch.no_grad():
             target = self._embed(y_true, mask_face)
