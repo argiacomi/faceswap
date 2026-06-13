@@ -3,6 +3,11 @@
 
 Model architecture ported from:
 https://github.com/argiacomi/AccurateFacialLandmarkDetection
+
+Checkpoints exported from schema-aware training additionally carry extra
+landmark-schema, per-point visibility and auxiliary classification heads.
+Those heads are training-time supervision only; they are stripped before a
+strict 68-point state load so real architecture drift still fails loudly.
 """
 
 from __future__ import annotations
@@ -32,6 +37,24 @@ _HEATMAP_SIZE = 32
 _MAX_DEPTH = 256
 _NSTACK = 8
 _NUM_LANDMARKS = 68
+
+# Head families written by schema-aware training (upstream ``VitAttnStage``)
+# that are not part of the 68-point inference graph. Any other unexpected key
+# is real checkpoint drift and must still fail the strict load.
+_TRAINING_ONLY_PREFIXES = (
+    "schema_output_layers.",
+    "visibility_output_layers.",
+    "auxiliary_output_layers.",
+)
+
+
+def _strip_training_only_keys(state_dict: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
+    """Return ``state_dict`` without schema/visibility/auxiliary training-head keys."""
+    return {
+        key: value
+        for key, value in state_dict.items()
+        if not str(key).startswith(_TRAINING_ONLY_PREFIXES)
+    }
 
 
 class Cd_Vit(ExtractPlugin):
@@ -85,6 +108,11 @@ class Cd_Vit(ExtractPlugin):
             raise ValueError("This checkpoint is UNet-backed, not staged CD-ViT.")
         if not any(key.startswith("stages.") for key in keys):
             raise ValueError("This checkpoint does not look like staged CD-ViT.")
+        if any(key.startswith(_TRAINING_ONLY_PREFIXES) for key in keys):
+            logger.debug(
+                "CD-ViT checkpoint carries schema-aware training heads. "
+                "They will be dropped for 68-point inference."
+            )
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Format detector bounding boxes into CD-ViT input crops."""
@@ -517,21 +545,40 @@ class CDViTStage(nn.Module):
         yy = (heatmap * self.yy_loc).sum([2, 3])
         return torch.stack([xx, yy], dim=2)
 
+    def load_state_dict(
+        self,
+        state_dict: T.Mapping[str, T.Any],
+        strict: bool = True,
+        assign: bool = False,
+    ) -> T.Any:
+        """Load weights, dropping schema-aware training-only head keys.
+
+        Upstream schema-aware checkpoints carry extra landmark-schema,
+        visibility and auxiliary classification heads that do not feed the
+        68-point inference graph. Only those known families are filtered;
+        the load stays strict so any other mismatch still raises.
+        """
+        filtered = _strip_training_only_keys(state_dict)
+        dropped = len(state_dict) - len(filtered)
+        if dropped:
+            logger.debug("Dropped %s training-only CD-ViT checkpoint keys", dropped)
+        return super().load_state_dict(filtered, strict=strict, assign=assign)
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Return final-stage normalized landmark coordinates."""
         feat = self.pre(inputs)
-        pre_hm = None
-        coord = None
+        pre_hm: torch.Tensor | None = None
         for idx, stage in enumerate(self.stages):
             if idx == 0:
                 merge = feat
             else:
                 assert pre_hm is not None
                 merge = self.merge[idx - 1](torch.cat([feat, pre_hm], dim=1))
-            stage_out = stage(merge)
-            coord = self.get_coord(self.output_layers[idx](stage_out))
-            pre_hm = stage_out
-        return T.cast(torch.Tensor, coord)
+            pre_hm = stage(merge)
+        assert pre_hm is not None
+        # Intermediate stage heads only provide training supervision; inference
+        # consumes the final stage's heatmap head alone.
+        return self.get_coord(self.output_layers[-1](pre_hm))
 
 
 __all__ = get_module_objects(__name__)
